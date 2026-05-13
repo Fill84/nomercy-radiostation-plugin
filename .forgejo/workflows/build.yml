@@ -5,7 +5,10 @@ name: build
 # abstractions package is not published to nuget.org yet).
 #
 # On a `v*` tag push, a Forgejo release is created and the packaged plugin
-# zip is attached as an asset.
+# zip is attached as an asset. Build + release run in a single job so we
+# don't need the artifact upload/download API (which the act_runner
+# routes through the internal `forgejo:3000` hostname that the per-workflow
+# Docker network can't resolve).
 
 on:
   push:
@@ -24,6 +27,11 @@ env:
   DOTNET_CHANNEL: "10.0"
   DOTNET_NOLOGO: "1"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  # Public Forgejo URL — used to clone this repo and hit the release API
+  # from inside the workflow container, because the runner's default
+  # GITHUB_SERVER_URL (http://forgejo:3000) isn't resolvable on the
+  # per-workflow Docker network.
+  PUBLIC_FORGEJO_URL: https://forgejo.phillippepelzer.me
 
 jobs:
   build:
@@ -36,15 +44,10 @@ jobs:
           set -eux
           if command -v apt-get >/dev/null 2>&1; then
             apt-get update -y
-            # nodejs is required: Forgejo Actions executes JavaScript actions
-            # (actions/checkout, upload-artifact, …) via `docker exec node …`,
-            # so `node` must be on PATH inside this container.
             apt-get install -y --no-install-recommends \
-              git curl ca-certificates zip unzip jq libicu-dev nodejs
+              git curl ca-certificates zip unzip jq libicu-dev
             rm -rf /var/lib/apt/lists/*
           fi
-          node --version
-          which node
 
       - name: Install .NET SDK ${{ env.DOTNET_CHANNEL }}
         run: |
@@ -56,8 +59,30 @@ jobs:
           echo "$HOME/.dotnet" >> "$GITHUB_PATH"
           "$HOME/.dotnet/dotnet" --info
 
-      - name: Checkout plugin
-        uses: actions/checkout@v4
+      # Manual checkout instead of actions/checkout@v4:
+      # the action clones from $GITHUB_SERVER_URL which the runner sets to
+      # an internal hostname (http://forgejo:3000) that the workflow
+      # container can't resolve. The public URL works for both private
+      # and public repos when the auto-generated GITHUB_TOKEN is passed
+      # via an HTTP basic-auth header.
+      - name: Checkout plugin (via public URL)
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eux
+          : "${TOKEN:?missing GITHUB_TOKEN}"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          # Wipe leftovers from any previous run.
+          shopt -s dotglob nullglob
+          rm -rf -- *
+          git init -q .
+          git remote add origin "${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}.git"
+          AUTH_B64=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          git -c "http.extraheader=Authorization: basic ${AUTH_B64}" \
+              fetch --depth=1 origin "$GITHUB_SHA"
+          git checkout -q FETCH_HEAD
+          git log --oneline -1
 
       - name: Clone NoMercy MediaServer (for Plugins.Abstractions source)
         run: |
@@ -70,7 +95,7 @@ jobs:
           mkdir -p "$PWD/_nupkgs"
           # NoMercy.Plugins.Abstractions depends on NoMercy.Events.
           # Pack both into a local file feed so the plugin's PackageReference
-          # (Version="*") can resolve them without a private NuGet server.
+          # (Version="*") resolves them without a private NuGet server.
           dotnet pack _server/src/NoMercy.Events/NoMercy.Events.csproj \
             -c Release -o "$PWD/_nupkgs"
           dotnet pack _server/src/NoMercy.Plugins.Abstractions/NoMercy.Plugins.Abstractions.csproj \
@@ -90,7 +115,6 @@ jobs:
             </packageSources>
           </configuration>
           EOF
-          cat "$PLUGIN_DIR/nuget.config"
 
       - name: Restore + build plugin (Release)
         run: |
@@ -123,52 +147,17 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "zip=$ZIP"         >> "$GITHUB_OUTPUT"
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: plugin
-          path: ${{ steps.stage.outputs.zip }}
-          if-no-files-found: error
-
-    outputs:
-      version: ${{ steps.stage.outputs.version }}
-      zip:     ${{ steps.stage.outputs.zip }}
-
-  release:
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: docker
-    container:
-      image: ubuntu:latest
-    steps:
-      - name: Install tooling
-        run: |
-          set -eux
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -y
-            # nodejs needed so download-artifact (a JS action) can run.
-            apt-get install -y --no-install-recommends \
-              curl ca-certificates jq nodejs
-            rm -rf /var/lib/apt/lists/*
-          fi
-          node --version
-
-      - name: Download plugin artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: plugin
-
       - name: Create Forgejo release & attach asset
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
-          # GITHUB_TOKEN here is the auto-generated Forgejo Actions token.
-          # No extra secret setup needed for the same-repo release.
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          ZIP="${{ needs.build.outputs.zip }}"
+          ZIP="${{ steps.stage.outputs.zip }}"
           TAG="${GITHUB_REF_NAME}"
           REPO="${GITHUB_REPOSITORY}"
-          API="${GITHUB_API_URL%/}"
+          # Use the public API URL — same reason as the checkout step.
+          API="${PUBLIC_FORGEJO_URL%/}/api/v1"
 
           BODY=$(cat <<EOF
           ## NoMercy Internet Radio Provider — ${TAG}
@@ -202,4 +191,4 @@ jobs:
             --data-binary "@$ZIP" \
             "$API/repos/$REPO/releases/$REL_ID/assets?name=$(basename "$ZIP")"
 
-          echo "✓ Release published: $TAG"
+          echo "Release published: $TAG"
