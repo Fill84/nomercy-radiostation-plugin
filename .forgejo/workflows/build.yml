@@ -36,9 +36,15 @@ jobs:
           set -eux
           if command -v apt-get >/dev/null 2>&1; then
             apt-get update -y
-            apt-get install -y --no-install-recommends git curl ca-certificates zip unzip jq libicu-dev
+            # nodejs is required: Forgejo Actions executes JavaScript actions
+            # (actions/checkout, upload-artifact, …) via `docker exec node …`,
+            # so `node` must be on PATH inside this container.
+            apt-get install -y --no-install-recommends \
+              git curl ca-certificates zip unzip jq libicu-dev nodejs
             rm -rf /var/lib/apt/lists/*
           fi
+          node --version
+          which node
 
       - name: Install .NET SDK ${{ env.DOTNET_CHANNEL }}
         run: |
@@ -131,15 +137,21 @@ jobs:
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
+    runs-on: docker
+    container:
+      image: ubuntu:latest
     steps:
       - name: Install tooling
         run: |
           set -eux
           if command -v apt-get >/dev/null 2>&1; then
             apt-get update -y
-            apt-get install -y --no-install-recommends curl ca-certificates jq
+            # nodejs needed so download-artifact (a JS action) can run.
+            apt-get install -y --no-install-recommends \
+              curl ca-certificates jq nodejs
+            rm -rf /var/lib/apt/lists/*
           fi
+          node --version
 
       - name: Download plugin artifact
         uses: actions/download-artifact@v3
