@@ -108,60 +108,63 @@ public static class RadioStations
             Codec = "aac",
         },
 
-        // Tomorrowland's flagship 24/7 dance station — MP3 192k.
+        // Tomorrowland family — URLs and metadata sourced from
+        // radio-browser.info (https://de1.api.radio-browser.info/json/
+        // stations/byname/tomorrowland) and verified live against
+        // StreamTheWorld.
+
+        // Flagship 24/7 dance station.
         new RadioStation
         {
             Name = "Tomorrowland — One World Radio",
-            StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_INTERNATIONAL.mp3",
-            LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
-            Homepage = "https://oneworldradio.tomorrowland.com/",
-            Genre = "Dance / Electronic",
-            Country = "BE",
-            BitrateKbps = 192,
-            Codec = "mp3",
-        },
-
-        // Same content, higher-quality HE-AAC 256k stream.
-        new RadioStation
-        {
-            Name = "Tomorrowland — One World Radio (HQ)",
             StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_INTERNATIONAL_ADP.aac",
-            LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
-            Homepage = "https://oneworldradio.tomorrowland.com/",
+            LogoUrl = "https://www.tomorrowland.com/home/apple-touch-icon.png",
+            Homepage = "https://www.tomorrowland.com/home/radio",
             Genre = "Dance / Electronic",
             Country = "BE",
             BitrateKbps = 256,
             Codec = "aac",
         },
 
-        // Iconic mainstage tracks and Tomorrowland classics.
-        // NOTE: at the time of writing the OWR_ANTHEMS endpoint returned
-        // 404 on StreamTheWorld; included on the operator's authority and
-        // because the upstream might restore it. Override via stations.json
-        // if it's still down.
+        // The DAB+ broadcast feed, branded "Anthems" — iconic
+        // mainstage tracks and Tomorrowland classics.
         new RadioStation
         {
             Name = "Tomorrowland — Anthems",
-            StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_ANTHEMS.mp3",
-            LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
-            Homepage = "https://oneworldradio.tomorrowland.com/",
+            StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_DAB_ADP.aac",
+            LogoUrl = "https://www.tomorrowland.com/home/apple-touch-icon.png",
+            Homepage = "https://www.tomorrowland.com/home/radio",
             Genre = "Dance / Mainstage Classics",
             Country = "BE",
-            BitrateKbps = 192,
-            Codec = "mp3",
+            BitrateKbps = 128,
+            Codec = "aac",
         },
 
-        // Side-channel: melodic, deep house and chill-out vibes (HE-AAC 256k).
+        // Side-channel: melodic, deep house and chill-out vibes.
         new RadioStation
         {
             Name = "Tomorrowland — Daybreak Sessions",
             StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_DAYBREAK_ADP.aac",
-            LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
-            Homepage = "https://oneworldradio.tomorrowland.com/",
+            LogoUrl = "https://www.tomorrowland.com/home/apple-touch-icon.png",
+            Homepage = "https://www.tomorrowland.com/home/one-world-radio/",
             Genre = "Deep House / Chillout",
             Country = "BE",
             BitrateKbps = 256,
             Codec = "aac",
+        },
+
+        // German rebroadcast on bigFM — handy fallback if StreamTheWorld
+        // is geo-blocked or rate-limited for your network.
+        new RadioStation
+        {
+            Name = "Tomorrowland — bigFM One World Radio",
+            StreamUrl = "https://stream.bigfm.de/tomorrowland/mp3-128/radiobrowser",
+            LogoUrl = "https://image.atsw.de/atsw/production/2024-09/tml_cover_600x600_px.jpg",
+            Homepage = "https://www.bigfm.de/",
+            Genre = "Dance / Electronic",
+            Country = "DE",
+            BitrateKbps = 128,
+            Codec = "mp3",
         },
     ];
 }
