@@ -107,5 +107,32 @@ public static class RadioStations
             BitrateKbps = 192,
             Codec = "aac",
         },
+
+        // Tomorrowland's official 24/7 dance station, in HE-AAC 256k.
+        // (A 192k MP3 variant exists at OWR_INTERNATIONAL.mp3 if needed.)
+        new RadioStation
+        {
+            Name = "Tomorrowland — One World Radio",
+            StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_INTERNATIONAL_ADP.aac",
+            LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
+            Homepage = "https://oneworldradio.tomorrowland.com/",
+            Genre = "Dance / Electronic",
+            Country = "BE",
+            BitrateKbps = 256,
+            Codec = "aac",
+        },
+
+        // Side-channel: melodic, deep house and chill-out vibes.
+        new RadioStation
+        {
+            Name = "Tomorrowland — Daybreak Sessions",
+            StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_DAYBREAK_ADP.aac",
+            LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
+            Homepage = "https://oneworldradio.tomorrowland.com/",
+            Genre = "Deep House / Chillout",
+            Country = "BE",
+            BitrateKbps = 256,
+            Codec = "aac",
+        },
     ];
 }
