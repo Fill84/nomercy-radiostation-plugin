@@ -108,11 +108,23 @@ public static class RadioStations
             Codec = "aac",
         },
 
-        // Tomorrowland's official 24/7 dance station, in HE-AAC 256k.
-        // (A 192k MP3 variant exists at OWR_INTERNATIONAL.mp3 if needed.)
+        // Tomorrowland's flagship 24/7 dance station — MP3 192k.
         new RadioStation
         {
             Name = "Tomorrowland — One World Radio",
+            StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_INTERNATIONAL.mp3",
+            LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
+            Homepage = "https://oneworldradio.tomorrowland.com/",
+            Genre = "Dance / Electronic",
+            Country = "BE",
+            BitrateKbps = 192,
+            Codec = "mp3",
+        },
+
+        // Same content, higher-quality HE-AAC 256k stream.
+        new RadioStation
+        {
+            Name = "Tomorrowland — One World Radio (HQ)",
             StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_INTERNATIONAL_ADP.aac",
             LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
             Homepage = "https://oneworldradio.tomorrowland.com/",
@@ -122,7 +134,24 @@ public static class RadioStations
             Codec = "aac",
         },
 
-        // Side-channel: melodic, deep house and chill-out vibes.
+        // Iconic mainstage tracks and Tomorrowland classics.
+        // NOTE: at the time of writing the OWR_ANTHEMS endpoint returned
+        // 404 on StreamTheWorld; included on the operator's authority and
+        // because the upstream might restore it. Override via stations.json
+        // if it's still down.
+        new RadioStation
+        {
+            Name = "Tomorrowland — Anthems",
+            StreamUrl = "https://playerservices.streamtheworld.com/api/livestream-redirect/OWR_ANTHEMS.mp3",
+            LogoUrl = "https://oneworldradio.tomorrowland.com/_next/static/media/logo.svg",
+            Homepage = "https://oneworldradio.tomorrowland.com/",
+            Genre = "Dance / Mainstage Classics",
+            Country = "BE",
+            BitrateKbps = 192,
+            Codec = "mp3",
+        },
+
+        // Side-channel: melodic, deep house and chill-out vibes (HE-AAC 256k).
         new RadioStation
         {
             Name = "Tomorrowland — Daybreak Sessions",

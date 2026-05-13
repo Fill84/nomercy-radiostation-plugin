@@ -11,9 +11,10 @@ country) in `Properties`.
 
 - `Plugin.cs` — the entry class implementing `IMediaSourcePlugin`.
 - `RadioStation.cs` — immutable record describing a station.
-- `RadioStations.cs` — ten bundled stations (SomaFM Groove Salad, SomaFM
-  Drone Zone, Radio Paradise, BBC Radio 1, BBC Radio 6 Music, NTS 1, KEXP,
-  FIP, Tomorrowland One World Radio, Tomorrowland Daybreak Sessions).
+- `RadioStations.cs` — twelve bundled stations (SomaFM Groove Salad,
+  SomaFM Drone Zone, Radio Paradise, BBC Radio 1, BBC Radio 6 Music,
+  NTS 1, KEXP, FIP, plus four Tomorrowland stations: One World Radio
+  MP3, One World Radio HQ AAC, Anthems, Daybreak Sessions).
 - `plugin.json` — the manifest the server reads at start-up.
 
 ## Plugin contract (recap)
