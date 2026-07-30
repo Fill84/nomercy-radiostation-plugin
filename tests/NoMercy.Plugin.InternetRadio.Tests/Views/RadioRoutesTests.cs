@@ -51,6 +51,12 @@ public class RadioRoutesTests
     {
         RadioRoutes.Parse("/Settings").Kind.Should().Be(RadioRouteKind.Settings);
         RadioRoutes.Parse("/GENRE/rock").Kind.Should().Be(RadioRouteKind.Genre);
+
+        // The segment NAME ("genre") is matched case-insensitively, but the VALUE
+        // that follows it is not touched - it must survive with its case intact.
+        RadioRoute mixedCase = RadioRoutes.Parse("/GENRE/RockOn");
+        mixedCase.Kind.Should().Be(RadioRouteKind.Genre);
+        mixedCase.Value.Should().Be("RockOn");
     }
 
     [Theory]
@@ -86,5 +92,18 @@ public class RadioRoutesTests
         string route = RadioRoutes.Station("a b/c");
 
         RadioRoutes.Parse(route).Value.Should().Be("a b/c");
+    }
+
+    // Documents a known limitation rather than pinning a desired behaviour: an
+    // empty slug/id builds a trailing-slash path ("/station/"), and Parse's
+    // RemoveEmptyEntries drops that last segment, so the round trip lands on
+    // Unknown instead of Station/Genre with an empty Value. This is why callers
+    // must never pass an empty id or slug to Genre/Station - see the comment on
+    // those builders for why no live caller can produce one today.
+    [Fact]
+    public void Parse_TreatsARouteBuiltFromAnEmptyValueAsUnknown()
+    {
+        RadioRoutes.Parse(RadioRoutes.Station("")).Kind.Should().Be(RadioRouteKind.Unknown);
+        RadioRoutes.Parse(RadioRoutes.Genre("")).Kind.Should().Be(RadioRouteKind.Unknown);
     }
 }

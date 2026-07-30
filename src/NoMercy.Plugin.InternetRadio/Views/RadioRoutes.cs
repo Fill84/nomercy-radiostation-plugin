@@ -33,6 +33,15 @@ public static class RadioRoutes
     private const string GenrePrefix = "genre";
     private const string StationPrefix = "station";
 
+    // `slug`/`id` must be non-empty for the built route to round-trip: an empty
+    // value builds a trailing-slash path (e.g. "/station/"), and Parse's
+    // RemoveEmptyEntries then drops that last segment, so it comes back Unknown
+    // rather than Station/Genre with an empty Value. This is currently unreachable:
+    // StationGates.Slugify never returns an empty string (it falls back to
+    // "station"), GenreMap slugs are all derived through Slugify, and
+    // StationOverrides falls back to Slugify(Name) whenever a user-supplied id is
+    // blank. See Parse_TreatsARouteBuiltFromAnEmptyValueAsUnknown for the pinned
+    // behaviour if that ever stops being true.
     public static string Genre(string slug) => $"/{GenrePrefix}/{Uri.EscapeDataString(slug)}";
 
     public static string Station(string id) => $"/{StationPrefix}/{Uri.EscapeDataString(id)}";
