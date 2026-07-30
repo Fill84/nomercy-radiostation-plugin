@@ -84,11 +84,33 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
         StationCatalog catalog = await Provider.RefreshAsync(linked.Token);
 
-        context.Logger.LogInformation(
-            "Internet Radio refreshed its catalogue: {Count} stations from {Source}.",
-            catalog.Count,
-            catalog.Source
-        );
+        // RefreshAsync deliberately does not consult StationOverrides - it keeps the
+        // cache warm for the day a user deletes their override file - but every view
+        // still resolves through GetAsync, which checks the override first. When one
+        // is active, "fetched" here is not what any screen is showing, and the log
+        // has to say so rather than let an operator watching both conclude something
+        // is broken because the log says Fetched while the settings page says
+        // UserOverride. This changes only the wording: the refresh still runs, still
+        // hits the network and still rewrites the cache exactly as before.
+        bool overrideActive = StationOverrides.TryLoad(context.DataFolderPath, context.Logger) is not null;
+
+        if (overrideActive)
+        {
+            context.Logger.LogInformation(
+                "Internet Radio refreshed its catalogue in the background: {Count} stations from {Source}. "
+                    + "A user override is active, so views are unaffected by this refresh.",
+                catalog.Count,
+                catalog.Source
+            );
+        }
+        else
+        {
+            context.Logger.LogInformation(
+                "Internet Radio refreshed its catalogue: {Count} stations from {Source}.",
+                catalog.Count,
+                catalog.Source
+            );
+        }
     }
 
     // === IUiPlugin =========================================================
@@ -130,13 +152,16 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             );
         }
 
-        IPluginContext context = Context;
-        RadioRoute route = RadioRoutes.Parse(request.Route);
-
-        // Resolved before the switch so every route sees the same catalogue, and the
-        // failure below covers building it as well as rendering from it.
+        // Context and route parsing sit inside the try along with everything else,
+        // not resolved ahead of it: a view request that somehow arrives before
+        // Initialize is unreachable given the host's ordering, but it is not this
+        // caller's bug the way a tick out of order is, and it must land on the same
+        // error view as any other failure to build one rather than throw into the
+        // request pipeline.
         try
         {
+            IPluginContext context = Context;
+            RadioRoute route = RadioRoutes.Parse(request.Route);
             StationCatalog catalog = await Provider.GetAsync(ct);
 
             return route.Kind switch
@@ -165,8 +190,10 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             // These pages are the plugin's only diagnostic surface, so a failure that
             // throws through them hides its own cause: the owner sees a broken panel
             // instead of learning what went wrong. The rendered text names what
-            // failed and never the exception detail.
-            context.Logger.LogError(exception, "Internet Radio could not build the view for {Route}.", request.Route);
+            // failed and never the exception detail. Logged only when a context
+            // exists to log through - a request this early has nowhere sanctioned to
+            // report to, and that is not this caller's fault either.
+            _context?.Logger.LogError(exception, "Internet Radio could not build the view for {Route}.", request.Route);
 
             return PluginViews.Declarative(
                 PluginViews.Container(

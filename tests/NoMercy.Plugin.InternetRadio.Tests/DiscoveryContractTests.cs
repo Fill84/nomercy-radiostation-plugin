@@ -70,7 +70,16 @@ public class DiscoveryContractTests
                 PluginHookCapability.Metadata => typeof(IMetadataPlugin),
                 PluginHookCapability.Auth => typeof(IAuthPlugin),
                 PluginHookCapability.Encoder => typeof(IEncoderPlugin),
-                _ => typeof(IPlugin),
+                // Every hook this plugin's manifest can declare must be mapped above.
+                // Falling back to typeof(IPlugin) here would make this arm vacuously
+                // true - IPlugin is the base every plugin type implements - so a
+                // typo'd or future hook string would satisfy the test instead of
+                // failing it. Failing loudly means adding a hook to plugin.json
+                // without adding its mapping here breaks the test suite rather than
+                // silently passing.
+                _ => throw new InvalidOperationException(
+                    $"Unrecognised hook '{hook}' declared in plugin.json; add a mapping to "
+                        + $"{nameof(EntryType_ImplementsEveryInterfaceItsManifestClaims)} before shipping it."),
             };
 
             expected.IsAssignableFrom(typeof(InternetRadioPlugin)).Should()
