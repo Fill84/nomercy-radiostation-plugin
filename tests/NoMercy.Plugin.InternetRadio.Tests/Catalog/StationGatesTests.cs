@@ -63,6 +63,17 @@ public class StationGatesTests
         StationGates.Admits(Wire(name: name!)).Should().BeFalse();
     }
 
+    // stationuuid is nullable on the wire DTO so a row missing it can be parsed
+    // rather than throwing away the whole response; admission is what has to catch
+    // it instead, since RadioStation.Id (built from it) is not nullable.
+    [Fact]
+    public void Admits_RejectsAMissingStationUuid()
+    {
+        RadioBrowserStation station = Wire() with { StationUuid = null };
+
+        StationGates.Admits(station).Should().BeFalse();
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

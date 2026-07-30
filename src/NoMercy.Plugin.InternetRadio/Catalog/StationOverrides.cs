@@ -77,7 +77,7 @@ public static class StationOverrides
                         Language = entry.Language,
                         BitrateKbps = entry.BitrateKbps,
                         Codec = entry.Codec,
-                        Popularity = entry.Popularity,
+                        Popularity = entry.Popularity ?? 0,
                         IsUserSupplied = true,
                     }),
             ];
@@ -101,7 +101,12 @@ public static class StationOverrides
     // the whole point of this file is that a hand-written entry only has to carry a
     // name and a stream URL, and JsonSerializer.Deserialize<RadioStation> would
     // refuse the input before that leniency could apply.
-    private sealed record OverrideEntry
+    //
+    // Internal rather than private: a test asserts this mirror stays in sync with
+    // RadioStation's own [JsonPropertyName] set, so a later property added to
+    // RadioStation without a matching one here fails a build instead of silently
+    // vanishing from every user's stations.json.
+    internal sealed record OverrideEntry
     {
         [JsonPropertyName("id")]
         public string? Id { get; init; }
@@ -133,7 +138,10 @@ public static class StationOverrides
         [JsonPropertyName("codec")]
         public string? Codec { get; init; }
 
+        // Nullable, not int: an explicit "popularity": null in a hand-written file
+        // must not throw and discard every other entry in it over one field that is
+        // ordering-only and never shown.
         [JsonPropertyName("popularity")]
-        public int Popularity { get; init; }
+        public int? Popularity { get; init; }
     }
 }

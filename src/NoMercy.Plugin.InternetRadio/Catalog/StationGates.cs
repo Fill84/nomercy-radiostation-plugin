@@ -23,7 +23,10 @@ public static class StationGates
 
     public static bool Admits(RadioBrowserStation station)
     {
-        if (string.IsNullOrWhiteSpace(station.Name))
+        // Both are nullable on the wire DTO precisely so a row missing one does not
+        // throw during parsing (see RadioBrowserStation's header comment) - which
+        // means admission, not deserialization, is what has to reject it.
+        if (string.IsNullOrWhiteSpace(station.StationUuid) || string.IsNullOrWhiteSpace(station.Name))
         {
             return false;
         }

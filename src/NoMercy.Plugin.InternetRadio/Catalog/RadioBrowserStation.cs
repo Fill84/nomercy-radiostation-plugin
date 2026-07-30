@@ -15,10 +15,10 @@ namespace NoMercy.Plugin.InternetRadio;
 public sealed record RadioBrowserStation
 {
     [JsonPropertyName("stationuuid")]
-    public required string StationUuid { get; init; }
+    public string? StationUuid { get; init; }
 
     [JsonPropertyName("name")]
-    public required string Name { get; init; }
+    public string? Name { get; init; }
 
     [JsonPropertyName("url")]
     public string? Url { get; init; }

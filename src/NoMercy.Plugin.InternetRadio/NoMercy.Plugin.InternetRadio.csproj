@@ -34,4 +34,13 @@
         </None>
     </ItemGroup>
 
+    <ItemGroup>
+        <!--
+            Lets the test project reference StationOverrides.OverrideEntry directly,
+            so the drift test in StationOverridesTests.cs reflects over a real Type
+            reference rather than a fragile string-based nested-type lookup.
+        -->
+        <InternalsVisibleTo Include="NoMercy.Plugin.InternetRadio.Tests" />
+    </ItemGroup>
+
 </Project>

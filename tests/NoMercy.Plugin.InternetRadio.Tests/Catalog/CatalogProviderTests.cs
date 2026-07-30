@@ -48,8 +48,10 @@ public sealed class CatalogProviderTests : IDisposable
         StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
 
         catalog.Source.Should().Be(CatalogSource.Fetched);
-        catalog.Stations.Should().NotBeEmpty();
-        catalog.Stations[0].Genre.Should().Be("Ambient");
+        // ContainSingle rather than Stations[0]: this asserts there is exactly one
+        // station with the expected genre, not incidentally which index the
+        // implementation happened to put it at.
+        catalog.Stations.Should().ContainSingle().Which.Genre.Should().Be("Ambient");
     }
 
     [Fact]
@@ -123,6 +125,56 @@ public sealed class CatalogProviderTests : IDisposable
         _logger.Entries.Should().Contain(entry => entry.Level == LogLevel.Warning);
     }
 
+    // An HttpClient timeout raises TaskCanceledException - which derives from
+    // OperationCanceledException - with an UNCANCELLED caller token: ct here is
+    // CancellationToken.None throughout, exactly as it would be on a real timeout,
+    // distinguishing this from PropagatesCancellation below where the caller's own
+    // token is the one that fires. A hanging mirror is the commonest shape of an
+    // outage, well inside HttpClient's 100s default timeout, and this must be
+    // treated as a fetch failure - not rethrown past the stale-cache fallback.
+    [Fact]
+    public async Task ServesAStaleCacheWhenTheFetchTimesOut()
+    {
+        await new CatalogCache(_folder).WriteAsync(
+            [new RadioStation { Id = "old", Name = "Old FM", StreamUrl = "https://example.com/old" }],
+            DateTimeOffset.UtcNow - TimeSpan.FromDays(30),
+            CancellationToken.None);
+        _handler.Fail(new TaskCanceledException("timeout", new TimeoutException()));
+
+        StationCatalog catalog = await Provider(TimeSpan.FromHours(1)).GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Cache);
+        catalog.Stations.Should().ContainSingle().Which.Id.Should().Be("old");
+        catalog.LastFetchFailed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReturnsEmptyRatherThanThrowingWhenTheFetchTimesOutAndThereIsNoCache()
+    {
+        _handler.Fail(new TaskCanceledException("timeout", new TimeoutException()));
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.IsEmpty.Should().BeTrue();
+        catalog.Source.Should().Be(CatalogSource.Unavailable);
+        catalog.LastFetchFailed.Should().BeTrue();
+    }
+
+    // The counterpart to the two tests above: a genuine caller cancellation - the
+    // token passed to GetAsync itself firing - must still propagate rather than
+    // being swallowed as a fetch failure.
+    [Fact]
+    public async Task PropagatesAGenuineCallerCancellation()
+    {
+        _handler.Respond(Payload("u1", "Example FM", "https://example.com/a"));
+        using CancellationTokenSource cts = new();
+        await cts.CancelAsync();
+
+        await FluentActions
+            .Awaiting(() => Provider().GetAsync(cts.Token))
+            .Should().ThrowAsync<OperationCanceledException>();
+    }
+
     // One genre failing must not lose the other sixteen and the seeds with them.
     [Fact]
     public async Task KeepsWhatSucceededWhenOneGenreQueryFails()
@@ -146,18 +198,84 @@ public sealed class CatalogProviderTests : IDisposable
         StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
 
         catalog.Source.Should().Be(CatalogSource.Fetched);
-        catalog.Stations.Should().NotBeEmpty();
+        // NotBeEmpty() alone cannot fail if the sweep aborts on the first genre
+        // failure, since the seed request (call 1) already satisfies it - the exact
+        // count is what proves the other sixteen sections were not thrown away too.
+        // 1 seed + every genre section except the one that 500s, each a distinct
+        // station so none collide in Deduplicate.
+        catalog.Stations.Should().HaveCount(1 + GenreMap.Sections.Count - 1);
+    }
+
+    [Fact]
+    public async Task FlagsAFailedFetchWhenSeedsSucceedButEveryGenreQueryFails()
+    {
+        int call = 0;
+        _handler.RespondPerRequest(_ =>
+        {
+            call++;
+            return call == 1
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            Payload("u1", "Seed FM", "https://example.com/seed"),
+                            System.Text.Encoding.UTF8,
+                            "application/json"),
+                    }
+                : new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    { Content = new StringContent("boom") };
+        });
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        // A clean Fetched with LastFetchFailed == false would tell the settings page
+        // everything is fine while seventeen of eighteen requests just failed, and
+        // this ten-ish-station result would silently overwrite a previously good,
+        // much larger cache that the 36-hour TTL then serves with no indicator.
+        catalog.Source.Should().Be(CatalogSource.Fetched);
+        catalog.LastFetchFailed.Should().BeTrue();
+        catalog.Stations.Should().ContainSingle();
     }
 
     [Fact]
     public async Task DropsStationsThatFailTheGates()
     {
-        // http, so it would be blocked as mixed content in the browser.
-        _handler.Respond(Payload("u1", "Insecure FM", "http://example.com/a"));
+        int call = 0;
+        _handler.RespondPerRequest(_ =>
+        {
+            call++;
+            // http, so it would be blocked as mixed content in the browser - mixed in
+            // with one good station so this cannot pass by the catalogue simply
+            // being empty (which a provider unconditionally returning Empty() would
+            // also satisfy).
+            string payload = call == 1
+                ? Payload("u1", "Good FM", "https://example.com/a")
+                : Payload("u2", "Insecure FM", "http://example.com/b");
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
 
         StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
 
+        catalog.Stations.Should().Contain(station => station.Name == "Good FM");
         catalog.Stations.Should().NotContain(station => station.Name == "Insecure FM");
+    }
+
+    // "No stations" and "the refresh is broken" must not share one flag: an empty
+    // grid because every response legitimately returned nothing (a tag nobody uses,
+    // or every row gate-rejected) must not read as an outage on the settings page.
+    [Fact]
+    public async Task DoesNotFlagAFailedFetchWhenEveryRequestSucceededButNothingWasAdmitted()
+    {
+        _handler.Respond("[]");
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.IsEmpty.Should().BeTrue();
+        catalog.Source.Should().Be(CatalogSource.Unavailable);
+        catalog.LastFetchFailed.Should().BeFalse();
     }
 
     [Fact]
@@ -198,6 +316,21 @@ public sealed class CatalogProviderTests : IDisposable
 
         station.Id.Should().Be("my-station");
         station.IsUserSupplied.Should().BeTrue();
+    }
+
+    // Popularity is ordering-only and never shown, so an explicit null for it must
+    // not cost the user their entire file over a warning.
+    [Fact]
+    public async Task ToleratesAnExplicitNullPopularityInTheOverride()
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(_folder, StationOverrides.FileName),
+            """[{"name":"My Station","streamUrl":"https://mine.example/stream","popularity":null}]""");
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.UserOverride);
+        catalog.Stations.Should().ContainSingle().Which.Popularity.Should().Be(0);
     }
 
     [Fact]

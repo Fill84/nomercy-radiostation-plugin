@@ -243,6 +243,30 @@ public class RadioBrowserClientTests
         station.Bitrate.Should().Be(0);
     }
 
+    // stationuuid and name used to be `required`, so System.Text.Json enforced them
+    // during deserialization itself and one row missing either threw JsonException
+    // out of this client - costing the whole response, all ten seeds or an entire
+    // genre, to one malformed record. Both are nullable now precisely so admission
+    // (StationGates.Admits), not parsing, is what rejects a row like this.
+    [Fact]
+    public async Task ParsesTheGoodRowsWhenAnotherRowIsMissingARequiredField()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond("""
+            [
+              {"stationuuid":"a","name":"Good FM","url":"https://example.com/a","hls":0,"lastcheckok":1},
+              {"url":"https://example.com/bad","hls":0,"lastcheckok":1}
+            ]
+            """);
+
+        IReadOnlyList<RadioBrowserStation> stations =
+            await client.SearchByTagAsync("ambient", 5, CancellationToken.None);
+
+        stations.Should().HaveCount(2);
+        stations.Should().Contain(station => station.Name == "Good FM");
+        stations.Should().Contain(station => station.StationUuid == null);
+    }
+
     [Fact]
     public async Task PropagatesCancellation()
     {

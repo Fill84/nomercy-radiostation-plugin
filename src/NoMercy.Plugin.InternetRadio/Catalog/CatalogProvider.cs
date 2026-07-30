@@ -63,7 +63,15 @@ public sealed class CatalogProvider(
         {
             collected.AddRange(Convert(await client.GetByUuidsAsync(SeedStations.Uuids, ct)));
         }
-        catch (OperationCanceledException)
+        // An HttpClient timeout raises TaskCanceledException, which derives from
+        // OperationCanceledException but is NOT a caller cancellation - it carries
+        // its own internal token, distinct from ct, and ct.IsCancellationRequested
+        // is false. Rethrowing it unconditionally would let a hanging mirror (the
+        // commonest shape of an outage, well within HttpClient's 100s default
+        // timeout) escape GetAsync entirely and skip the stale-cache fallback below
+        // - worse than the empty grid this design exists to avoid. Only rethrow when
+        // it is genuinely this call's own token that fired.
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
@@ -82,7 +90,10 @@ public sealed class CatalogProvider(
                 collected.AddRange(
                     Convert(await client.SearchByTagAsync(section.Tag, SeedStations.PerGenreLimit, ct)));
             }
-            catch (OperationCanceledException)
+            // See the identical guard on the seed fetch above: a per-request timeout
+            // must be treated as this genre's failure, not as this call's own
+            // cancellation.
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
             }
@@ -116,7 +127,13 @@ public sealed class CatalogProvider(
                 logger.LogWarning(exception, "Internet Radio could not write its catalogue cache.");
             }
 
-            return StationCatalog.Create(stations, CatalogSource.Fetched, now);
+            // Some stations came back, but if the seed fetch or a genre query failed
+            // along the way this is a degraded result, not a clean one - the settings
+            // page has to say so, and a healthy 36-hour TTL must not go on quietly
+            // serving a 10-station catalogue in place of the ~80-station one that
+            // preceded it.
+            StationCatalog fetched = StationCatalog.Create(stations, CatalogSource.Fetched, now);
+            return anythingFailed ? fetched.WithFailedFetch() : fetched;
         }
 
         // Nothing came back. Anything already on disk is better than an empty grid,
@@ -131,25 +148,59 @@ public sealed class CatalogProvider(
                 .WithFailedFetch();
         }
 
-        logger.LogWarning("Internet Radio has no stations: the refresh failed and there is no cache.");
+        // No cache to fall back on either. Distinguish an outage from a legitimately
+        // empty result - every request succeeding but admitting nothing (every row
+        // gate-rejected, or a mirror answering `200 []`) is not the same problem as
+        // the refresh actually failing, and the settings page must not claim an
+        // outage that did not happen.
+        if (anythingFailed)
+        {
+            logger.LogWarning("Internet Radio has no stations: the refresh failed and there is no cache.");
+        }
+        else
+        {
+            logger.LogWarning(
+                "Internet Radio has no stations: every request succeeded but returned nothing admissible, "
+                    + "and there is no cache.");
+        }
+
         return StationCatalog.Empty(lastFetchFailed: anythingFailed);
     }
 
-    private static IEnumerable<RadioStation> Convert(IEnumerable<RadioBrowserStation> wire) =>
-        wire.Where(StationGates.Admits).Select(station => new RadioStation
+    private static IEnumerable<RadioStation> Convert(IEnumerable<RadioBrowserStation> wire)
+    {
+        foreach (RadioBrowserStation station in wire)
         {
-            Id = station.StationUuid,
-            Name = station.Name.Trim(),
-            StreamUrl = StationGates.EffectiveUrl(station),
-            LogoUrl = string.IsNullOrWhiteSpace(station.Favicon) ? null : station.Favicon,
-            Homepage = string.IsNullOrWhiteSpace(station.Homepage) ? null : station.Homepage,
-            Genre = GenreMap.Resolve(station.Tags),
-            Country = string.IsNullOrWhiteSpace(station.CountryCode) ? null : station.CountryCode,
-            Language = string.IsNullOrWhiteSpace(station.Language) ? null : station.Language,
-            // radio-browser reports 0 for "unknown", which is not the same as a
-            // zero-bitrate stream and must not render as "0 kbps".
-            BitrateKbps = station.Bitrate > 0 ? station.Bitrate : null,
-            Codec = string.IsNullOrWhiteSpace(station.Codec) ? null : station.Codec,
-            Popularity = station.Votes,
-        });
+            if (!StationGates.Admits(station))
+            {
+                continue;
+            }
+
+            // Admits has already rejected a station with no stationuuid or name, but
+            // that gate runs against a different type and the compiler cannot carry
+            // that guarantee across the call - these patterns narrow the two wire
+            // fields RadioStation requires non-null, rather than asserting it with `!`.
+            if (station.StationUuid is not { } uuid || station.Name is not { } name)
+            {
+                continue;
+            }
+
+            yield return new RadioStation
+            {
+                Id = uuid,
+                Name = name.Trim(),
+                StreamUrl = StationGates.EffectiveUrl(station),
+                LogoUrl = string.IsNullOrWhiteSpace(station.Favicon) ? null : station.Favicon,
+                Homepage = string.IsNullOrWhiteSpace(station.Homepage) ? null : station.Homepage,
+                Genre = GenreMap.Resolve(station.Tags),
+                Country = string.IsNullOrWhiteSpace(station.CountryCode) ? null : station.CountryCode,
+                Language = string.IsNullOrWhiteSpace(station.Language) ? null : station.Language,
+                // radio-browser reports 0 for "unknown", which is not the same as a
+                // zero-bitrate stream and must not render as "0 kbps".
+                BitrateKbps = station.Bitrate > 0 ? station.Bitrate : null,
+                Codec = string.IsNullOrWhiteSpace(station.Codec) ? null : station.Codec,
+                Popularity = station.Votes,
+            };
+        }
+    }
 }
