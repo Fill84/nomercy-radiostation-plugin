@@ -275,13 +275,48 @@ rather than quietly replaced.
 | KEXP 90.3 FM Seattle | `445cbb3a-1c4e-49aa-a268-f5b6acfa8f2e` | |
 | FIP — Radio France | `a349e1e9-2844-443a-973b-09a02fa12c8e` | no logo in radio-browser; view handles a missing image |
 | Tomorrowland — One World Radio | `9e31c4e7-03b6-4a80-a4e2-5977b023d32c` | |
-| Tomorrowland — Anthems | `5f3fa761-76be-4672-98fd-c5e71771834d` | `OWR_DAB.mp3`; the `_ADP` variant we had is not in radio-browser |
+| Tomorrowland — Anthems | `93e04f4d-f964-453a-9c64-9dd7bc32f21d` | **submitted by us** — see below |
 | Tomorrowland — Daybreak Sessions | `c77644fa-5d0d-47f6-93ef-850805efefad` | |
 | Tomorrowland — bigFM One World Radio | `d23f9ea2-80bd-4b43-b25c-31903bbbcaec` | |
 
-**Dropped: BBC Radio 1 and BBC Radio 6 Music.** radio-browser carries 13 and 3
-records for them respectively, and every one is HLS over `http://`. There is no
-gate-passing record to pin.
+All ten were then fetched for real and range-requested. Nine returned audio.
+One did not.
+
+### Tomorrowland Anthems: the endpoint moved, and radio-browser did not notice
+
+Anthems was the one station that could not be sourced, and finding out required
+actually connecting to it:
+
+| URL | Result |
+| --- | --- |
+| `OWR_DAB_ADP.aac` — what this repo hardcoded | **404** |
+| `OWR_DAB.mp3` — radio-browser's record, flagged `lastcheckok=1` | **404** |
+| `OWR_ANTHEMS_ADP.aac` | **live**, 206, `audio/aacp` |
+
+Tomorrowland moved the endpoint. Our hardcoded URL died with it, and
+radio-browser's only Anthems record is dead too while still advertising itself
+as checked — so the working stream existed in neither place.
+
+Rather than hardcode the URL we verified, **the stream was submitted to
+radio-browser** (`POST /json/add`, uuid
+`93e04f4d-f964-453a-9c64-9dd7bc32f21d`). It was checked and passed every gate
+immediately: HTTPS, non-HLS, `lastcheckok=1`, `AAC+ 128`. So it is pinned by
+UUID like the other nine, nothing is hardcoded, and the correction is now
+available to every radio-browser consumer rather than to this plugin alone.
+
+**This is also the limit of the `lastcheckok` gate, stated plainly.**
+radio-browser reported a 404 URL as healthy. The gates filter what is
+*declared*, and declaration is not verification. Discovered stations are
+therefore admitted on radio-browser's word, and a dead one surfaces as a
+playback error rather than being caught up front — checking every discovered
+stream would mean an outbound request per station host, which the network
+allowlist rightly does not permit. The seeds, being ten, *are* verified for
+real, by `scripts/resolve-seeds.sh` before a release.
+
+### Dropped: BBC Radio 1 and BBC Radio 6 Music
+
+radio-browser carries 13 and 3 records for them respectively, and every one is
+HLS over `http://`. There is no gate-passing record to pin.
 
 This costs nothing that worked. Both stations are `http://` in the current
 catalogue too, so they are already blocked as mixed content in the browser — the
