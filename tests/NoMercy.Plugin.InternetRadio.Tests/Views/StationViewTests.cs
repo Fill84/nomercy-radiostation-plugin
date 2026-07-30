@@ -72,6 +72,18 @@ public class StationViewTests
         ActionOfType(view, PluginActionType.OpenWebView).Should().BeNull();
     }
 
+    // Homepage is untrusted from both of its sources (radio-browser.info is
+    // community-editable, and StationOverrides is deliberately ungated), and a
+    // button that opens a javascript: URL is worse than one that opens nothing.
+    // See StationGates.IsSafeExternalUrl.
+    [Fact]
+    public void OmitsTheHomepageButtonWhenTheHomepageIsNotAnHttpUrl()
+    {
+        PluginView view = StationView.Build(Catalog(Full with { Homepage = "javascript:alert(1)" }), "a");
+
+        ActionOfType(view, PluginActionType.OpenWebView).Should().BeNull();
+    }
+
     [Fact]
     public void ShowsTheFullRecordIncludingTheStreamUrl()
     {
@@ -121,6 +133,22 @@ public class StationViewTests
 
         ActionOfType(view, PluginActionType.PlayMedia).Should().NotBeNull();
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+
+        // The sentence-builder must not fall back to an empty or whitespace-only
+        // string when nothing is known - it has to be null, or the Detail component
+        // renders a stray blank line where a description would go.
+        PluginComponent detail = AllNodes(view).Single(node => node.Component == PluginComponentType.Detail);
+        detail.Props["description"].Should().BeNull();
+
+        // Stream and Source are the only two facts that always survive - Stream
+        // because it is required on RadioStation, Source because Provenance never
+        // returns null. Every other fact is optional and absent here, and a filtered
+        // fact must never leave a blank or null cell behind.
+        PluginComponent facts = AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
+        facts.Items.Should().HaveCount(2);
+        facts.Items.Select(row => row.Props["field"]).Should().Equal("Stream", "Source");
+        facts.Items.Select(row => row.Props["value"]).Should()
+            .OnlyContain(value => value != null && !string.IsNullOrWhiteSpace(value.ToString()));
     }
 
     [Fact]

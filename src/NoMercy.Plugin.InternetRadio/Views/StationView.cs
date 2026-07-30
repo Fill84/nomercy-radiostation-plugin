@@ -106,9 +106,10 @@ public static class StationView
             ),
         ];
 
-        // Only when there is somewhere to go. A button that opens nothing is worse
-        // than an absent one.
-        if (!string.IsNullOrWhiteSpace(station.Homepage))
+        // Only when there is somewhere safe to go. A button that opens nothing - or
+        // that opens a javascript:/file:/data: URL a community-editable source
+        // supplied - is worse than an absent one. See StationGates.IsSafeExternalUrl.
+        if (StationGates.IsSafeExternalUrl(station.Homepage))
         {
             buttons.Add(
                 PluginViews.Button(

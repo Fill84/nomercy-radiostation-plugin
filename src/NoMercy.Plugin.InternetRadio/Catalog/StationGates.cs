@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 
 namespace NoMercy.Plugin.InternetRadio;
@@ -93,6 +94,20 @@ public static class StationGates
 
         return kept;
     }
+
+    /// <summary>
+    /// Guards a URL handed to the client's webview (currently: a station's homepage)
+    /// before it leaves the plugin. Homepage is untrusted from both of its sources -
+    /// radio-browser.info is a community-editable database, and StationOverrides is
+    /// deliberately ungated - and unlike StreamUrl (forced to HTTPS by Admits above)
+    /// nothing restricts its scheme. Whether the client sandboxes a javascript:,
+    /// file: or data: value is not knowable from this repo, so the plugin must not
+    /// emit one. True only for an absolute http or https URL.
+    /// </summary>
+    public static bool IsSafeExternalUrl([NotNullWhen(true)] string? url) =>
+        !string.IsNullOrWhiteSpace(url)
+        && Uri.TryCreate(url, UriKind.Absolute, out Uri? parsed)
+        && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps);
 
     /// <summary>
     /// A lowercase, hyphen-separated, ASCII-safe form of a name. Used both as the

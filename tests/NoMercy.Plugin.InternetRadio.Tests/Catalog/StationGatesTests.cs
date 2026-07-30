@@ -199,4 +199,29 @@ public class StationGatesTests
     {
         StationGates.Slugify("!!!").Should().NotBeEmpty();
     }
+
+    // Homepage is untrusted from both of its sources - radio-browser.info is
+    // community-editable, and StationOverrides is deliberately ungated - and unlike
+    // StreamUrl nothing forces its scheme. This is the one gate standing between
+    // that value and the client's webview.
+    [Theory]
+    [InlineData("http://example.com")]
+    [InlineData("https://example.com")]
+    public void IsSafeExternalUrl_AcceptsHttpAndHttps(string url)
+    {
+        StationGates.IsSafeExternalUrl(url).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("file:///etc/passwd")]
+    [InlineData("data:text/html,<script>alert(1)</script>")]
+    [InlineData("/relative/path")]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void IsSafeExternalUrl_RejectsAnythingElse(string? url)
+    {
+        StationGates.IsSafeExternalUrl(url).Should().BeFalse();
+    }
 }
