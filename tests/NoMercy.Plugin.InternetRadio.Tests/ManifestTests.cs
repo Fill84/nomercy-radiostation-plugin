@@ -52,16 +52,16 @@ public class ManifestTests
     // The defect this repo actually shipped: v1.0.1 was tagged on a commit whose
     // manifest read 1.0.0, so an installed server reported 1.0.0 and was told an
     // update was available forever. CI gates the tag against this same value.
+    //
+    // No test here pins the concrete version string: the build's "Open the next
+    // patch version" step bumps it on every release, and a hardcoded literal would
+    // go stale the moment it did, failing every push until a human hand-edited it.
+    // The tag/manifest agreement this exists to protect is asserted at tag time by
+    // the CI gate instead, where the correct value - the tag just pushed - is known.
     [Fact]
     public void Manifest_VersionMatchesPluginIdentity()
     {
         Version.Parse(LoadManifest().Version).Should().Be(PluginIdentity.Version);
-    }
-
-    [Fact]
-    public void Manifest_VersionIsExactly_1_0_2()
-    {
-        LoadManifest().Version.Should().Be("1.0.2");
     }
 
     [Fact]

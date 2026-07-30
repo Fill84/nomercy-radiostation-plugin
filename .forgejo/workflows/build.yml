@@ -93,14 +93,21 @@ jobs:
           git init -q .
           git remote add origin "${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}.git"
 
-          # Written to a file rather than passed with `git -c`: an argument is visible
-          # in the host's process list, which on a self-hosted runner means any
-          # co-tenant process. Removed immediately afterwards.
+          # Written to a file rather than passed with `git -c`: an argument set via
+          # `git -c` sits in the process list for the entire `git fetch` invocation,
+          # which can run for seconds against a slow remote. `git config` below still
+          # takes the header as an argument too - argv exposure isn't eliminated - but
+          # that call completes in milliseconds, so the exposure window shrinks from
+          # "as long as the fetch takes" to "next to nothing". A predictable temp path
+          # is also a symlink target for a co-tenant process to plant ahead of time, so
+          # this uses mktemp rather than a fixed name.
           umask 077
+          AUTH_FILE=$(mktemp)
+          trap 'git config --local --unset-all http.extraHeader 2>/dev/null || true; rm -f "$AUTH_FILE"' EXIT
           printf 'Authorization: basic %s\n' \
-            "$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" > /tmp/gh-auth
-          git config --local http.extraHeader "$(cat /tmp/gh-auth)"
-          rm -f /tmp/gh-auth
+            "$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" > "$AUTH_FILE"
+          git config --local http.extraHeader "$(cat "$AUTH_FILE")"
+          rm -f "$AUTH_FILE"
 
           git fetch --depth=1 origin "$GITHUB_SHA"
           git config --local --unset-all http.extraHeader
@@ -201,13 +208,22 @@ jobs:
             exit 1
           fi
 
-          # The staged list is an allowlist, so an assembly added later would be named
-          # in deps.json, missing from the zip, and the plugin would fail to load with
-          # a FileNotFoundException while CI went green.
+          # This check only covers assemblies built from THIS repo: deps.json gives a
+          # project reference a bare filename key and a package a path key like
+          # lib/net10.0/Foo.dll, and the filter below (`grep -v '/'`) keeps the first
+          # group. For those, this is a real guarantee - if a project split off a
+          # second assembly and nobody added it to the copy list above, this fails
+          # instead of shipping a broken zip that would FileNotFoundException at load
+          # with CI green.
           #
-          # Scoped to assemblies built from THIS repo, which deps.json distinguishes:
-          # a project reference gets a bare filename key, a package gets a path key
-          # like lib/net10.0/Foo.dll. Only the first group is ours to ship.
+          # It is NOT a guarantee for a future third-party <PackageReference>. A
+          # package-sourced assembly is invisible to this check (path-keyed, filtered
+          # out), so one missing from the zip would still load-fail silently. That
+          # cannot be automated: this check has no way to tell a package the host
+          # already provides (safe to omit, like today's NoMercy.Plugins.Abstractions)
+          # from one the plugin genuinely needs shipped. Adding a package reference
+          # needs a deliberate decision about whether it ships - this check verifies
+          # today's decision stays correct, it does not make tomorrow's for you.
           command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
 
           PROJECT_ASSEMBLIES=$(jq -r '.targets[] | to_entries[] | .value.runtime // {} | keys[]' \
@@ -360,6 +376,13 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The real default-branch value. GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH is
+          # not an Actions-provided environment variable - nothing sets it - so a
+          # reference to it always evaluates to the literal fallback. That fallback is
+          # correct for this repo today, but the workflow's own trigger also lists
+          # `master`, so a repo using that convention would fetch a branch that does
+          # not exist, after the release has already published.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -eu
           RELEASED="${GITHUB_REF_NAME#v}"
@@ -373,26 +396,50 @@ jobs:
           # The tag build checked out a detached FETCH_HEAD, so the edits have to be
           # made ON the default branch - editing here first and then checking out
           # would simply discard them.
-          BRANCH="${GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH:-main}"
+          BRANCH="${DEFAULT_BRANCH:-main}"
           git config user.name  "forgejo-actions"
           git config user.email "actions@noreply.localhost"
 
+          # See the comment on the equivalent block in "Checkout plugin" for why this
+          # is a temp file rather than a `git -c` argument, why mktemp rather than a
+          # fixed name, and why the unset is unconditional.
           umask 077
+          AUTH_FILE=$(mktemp)
+          trap 'git config --local --unset-all http.extraHeader 2>/dev/null || true; rm -f "$AUTH_FILE"' EXIT
           printf 'Authorization: basic %s\n' \
-            "$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" > /tmp/gh-auth
-          git config --local http.extraHeader "$(cat /tmp/gh-auth)"
-          rm -f /tmp/gh-auth
+            "$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" > "$AUTH_FILE"
+          git config --local http.extraHeader "$(cat "$AUTH_FILE")"
+          rm -f "$AUTH_FILE"
 
           git fetch --depth=1 origin "$BRANCH"
           git checkout -q -B "$BRANCH" FETCH_HEAD
+          git config --local --unset-all http.extraHeader
 
           # All three, or ManifestTests fails on the very next push.
           jq --arg v "$NEXT" '.version = $v' "$PLUGIN_DIR/plugin.json" > /tmp/manifest.json
           mv /tmp/manifest.json "$PLUGIN_DIR/plugin.json"
+
           sed -i "s|<Version>$RELEASED</Version>|<Version>$NEXT</Version>|" \
             "$PLUGIN_DIR/$PLUGIN_NAME.csproj"
+          # A `sed` that silently matches nothing (e.g. the csproj was reformatted to
+          # `<Version>$RELEASED </Version>` or similar) would leave plugin.json bumped
+          # and the csproj not, and the `git diff --cached --quiet` check below can't
+          # tell "nothing needed changing" from "the edit failed" - both stage a diff
+          # from plugin.json alone. So each `sed` is checked for effect: a bump that
+          # cannot edit a file fails loudly naming the file, rather than pushing a
+          # tree whose three versions disagree - the exact defect this task exists to
+          # prevent, just relocated to the bump instead of the tag.
+          grep -qF "<Version>$NEXT</Version>" "$PLUGIN_DIR/$PLUGIN_NAME.csproj" || {
+            echo "::error::sed found no <Version>$RELEASED</Version> to replace in $PLUGIN_DIR/$PLUGIN_NAME.csproj" >&2
+            exit 1
+          }
+
           sed -i "s|new($MAJOR, $MINOR, $PATCH)|new($MAJOR, $MINOR, $((PATCH + 1)))|" \
             "$PLUGIN_DIR/PluginIdentity.cs"
+          grep -qF "new($MAJOR, $MINOR, $((PATCH + 1)))" "$PLUGIN_DIR/PluginIdentity.cs" || {
+            echo "::error::sed found no new($MAJOR, $MINOR, $PATCH) to replace in $PLUGIN_DIR/PluginIdentity.cs" >&2
+            exit 1
+          }
 
           git add "$PLUGIN_DIR/plugin.json" "$PLUGIN_DIR/$PLUGIN_NAME.csproj" \
                   "$PLUGIN_DIR/PluginIdentity.cs"
@@ -404,5 +451,3 @@ jobs:
             git commit -m "chore(release): open $NEXT for development [skip ci]"
             git push origin "HEAD:$BRANCH"
           fi
-
-          git config --local --unset-all http.extraHeader

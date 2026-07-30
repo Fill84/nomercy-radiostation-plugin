@@ -26,7 +26,9 @@ import urllib.parse
 import urllib.request
 
 API = "https://all.api.radio-browser.info"
-UA = "nomercy-radiostation-plugin/1.0.2 (+https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin)"
+# No patch version in the string: this file is not touched by the release bump, so a
+# pinned version here would go stale the moment CI opened the next one.
+UA = "nomercy-radiostation-plugin (+https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin)"
 
 SEEDS_FILE = (
     pathlib.Path(__file__).resolve().parent.parent
