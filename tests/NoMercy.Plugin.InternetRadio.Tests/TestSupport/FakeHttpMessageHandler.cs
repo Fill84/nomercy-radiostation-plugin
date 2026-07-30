@@ -15,6 +15,12 @@ public sealed class FakeHttpMessageHandler : HttpMessageHandler
 
     public List<HttpRequestMessage> Requests { get; } = [];
 
+    // Captured here, not read back off Requests[n].Content after the fact: the real
+    // client disposes its HttpRequestMessage once SendAsync returns (correctly - the
+    // body has been fully read by then), so anything that wants to assert on the body
+    // has to capture it during the call, not after.
+    public List<string> Bodies { get; } = [];
+
     public void Respond(string body, HttpStatusCode status = HttpStatusCode.OK) =>
         _responder = _ => new HttpResponseMessage(status)
         {
@@ -26,18 +32,21 @@ public sealed class FakeHttpMessageHandler : HttpMessageHandler
 
     public void Fail(Exception exception) => _responder = _ => throw exception;
 
-    protected override Task<HttpResponseMessage> SendAsync(
+    protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request,
         CancellationToken cancellationToken
     )
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         Requests.Add(request);
+        Bodies.Add(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
 
         if (_responder is null)
         {
             throw new InvalidOperationException("the test did not arrange a response");
         }
 
-        return Task.FromResult(_responder(request));
+        return _responder(request);
     }
 }

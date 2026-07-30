@@ -48,12 +48,19 @@ public class RadioBrowserClientTests
 
         RadioBrowserStation station = stations.Should().ContainSingle().Subject;
         station.Name.Should().Be("Example FM");
+        station.Url.Should().Be("https://example.com/a");
         station.UrlResolved.Should().Be("https://cdn.example.com/a");
+        station.Homepage.Should().Be("https://example.com");
         station.Favicon.Should().Be("https://example.com/logo.png");
         station.Tags.Should().Be("ambient,chillout");
         station.CountryCode.Should().Be("NL");
+        station.Language.Should().Be("english");
         station.Codec.Should().Be("MP3");
         station.Bitrate.Should().Be(128);
+        // Gate-critical: a broken [JsonPropertyName("hls")] would ship silently and
+        // every HLS stream - unplayable outside Safari in a plain audio element -
+        // would be admitted instead of rejected.
+        station.Hls.Should().Be(0);
         station.LastCheckOk.Should().Be(1);
         station.Votes.Should().Be(42);
     }
@@ -71,8 +78,11 @@ public class RadioBrowserClientTests
         handler.Requests.Should().ContainSingle();
         HttpRequestMessage request = handler.Requests[0];
         request.Method.Should().Be(HttpMethod.Post);
-        request.RequestUri!.ToString().Should().EndWith("/json/stations/byuuid");
-        (await request.Content!.ReadAsStringAsync()).Should().Contain("aaa,bbb,ccc");
+        request.RequestUri!.AbsoluteUri.Should().EndWith("/json/stations/byuuid");
+        // Decoded rather than compared against the raw wire form: this tests the
+        // requirement (every seed reaches the server, comma-joined), not which of
+        // the equally-valid form encodings of a comma the encoder happened to pick.
+        Uri.UnescapeDataString(handler.Bodies[0]).Should().Contain("uuids=aaa,bbb,ccc");
     }
 
     [Fact]
@@ -95,7 +105,7 @@ public class RadioBrowserClientTests
 
         await client.SearchByTagAsync("drum and bass", 5, CancellationToken.None);
 
-        string url = handler.Requests.Should().ContainSingle().Subject.RequestUri!.ToString();
+        string url = handler.Requests.Should().ContainSingle().Subject.RequestUri!.AbsoluteUri;
         url.Should().Contain("/json/stations/search");
         // Exact matching, or "rock" also returns every station tagged "rockabilly".
         url.Should().Contain("tagExact=true");
@@ -106,6 +116,9 @@ public class RadioBrowserClientTests
         url.Should().Contain("hidebroken=true");
         url.Should().Contain("is_https=true");
         url.Should().Contain("order=votes");
+        // order=votes alone sorts ascending - least popular first. Without reverse,
+        // "most-voted first" (the whole point of this ordering) silently inverts.
+        url.Should().Contain("reverse=true");
     }
 
     // radio-browser asks callers to identify themselves. Set per request rather than
@@ -152,6 +165,34 @@ public class RadioBrowserClientTests
     {
         (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
         handler.Respond("<html>a captive portal, probably</html>");
+
+        await FluentActions
+            .Awaiting(() => client.SearchByTagAsync("ambient", 5, CancellationToken.None))
+            .Should().ThrowAsync<JsonException>();
+    }
+
+    // A real captive portal does not lie about its media type - it serves text/html,
+    // truthfully, unlike Respond() above which always labels the body
+    // application/json. Checked empirically: the ReadFromJsonAsync(JsonSerializerOptions,
+    // CancellationToken) overload this client uses does not inspect Content-Type at
+    // all, so a truthfully-labelled text/html body fails exactly the same way as a
+    // mislabelled one - JsonException, not NotSupportedException. That is worth
+    // pinning down with a test of its own rather than assuming it, because it means
+    // Task 7 gets to treat "bad JSON" and "not JSON at all" as one case, and a future
+    // change to add real Content-Type checking here would be a deliberate,
+    // test-visible decision instead of a silent behaviour change.
+    [Fact]
+    public async Task Throws_WhenTheBodyIsHtmlRatherThanJson()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.RespondPerRequest(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                "<html>a captive portal, probably</html>",
+                System.Text.Encoding.UTF8,
+                "text/html"
+            ),
+        });
 
         await FluentActions
             .Awaiting(() => client.SearchByTagAsync("ambient", 5, CancellationToken.None))

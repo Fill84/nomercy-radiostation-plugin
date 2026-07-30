@@ -25,23 +25,15 @@ public sealed class RadioBrowserClient(HttpClient http)
     public const string BaseAddress = "https://all.api.radio-browser.info";
 
     // radio-browser asks callers to identify themselves so they can contact whoever
-    // is hammering them.
-    private const string UserAgent =
-        "NoMercy.Plugin.InternetRadio/1.0.2 (+https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin)";
+    // is hammering them. Built from PluginIdentity.Version rather than a literal, so
+    // a release that bumps the csproj and plugin.json bumps this too - those three
+    // are already required to agree (see ManifestTests), and a hand-copied literal
+    // here would be a fourth place to remember and the one nothing checks.
+    private static readonly string UserAgent =
+        $"NoMercy.Plugin.InternetRadio/{PluginIdentity.Version} (+https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin)";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new() { PropertyNameCaseInsensitive = true };
-
-    // Path and query canonicalization is off on purpose. This class builds the whole
-    // URL itself from a fixed base and Uri.EscapeDataString-encoded parts, so there
-    // is nothing for canonicalization to safely rewrite - and left on, Uri's "safe
-    // unescape" silently turns a percent-encoded space back into a literal one the
-    // moment anything reads the request back (RequestUri.ToString(), a log line, a
-    // test), which is not the byte sequence that was actually sent.
-    private static readonly UriCreationOptions RawUriOptions = new()
-    {
-        DangerousDisablePathAndQueryCanonicalization = true,
-    };
 
     /// <summary>
     /// The pinned seeds, in one request. A POST because the uuid list is a body
@@ -57,16 +49,9 @@ public sealed class RadioBrowserClient(HttpClient http)
             return [];
         }
 
-        HttpRequestMessage request = Request(HttpMethod.Post, "/json/stations/byuuid");
-
-        // Not FormUrlEncodedContent: its encoder percent-escapes the comma
-        // (uuids=aaa%2Cbbb), which radio-browser's form parser would still split
-        // correctly, but a UUID is alphanumeric-and-hyphen only, so there is
-        // nothing here that needs escaping in the first place.
-        request.Content = new StringContent(
-            $"uuids={string.Join(',', uuids)}",
-            System.Text.Encoding.UTF8,
-            "application/x-www-form-urlencoded"
+        using HttpRequestMessage request = Request(HttpMethod.Post, "/json/stations/byuuid");
+        request.Content = new FormUrlEncodedContent(
+            [new KeyValuePair<string, string>("uuids", string.Join(',', uuids))]
         );
 
         return await SendAsync(request, ct);
@@ -100,14 +85,13 @@ public sealed class RadioBrowserClient(HttpClient http)
             "is_https=true"
         );
 
-        HttpRequestMessage request = Request(HttpMethod.Get, $"/json/stations/search?{query}");
+        using HttpRequestMessage request = Request(HttpMethod.Get, $"/json/stations/search?{query}");
         return await SendAsync(request, ct);
     }
 
     private static HttpRequestMessage Request(HttpMethod method, string path)
     {
-        Uri uri = new($"{BaseAddress}{path}", RawUriOptions);
-        HttpRequestMessage request = new(method, uri);
+        HttpRequestMessage request = new(method, $"{BaseAddress}{path}");
 
         // Per request, not on DefaultRequestHeaders: the HttpClient belongs to the
         // host and is shared, so mutating it would put this plugin's identity on
