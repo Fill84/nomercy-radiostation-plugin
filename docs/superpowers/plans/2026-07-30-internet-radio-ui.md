@@ -13,6 +13,19 @@
 ## Global Constraints
 
 - **Target framework** `net10.0`. **SDK** pinned by `global.json` to `10.0.302`, `rollForward: latestFeature`.
+- **On this machine, `dotnet` on PATH is 8.0.413 and cannot build `net10.0`.** The
+  usable SDK is the side-by-side install. Every `dotnet` command in this plan must be
+  run as:
+  ```bash
+  "$USERPROFILE/.dotnet/dotnet.exe" build -c Release -p:TreatWarningsAsErrors=true
+  ```
+  Plain `dotnet` fails at `global.json` with "requested SDK version 10.0.302 not
+  found", which reads like a missing install rather than a wrong PATH. CI installs
+  10.0 to `$HOME/.dotnet` and puts it on PATH, so the workflow's bare `dotnet` is
+  correct there — this applies to local runs only.
+- **`jq` and `zip` are not installed locally.** Both are used only by the CI workflow,
+  which runs on `ubuntu-latest` and installs them. No local step may depend on either.
+  Python 3.12 is available and is what local tooling uses.
 - **`TreatWarningsAsErrors`** is true for the plugin project. The build step also passes `-p:TreatWarningsAsErrors=true` explicitly.
 - **Version is 1.0.2** and must read identically in exactly three places: `src/NoMercy.Plugin.InternetRadio/plugin.json`, the csproj `<Version>`, and `PluginIdentity.Version`.
 - **Plugin id is `b3d4f1a2-7c5e-4d8a-9f10-1c2b3a4d5e6f` and must never change** — the host keys lifecycle state off it across restarts.
@@ -1311,7 +1324,7 @@ using Xunit;
 namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
 
 // Only what can be asserted without a network. Whether each UUID still resolves and
-// still passes the gates is checked by scripts/resolve-seeds.sh before a release -
+// still passes the gates is checked by scripts/resolve-seeds.py before a release -
 // a unit test that reaches radio-browser would turn their outage into our red build.
 public class SeedTests
 {
@@ -1450,7 +1463,7 @@ namespace NoMercy.Plugin.InternetRadio;
 // never by name similarity: an earlier pass that fell back to "most-voted station
 // with a similar name" silently swapped Radio Paradise Rock Mix in for Main Mix.
 //
-// scripts/resolve-seeds.sh re-checks that every one of these still resolves and
+// scripts/resolve-seeds.py re-checks that every one of these still resolves and
 // still passes the gates.
 //
 // Not here, and deliberately: BBC Radio 1 and BBC Radio 6 Music. radio-browser has
@@ -5183,10 +5196,10 @@ Expected: all pass.
 
 ### Task 13: The seed-checking script and the READMEs
 
-`resolve-seeds.sh` is the only thing that verifies a stream really works, which matters because radio-browser's own liveness flag has been observed reporting a 404 as healthy.
+`resolve-seeds.py` is the only thing that verifies a stream really works, which matters because radio-browser's own liveness flag has been observed reporting a 404 as healthy.
 
 **Files:**
-- Create: `scripts/resolve-seeds.sh`
+- Create: `scripts/resolve-seeds.py`
 - Rewrite: `src/NoMercy.Plugin.InternetRadio/README.md` (ships beside the DLL)
 - Create: `README.md` (repository root, for someone building or contributing)
 
@@ -5194,103 +5207,177 @@ Expected: all pass.
 - Consumes: `SeedStations.Uuids` (read out of the C# source by the script).
 - Produces: nothing the code depends on.
 
-- [ ] **Step 1: Write `scripts/resolve-seeds.sh`**
+- [ ] **Step 1: Write `scripts/resolve-seeds.py`**
 
-```sh
-#!/usr/bin/env sh
-# Checks every pinned seed UUID: that radio-browser still has it, that it still
-# passes the plugin's admission gates, and that its stream actually answers.
-#
-# That last check is the point. radio-browser's lastcheckok is a claim, not a fact:
-# it reported Tomorrowland Anthems' OWR_DAB.mp3 as healthy while the URL was a 404,
-# which is why that station had to be resubmitted. Nothing else in this repository
-# connects to a stream.
-#
-# Run before tagging a release. Deliberately NOT on the push path - a station's
-# outage is not a reason for this repository's build to go red.
+Python rather than shell + `jq`: `jq` is not installed on the development machine,
+and this script's whole value is that it can actually be run before a release. It
+uses only the standard library, so it works unchanged on the CI runner.
 
-set -eu
+```python
+#!/usr/bin/env python3
+"""Check every pinned seed UUID before a release.
 
-SEEDS_FILE="$(cd "$(dirname "$0")/.." && pwd)/src/NoMercy.Plugin.InternetRadio/Catalog/SeedStations.cs"
-API="https://all.api.radio-browser.info"
-UA="nomercy-radiostation-plugin/1.0.2"
+Three things, in order: radio-browser still has the station, it still passes the
+plugin's admission gates, and its stream actually answers.
 
-command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
+That last check is the point. radio-browser's `lastcheckok` is a claim, not a fact:
+it reported Tomorrowland Anthems' OWR_DAB.mp3 as healthy while the URL was a 404,
+which is why that station had to be resubmitted upstream. Nothing else in this
+repository connects to a stream.
 
-# Read the UUIDs out of the C# rather than keeping a second copy here: two lists that
-# could disagree would make this script's PASS meaningless.
-uuids=$(grep -oE '"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"' "$SEEDS_FILE" \
-        | tr -d '"' | sort -u)
+Run before tagging a release. Deliberately NOT on the push path - a station's outage
+is not a reason for this repository's build to go red.
 
-if [ -z "$uuids" ]; then
-    echo "no seed uuids found in $SEEDS_FILE" >&2
-    exit 1
-fi
+    python scripts/resolve-seeds.py
 
-count=$(printf '%s\n' "$uuids" | wc -l | tr -d ' ')
-echo "checking $count seed stations"
-echo
+Exit code 0 when every seed is fine, 1 when any needs attention.
+"""
 
-joined=$(printf '%s\n' "$uuids" | paste -sd, -)
-records=$(curl -fsS -m 60 -A "$UA" -X POST "$API/json/stations/byuuid" -d "uuids=$joined")
+import json
+import pathlib
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 
-failures=0
+API = "https://all.api.radio-browser.info"
+UA = "nomercy-radiostation-plugin/1.0.2 (+https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin)"
 
-for uuid in $uuids; do
-    record=$(printf '%s' "$records" | jq -c --arg u "$uuid" '.[] | select(.stationuuid == $u)')
+SEEDS_FILE = (
+    pathlib.Path(__file__).resolve().parent.parent
+    / "src" / "NoMercy.Plugin.InternetRadio" / "Catalog" / "SeedStations.cs"
+)
 
-    if [ -z "$record" ]; then
-        printf 'MISSING  %s  (radio-browser no longer has this station)\n' "$uuid"
-        failures=$((failures + 1))
-        continue
-    fi
+UUID_PATTERN = re.compile(
+    r'"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"'
+)
 
-    name=$(printf '%s' "$record" | jq -r '.name')
-    url=$(printf '%s' "$record" | jq -r '.url_resolved // .url')
-    hls=$(printf '%s' "$record" | jq -r '.hls')
-    ok=$(printf '%s' "$record" | jq -r '.lastcheckok')
 
-    gate=""
-    case "$url" in https://*) ;; *) gate="$gate not-https" ;; esac
-    [ "$hls" = "0" ] || gate="$gate hls"
-    [ "$ok" = "1" ] || gate="$gate not-checked"
+def read_seed_uuids() -> list[str]:
+    """The UUIDs, read out of the C# rather than duplicated here.
 
-    if [ -n "$gate" ]; then
-        printf 'GATED    %-42s %s (%s)\n' "$name" "$uuid" "$gate"
-        failures=$((failures + 1))
-        continue
-    fi
+    Two lists that could disagree would make this script's PASS meaningless.
+    """
+    if not SEEDS_FILE.exists():
+        sys.exit(f"seed file not found: {SEEDS_FILE}")
 
-    # The part radio-browser cannot be trusted for. A range request takes the first
-    # couple of kilobytes and hangs up rather than streaming indefinitely.
-    status=$(curl -s -m 20 -A "$UA" -L -r 0-2047 -o /dev/null -w '%{http_code}' "$url" || echo 000)
+    uuids = UUID_PATTERN.findall(SEEDS_FILE.read_text(encoding="utf-8"))
+    if not uuids:
+        sys.exit(f"no seed uuids found in {SEEDS_FILE}")
 
-    case "$status" in
-        200|206) printf 'OK       %-42s %s\n' "$name" "$uuid" ;;
-        *)
-            printf 'DEAD     %-42s %s (stream returned %s)\n' "$name" "$uuid" "$status"
-            failures=$((failures + 1))
-            ;;
-    esac
-done
+    # Ordered, de-duplicated - a duplicate would silently leave us one station short.
+    return list(dict.fromkeys(uuids))
 
-echo
-if [ "$failures" -gt 0 ]; then
-    echo "$failures of $count seeds need attention before release" >&2
-    exit 1
-fi
 
-echo "all $count seeds resolve, pass the gates, and answer"
+def fetch_records(uuids: list[str]) -> dict[str, dict]:
+    """One POST for every seed, the same call the plugin makes."""
+    request = urllib.request.Request(
+        f"{API}/json/stations/byuuid",
+        data=urllib.parse.urlencode({"uuids": ",".join(uuids)}).encode(),
+        headers={"User-Agent": UA},
+    )
+
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return {record["stationuuid"]: record for record in json.load(response)}
+
+
+def gate_failures(record: dict) -> list[str]:
+    """The plugin's own admission rules, kept in step with StationGates.Admits."""
+    url = record.get("url_resolved") or record.get("url") or ""
+    failures = []
+
+    if not url.startswith("https://"):
+        failures.append("not-https")
+    if record.get("hls"):
+        failures.append("hls")
+    if record.get("lastcheckok") != 1:
+        failures.append("not-checked")
+
+    return failures
+
+
+def stream_answers(url: str) -> tuple[bool, str]:
+    """A range request for the first couple of kilobytes.
+
+    Ranged so this takes a moment rather than streaming indefinitely, and because a
+    station that refuses a range request but serves audio is still fine - what is
+    being tested is that something answers, not how.
+    """
+    request = urllib.request.Request(
+        url, headers={"User-Agent": UA, "Range": "bytes=0-2047"}
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            body = response.read(2048)
+            if response.status in (200, 206) and body:
+                return True, f"{response.status} {response.headers.get('Content-Type', '?')}"
+            return False, f"{response.status}, {len(body)} bytes"
+    except urllib.error.HTTPError as error:
+        return False, f"HTTP {error.code}"
+    except Exception as error:                          # noqa: BLE001 - report, never raise
+        return False, type(error).__name__
+
+
+def main() -> int:
+    uuids = read_seed_uuids()
+    print(f"checking {len(uuids)} seed stations\n")
+
+    try:
+        records = fetch_records(uuids)
+    except Exception as error:                          # noqa: BLE001
+        sys.exit(f"could not reach radio-browser: {error}")
+
+    failures = 0
+
+    for uuid in uuids:
+        record = records.get(uuid)
+
+        if record is None:
+            print(f"MISSING  {uuid}  radio-browser no longer has this station")
+            failures += 1
+            continue
+
+        name = record.get("name", "").strip()
+        url = record.get("url_resolved") or record.get("url") or ""
+
+        gated = gate_failures(record)
+        if gated:
+            print(f"GATED    {name[:44]:<46} {uuid}  ({', '.join(gated)})")
+            failures += 1
+            continue
+
+        alive, detail = stream_answers(url)
+        if alive:
+            print(f"OK       {name[:44]:<46} {uuid}  {detail}")
+        else:
+            print(f"DEAD     {name[:44]:<46} {uuid}  stream: {detail}")
+            failures += 1
+
+    print()
+    if failures:
+        print(f"{failures} of {len(uuids)} seeds need attention before release")
+        return 1
+
+    print(f"all {len(uuids)} seeds resolve, pass the gates, and answer")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
 ```
 
-- [ ] **Step 2: Make it executable and run it**
+- [ ] **Step 2: Run it**
 
 ```bash
-chmod +x scripts/resolve-seeds.sh
-./scripts/resolve-seeds.sh
+python scripts/resolve-seeds.py
 ```
 
-Expected: `OK` for all ten. Any `DEAD` or `GATED` line must be resolved before release — by finding the station's current record on radio-browser and repinning, or by submitting the working stream there as was done for Anthems.
+Expected: ten `OK` lines, including all four Tomorrowland stations. Any `DEAD`,
+`GATED` or `MISSING` line must be resolved before release — by finding the station's
+current record on radio-browser and repinning its UUID, or by submitting the working
+stream to radio-browser as was done for Anthems.
 
 - [ ] **Step 3: Rewrite the plugin README**
 
@@ -5412,7 +5499,7 @@ dotnet test -c Release --no-build
 | `src/NoMercy.Plugin.InternetRadio/Catalog/` | Fetching, gating and caching the station list |
 | `src/NoMercy.Plugin.InternetRadio/Views/` | Pure `Build(...)` functions returning a `PluginView` |
 | `tests/` | xunit + FluentAssertions; no test touches the network |
-| `scripts/resolve-seeds.sh` | Checks the pinned stations still resolve and still answer |
+| `scripts/resolve-seeds.py` | Checks the pinned stations still resolve and still answer |
 | `docs/superpowers/` | The design spec and this implementation plan |
 
 ## No station data in the source tree
@@ -5426,7 +5513,7 @@ already had to correct Tomorrowland URLs once, and shipped BBC streams over `htt
 that could never play in a browser. Anything wrong with a station is now fixed
 upstream at radio-browser, where the fix reaches everyone.
 
-Run `scripts/resolve-seeds.sh` before tagging a release.
+Run `scripts/resolve-seeds.py` before tagging a release.
 
 ## Releasing
 
@@ -5970,7 +6057,7 @@ dotnet test -c Release --no-build
 - [ ] **All ten seeds resolve and answer**
 
 ```bash
-./scripts/resolve-seeds.sh
+python scripts/resolve-seeds.py
 ```
 
 Expected: ten `OK` lines, including all four Tomorrowland stations.
