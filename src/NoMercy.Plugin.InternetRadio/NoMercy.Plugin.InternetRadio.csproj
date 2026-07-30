@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <AssemblyName>NoMercy.Plugin.InternetRadio</AssemblyName>
+        <RootNamespace>NoMercy.Plugin.InternetRadio</RootNamespace>
+        <Version>1.0.2</Version>
+        <Authors>NoMercy Community</Authors>
+        <Description>Browse and play internet radio stations in the built-in player.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!--
+            The host owns this assembly at runtime: it is in the server's shared-assembly
+            set, so the plugin load context deliberately resolves it to the host's copy
+            rather than one sitting next to the plugin.
+
+            Do NOT set CopyLocalLockFileAssemblies=true to "gather dependencies" for
+            packaging: it would drop NoMercy.Plugins.Abstractions.dll and NoMercy.Events.dll
+            beside the plugin, and the load context would then hold two incompatible
+            identities of the same types. That surfaces as an unrelated-looking cast error
+            far from its cause. The CI packaging step asserts neither assembly ships.
+        -->
+        <PackageReference Include="NoMercy.Plugins.Abstractions" Version="*" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="plugin.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+</Project>
