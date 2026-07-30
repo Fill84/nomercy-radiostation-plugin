@@ -3,6 +3,7 @@
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 
 namespace NoMercy.Plugin.InternetRadio;
 
@@ -30,7 +31,15 @@ public sealed class CatalogCache(string dataFolderPath)
 
     private string Path => System.IO.Path.Combine(dataFolderPath, FileName);
 
-    public async Task<CachedCatalog?> ReadAsync(CancellationToken ct)
+    /// <param name="ct">Cancellation for the read.</param>
+    /// <param name="logger">
+    /// Optional. When given, a corrupt or truncated file is logged at warning level
+    /// before this returns null, so "re-fetches every view and nothing says why"
+    /// has a line in the log naming the cause. Absent entirely - not just a plain
+    /// cache miss - is never logged: there is nothing wrong with there being no
+    /// cache yet.
+    /// </param>
+    public async Task<CachedCatalog?> ReadAsync(CancellationToken ct, ILogger? logger = null)
     {
         if (!File.Exists(Path))
         {
@@ -46,12 +55,15 @@ public sealed class CatalogCache(string dataFolderPath)
         {
             throw;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
             // Corrupt, truncated, or unreadable. Indistinguishable from absent as far
             // as the caller is concerned, and treating it that way is what makes the
-            // next refresh fix it. The caller logs; this stays quiet so a cache miss
-            // does not need an ILogger threaded into it.
+            // next refresh fix it. The null-on-failure contract is unchanged; this
+            // only adds a way for the caller to learn why, instead of silently
+            // re-fetching forever with nothing in the log to explain it.
+            logger?.LogWarning(
+                exception, "Internet Radio discarded a corrupt or unreadable {FileName}.", FileName);
             return null;
         }
     }

@@ -26,12 +26,13 @@ public sealed class CatalogProviderTests : IDisposable
         }
     }
 
-    private CatalogProvider Provider(TimeSpan? ttl = null) =>
+    private CatalogProvider Provider(TimeSpan? ttl = null, TimeSpan? fetchBudget = null) =>
         new(new RadioBrowserClient(new HttpClient(_handler)),
             new CatalogCache(_folder),
             _folder,
             _logger,
-            ttl);
+            ttl,
+            fetchBudget);
 
     private static string Payload(string uuid, string name, string url, string tags = "ambient") =>
         $$"""
@@ -236,6 +237,147 @@ public sealed class CatalogProviderTests : IDisposable
         catalog.Stations.Should().ContainSingle();
     }
 
+    // The scenario the whole-branch review found: an 80-station cache, a tick where
+    // sixteen of seventeen genre queries 500, and a ~10-station degraded result that
+    // must NOT quietly become the new cache for the next 36 hours.
+    [Fact]
+    public async Task PreservesAGoodCacheRatherThanOverwritingItWithADegradedFetch()
+    {
+        RadioStation[] goodCache =
+            [.. Enumerable.Range(0, 5).Select(i =>
+                new RadioStation
+                {
+                    Id = $"good-{i}",
+                    Name = $"Good FM {i}",
+                    StreamUrl = $"https://example.com/good-{i}",
+                })];
+        DateTimeOffset cachedAt = DateTimeOffset.UtcNow - TimeSpan.FromHours(20);
+        await new CatalogCache(_folder).WriteAsync(goodCache, cachedAt, CancellationToken.None);
+
+        int call = 0;
+        _handler.RespondPerRequest(_ =>
+        {
+            call++;
+            // Only the seed request (call 1) succeeds; every genre query fails, so
+            // the sweep still collects one station - enough to reach the
+            // stations.Count > 0 branch - while being unmistakably degraded next to
+            // the five-station cache already on disk.
+            return call == 1
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        Payload("degraded-1", "Degraded FM", "https://example.com/degraded-1"),
+                        System.Text.Encoding.UTF8,
+                        "application/json"),
+                }
+                : new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    { Content = new StringContent("boom") };
+        });
+
+        StationCatalog catalog = await Provider(TimeSpan.FromHours(1)).GetAsync(CancellationToken.None);
+
+        // The old cache is what is on screen, marked as having survived a failed
+        // refresh - not the one-station degraded result, and not a clean Fetched.
+        catalog.Source.Should().Be(CatalogSource.Cache);
+        catalog.FetchedAt.Should().Be(cachedAt);
+        catalog.LastFetchFailed.Should().BeTrue();
+        catalog.Stations.Select(station => station.Id).Should().BeEquivalentTo(goodCache.Select(s => s.Id));
+
+        // And the cache file on disk must still be the good one - not overwritten
+        // by the degraded result, which would silently become the next 36 hours'
+        // worth of "fresh" cache with no indicator anything had gone wrong.
+        CachedCatalog? onDisk = await new CatalogCache(_folder).ReadAsync(CancellationToken.None);
+        onDisk!.FetchedAt.Should().Be(cachedAt);
+        onDisk.Stations.Select(station => station.Id).Should().BeEquivalentTo(goodCache.Select(s => s.Id));
+    }
+
+    // The other half of the same fix: when there is nothing usable to fall back on,
+    // a degraded result is still better than nothing, and it still has to reach
+    // disk - a degraded fetch must not become "never wrote a cache at all".
+    [Fact]
+    public async Task WritesADegradedFetchWhenThereIsNoUsableCacheToPreserve()
+    {
+        int call = 0;
+        _handler.RespondPerRequest(_ =>
+        {
+            call++;
+            return call == 1
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        Payload("u1", "Seed FM", "https://example.com/seed"),
+                        System.Text.Encoding.UTF8,
+                        "application/json"),
+                }
+                : new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    { Content = new StringContent("boom") };
+        });
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Fetched);
+        catalog.LastFetchFailed.Should().BeTrue();
+        catalog.Stations.Should().ContainSingle();
+
+        CachedCatalog? onDisk = await new CatalogCache(_folder).ReadAsync(CancellationToken.None);
+        onDisk.Should().NotBeNull();
+        onDisk!.Stations.Should().ContainSingle().Which.Id.Should().Be("u1");
+    }
+
+    // Two view requests racing a cold cache must trigger one sweep, not two - the
+    // whole-branch review's "four Try Again clicks, ~90 in-flight requests" scenario.
+    [Fact]
+    public async Task ConcurrentGetAsyncCallsOnAColdCacheProduceOnlyOneSweep()
+    {
+        _handler.Gate = new TaskCompletionSource<bool>();
+        _handler.Respond(Payload("u1", "Example FM", "https://example.com/a"));
+        CatalogProvider provider = Provider();
+
+        Task<StationCatalog> first = provider.GetAsync(CancellationToken.None);
+        Task<StationCatalog> second = provider.GetAsync(CancellationToken.None);
+
+        // Both calls have reached the network (the seed POST is recorded before the
+        // handler blocks on Gate) but neither has been allowed to finish, so this is
+        // the moment a second, independent sweep would have started if the calls
+        // were not single-flighted.
+        _handler.Requests.Should().ContainSingle();
+
+        _handler.Gate.SetResult(true);
+        StationCatalog[] results = await Task.WhenAll(first, second);
+
+        results[0].Source.Should().Be(CatalogSource.Fetched);
+        results[1].Source.Should().Be(CatalogSource.Fetched);
+        // 1 seed request + one per genre section - exactly one sweep's worth,
+        // whether or not the second caller happened to join before or after the
+        // first genre query went out.
+        _handler.Requests.Should().HaveCount(1 + GenreMap.Sections.Count);
+    }
+
+    // A hanging mirror must not hold a cold-start view open indefinitely: the sweep
+    // has an overall budget, and exhausting it has to fall through to whatever the
+    // fetch would otherwise resolve to - here, the stale cache - not hang or throw.
+    [Fact]
+    public async Task ReturnsTheStaleCacheRatherThanHangingWhenTheSweepExceedsItsBudget()
+    {
+        await new CatalogCache(_folder).WriteAsync(
+            [new RadioStation { Id = "old", Name = "Old FM", StreamUrl = "https://example.com/old" }],
+            DateTimeOffset.UtcNow - TimeSpan.FromDays(30),
+            CancellationToken.None);
+        _handler.Hang();
+
+        // A safety net for the test itself, not part of what is under test: if the
+        // budget is not actually enforced this would otherwise hang the test suite
+        // rather than failing it.
+        using CancellationTokenSource safetyNet = new(TimeSpan.FromSeconds(10));
+
+        StationCatalog catalog = await Provider(TimeSpan.FromHours(1), TimeSpan.FromMilliseconds(50))
+            .GetAsync(safetyNet.Token);
+
+        catalog.Source.Should().Be(CatalogSource.Cache);
+        catalog.Stations.Should().ContainSingle().Which.Id.Should().Be("old");
+        catalog.LastFetchFailed.Should().BeTrue();
+    }
+
     [Fact]
     public async Task DropsStationsThatFailTheGates()
     {
@@ -316,6 +458,22 @@ public sealed class CatalogProviderTests : IDisposable
 
         station.Id.Should().Be("my-station");
         station.IsUserSupplied.Should().BeTrue();
+    }
+
+    // A supplied id is a route segment (/station/{id}), same as a name-derived one.
+    // Left verbatim, "my station/1" would produce an unroutable path and a dead
+    // detail page - the id has to go through the same Slugify every other
+    // id-producing path in this plugin already uses.
+    [Fact]
+    public async Task SlugifiesASuppliedOverrideIdSoItIsRoutable()
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(_folder, StationOverrides.FileName),
+            """[{"id":"my station/1","name":"My Station","streamUrl":"https://mine.example/stream"}]""");
+
+        RadioStation station = (await Provider().GetAsync(CancellationToken.None)).Stations.Single();
+
+        station.Id.Should().Be("my-station-1");
     }
 
     // Popularity is ordering-only and never shown, so an explicit null for it must

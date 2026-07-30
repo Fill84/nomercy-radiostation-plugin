@@ -64,10 +64,16 @@ public static class StationOverrides
                     .Select(entry => new RadioStation
                     {
                         // Their file need not carry an id, and a name is the only
-                        // stable thing it is guaranteed to have.
+                        // stable thing it is guaranteed to have. A supplied id is
+                        // still put through Slugify, same as a blank one falling
+                        // back to the name: an id is a route segment
+                        // (/station/{id}), and something like "my station/1" would
+                        // otherwise produce an unroutable path and a dead detail
+                        // page - exactly the failure every other id-producing path
+                        // in this plugin already avoids.
                         Id = string.IsNullOrWhiteSpace(entry.Id)
                             ? StationGates.Slugify(entry.Name!)
-                            : entry.Id,
+                            : StationGates.Slugify(entry.Id),
                         Name = entry.Name!,
                         StreamUrl = entry.StreamUrl!,
                         LogoUrl = entry.LogoUrl,

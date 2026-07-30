@@ -16,7 +16,8 @@ public sealed class CatalogProvider(
     CatalogCache cache,
     string dataFolderPath,
     ILogger logger,
-    TimeSpan? cacheTtl = null
+    TimeSpan? cacheTtl = null,
+    TimeSpan? fetchBudget = null
 )
 {
     /// <summary>
@@ -26,7 +27,24 @@ public sealed class CatalogProvider(
     /// </summary>
     public static TimeSpan DefaultCacheTtl { get; } = TimeSpan.FromHours(36);
 
+    /// <summary>
+    /// The overall wall-clock budget for one sweep (one POST plus seventeen GETs).
+    /// A cold-start view runs this inline on the request thread with no other
+    /// deadline, so an unbounded sweep against a hanging mirror is an unbounded
+    /// request. ~20s is generous for a healthy radio-browser mirror and still short
+    /// enough that a request thread does not hang for the request's own lifetime.
+    /// </summary>
+    public static TimeSpan DefaultFetchBudget { get; } = TimeSpan.FromSeconds(20);
+
     private TimeSpan Ttl => cacheTtl ?? DefaultCacheTtl;
+    private TimeSpan FetchBudget => fetchBudget ?? DefaultFetchBudget;
+
+    // Single-flight for the sweep itself: a cold cache with several concurrent view
+    // requests must start ONE sweep, not one per request. Guards only the shared
+    // in-flight Task reference, never held across an await, so it is safe to take
+    // inside an async method.
+    private readonly Lock _fetchGate = new();
+    private Task<StationCatalog>? _inFlightFetch;
 
     public async Task<StationCatalog> GetAsync(CancellationToken ct)
     {
@@ -35,7 +53,7 @@ public sealed class CatalogProvider(
             return StationCatalog.Create(overrides, CatalogSource.UserOverride, fetchedAt: null);
         }
 
-        CachedCatalog? cached = await cache.ReadAsync(ct);
+        CachedCatalog? cached = await cache.ReadAsync(ct, logger);
 
         if (cached is not null && DateTimeOffset.UtcNow - cached.FetchedAt < Ttl)
         {
@@ -50,10 +68,58 @@ public sealed class CatalogProvider(
     /// what the settings page's Refresh reaches once the cache has aged out.
     /// </summary>
     public async Task<StationCatalog> RefreshAsync(CancellationToken ct) =>
-        await FetchAsync(await cache.ReadAsync(ct), ct);
+        await FetchAsync(await cache.ReadAsync(ct, logger), ct);
 
-    private async Task<StationCatalog> FetchAsync(CachedCatalog? fallback, CancellationToken ct)
+    /// <summary>
+    /// Joins an in-flight sweep if one is already running, rather than starting a
+    /// second. The caller whose token started the sweep governs its cancellation;
+    /// a caller that only joined observes the same outcome, including that
+    /// caller's own cancellation - an accepted tradeoff of sharing one Task rather
+    /// than threading every joiner's token into the sweep individually.
+    /// </summary>
+    private Task<StationCatalog> FetchAsync(CachedCatalog? fallback, CancellationToken ct)
     {
+        lock (_fetchGate)
+        {
+            if (_inFlightFetch is { IsCompleted: false } inFlight)
+            {
+                return inFlight;
+            }
+
+            return _inFlightFetch = RunFetchAsync(fallback, ct);
+        }
+    }
+
+    private async Task<StationCatalog> RunFetchAsync(CachedCatalog? fallback, CancellationToken ct)
+    {
+        try
+        {
+            return await SweepAsync(fallback, ct);
+        }
+        finally
+        {
+            // Safe unconditionally: nobody else can have replaced _inFlightFetch
+            // while this method's own Task was still incomplete, since a new caller
+            // only starts a fresh sweep when the shared one has already completed -
+            // see FetchAsync above.
+            lock (_fetchGate)
+            {
+                _inFlightFetch = null;
+            }
+        }
+    }
+
+    private async Task<StationCatalog> SweepAsync(CachedCatalog? fallback, CancellationToken ct)
+    {
+        // Bounds the whole sweep, not each request: seventeen genre queries each
+        // allowed the full budget would still let a hanging mirror keep a cold-start
+        // view open for minutes. Linked into the caller's own token so a genuine
+        // caller cancellation still wins immediately, and the per-request catches
+        // below already distinguish the two - see their comments.
+        using CancellationTokenSource budgetCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        budgetCts.CancelAfter(FetchBudget);
+        CancellationToken fetchCt = budgetCts.Token;
+
         List<RadioStation> collected = [];
         bool anythingFailed = false;
 
@@ -61,16 +127,17 @@ public sealed class CatalogProvider(
         // rediscovered by the genre sweep.
         try
         {
-            collected.AddRange(Convert(await client.GetByUuidsAsync(SeedStations.Uuids, ct)));
+            collected.AddRange(Convert(await client.GetByUuidsAsync(SeedStations.Uuids, fetchCt)));
         }
         // An HttpClient timeout raises TaskCanceledException, which derives from
         // OperationCanceledException but is NOT a caller cancellation - it carries
         // its own internal token, distinct from ct, and ct.IsCancellationRequested
-        // is false. Rethrowing it unconditionally would let a hanging mirror (the
-        // commonest shape of an outage, well within HttpClient's 100s default
-        // timeout) escape GetAsync entirely and skip the stale-cache fallback below
-        // - worse than the empty grid this design exists to avoid. Only rethrow when
-        // it is genuinely this call's own token that fired.
+        // is false. The same is true when the budget above is what fired: fetchCt is
+        // cancelled but ct is not. Rethrowing unconditionally would let a hanging
+        // mirror (the commonest shape of an outage, well within HttpClient's 100s
+        // default timeout) escape GetAsync entirely and skip the stale-cache
+        // fallback below - worse than the empty grid this design exists to avoid.
+        // Only rethrow when it is genuinely this call's own token that fired.
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
@@ -88,11 +155,11 @@ public sealed class CatalogProvider(
             try
             {
                 collected.AddRange(
-                    Convert(await client.SearchByTagAsync(section.Tag, SeedStations.PerGenreLimit, ct)));
+                    Convert(await client.SearchByTagAsync(section.Tag, SeedStations.PerGenreLimit, fetchCt)));
             }
             // See the identical guard on the seed fetch above: a per-request timeout
-            // must be treated as this genre's failure, not as this call's own
-            // cancellation.
+            // - or the overall budget expiring - must be treated as this genre's
+            // failure, not as this call's own cancellation.
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
@@ -100,7 +167,11 @@ public sealed class CatalogProvider(
             catch (Exception exception)
             {
                 // One genre failing costs one genre. Letting it abort the sweep would
-                // throw away the seeds and sixteen other sections with it.
+                // throw away the seeds and sixteen other sections with it. Once the
+                // budget has expired every remaining request fails the same way,
+                // fast (the token is already cancelled), so this still terminates
+                // promptly rather than hanging - and the settings page still gets an
+                // honest LastFetchFailed rather than a page that simply hung.
                 anythingFailed = true;
                 logger.LogWarning(
                     exception, "Internet Radio could not fetch the {Genre} stations.", section.Label);
@@ -111,6 +182,27 @@ public sealed class CatalogProvider(
 
         if (stations.Count > 0)
         {
+            // A degraded sweep (some but not all requests failed) must never
+            // overwrite a good cache with a smaller result: the next 36-hour TTL
+            // window would then quietly serve the degraded catalogue as if nothing
+            // had gone wrong, with no indicator that most of it is missing. The
+            // fallback - what was already on screen a minute ago - is kept instead,
+            // marked as having survived a failed refresh. Only when there is
+            // nothing usable to fall back on is writing the degraded result the
+            // right call: it is still better than nothing.
+            if (anythingFailed && fallback is { Stations.Count: > 0 })
+            {
+                logger.LogWarning(
+                    "Internet Radio kept its {CachedCount}-station cache from {FetchedAt} instead of "
+                        + "overwriting it with a degraded refresh that only returned {FetchedCount}.",
+                    fallback.Stations.Count,
+                    fallback.FetchedAt,
+                    stations.Count);
+
+                return StationCatalog.Create(fallback.Stations, CatalogSource.Cache, fallback.FetchedAt)
+                    .WithFailedFetch();
+            }
+
             DateTimeOffset now = DateTimeOffset.UtcNow;
 
             try
@@ -129,9 +221,7 @@ public sealed class CatalogProvider(
 
             // Some stations came back, but if the seed fetch or a genre query failed
             // along the way this is a degraded result, not a clean one - the settings
-            // page has to say so, and a healthy 36-hour TTL must not go on quietly
-            // serving a 10-station catalogue in place of the ~80-station one that
-            // preceded it.
+            // page has to say so.
             StationCatalog fetched = StationCatalog.Create(stations, CatalogSource.Fetched, now);
             return anythingFailed ? fetched.WithFailedFetch() : fetched;
         }
