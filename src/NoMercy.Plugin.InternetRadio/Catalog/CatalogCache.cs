@@ -67,14 +67,38 @@ public sealed class CatalogCache(string dataFolderPath)
         // Written beside the target and moved into place. A crash partway through a
         // direct write would replace a whole cache with half of one, and the next
         // read would discard it - losing a good catalogue to a bad write.
-        string temporary = $"{Path}.tmp";
+        //
+        // Unique per call, not just per cache: Task 7's provider can call WriteAsync
+        // from more than one path, and a shared fixed name would let two writes race
+        // on the same temp file instead of each getting its own.
+        string temporary = $"{Path}.{Guid.NewGuid():N}.tmp";
 
-        await using (FileStream stream = File.Create(temporary))
+        try
         {
-            CachedCatalog payload = new() { FetchedAt = fetchedAt, Stations = [.. stations] };
-            await JsonSerializer.SerializeAsync(stream, payload, JsonOptions, ct);
-        }
+            await using (FileStream stream = File.Create(temporary))
+            {
+                CachedCatalog payload = new() { FetchedAt = fetchedAt, Stations = [.. stations] };
+                await JsonSerializer.SerializeAsync(stream, payload, JsonOptions, ct);
+            }
 
-        File.Move(temporary, Path, overwrite: true);
+            File.Move(temporary, Path, overwrite: true);
+        }
+        catch
+        {
+            // A failure here - cancellation, a serialisation error - must not leave
+            // the temp file behind: those would accumulate silently since nothing
+            // else in this class ever looks for them. Best-effort only: a temp file
+            // this cannot remove must not mask the original failure.
+            try
+            {
+                File.Delete(temporary);
+            }
+            catch
+            {
+                // Ignored - see above.
+            }
+
+            throw;
+        }
     }
 }

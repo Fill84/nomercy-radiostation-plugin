@@ -8,7 +8,7 @@ namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
 
 public class StationCatalogTests
 {
-    private static RadioStation Station(string id, string genre, int popularity = 0) =>
+    private static RadioStation Station(string id, string? genre = "Ambient", int popularity = 0) =>
         new()
         {
             Id = id,
@@ -62,6 +62,28 @@ public class StationCatalogTests
         catalog.Genres.Should().NotContain(genre => genre.Section.Label == "Jazz");
     }
 
+    // House, Techno and Classical are chosen because their GenreMap.Sections order
+    // (House, Techno, Classical) differs from both alphabetical order (Classical,
+    // House, Techno) and this insertion order (Techno, Classical, Other, House) - so
+    // an implementation that echoed insertion order, sorted alphabetically, or used
+    // bucket-dictionary order would all fail this, where three genres that happened
+    // to already agree with Sections order would not have caught the regression.
+    [Fact]
+    public void Genres_AreOrderedByGenreMapSectionsWithOtherLast()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [
+                Station("a", "Techno"),
+                Station("b", "Classical"),
+                Station("c", GenreMap.Other),
+                Station("d", "House"),
+            ],
+            CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.Genres.Select(genre => genre.Section.Label)
+            .Should().Equal("House", "Techno", "Classical", GenreMap.Other);
+    }
+
     // "Other" is a real destination - three of the four Tomorrowland records carry no
     // tags - so it has to be reachable rather than swallowed.
     [Fact]
@@ -72,6 +94,49 @@ public class StationCatalogTests
 
         catalog.Genres.Should().ContainSingle().Which.Section.Label.Should().Be(GenreMap.Other);
         catalog.ByGenreSlug(StationGates.Slugify(GenreMap.Other)).Should().ContainSingle();
+    }
+
+    // A radio-browser record with no tag this plugin maps has a null Genre, not an
+    // empty string. It still has to land in "Other" and stay reachable everywhere -
+    // not silently vanish because something upstream stopped coalescing it.
+    [Fact]
+    public void ANullGenreIsBucketedUnderOtherAndStaysReachable()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", genre: null)], CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.ByGenreSlug(StationGates.Slugify(GenreMap.Other)).Select(station => station.Id)
+            .Should().ContainSingle().Which.Should().Be("a");
+        catalog.Genres.Should().ContainSingle().Which.Section.Label.Should().Be(GenreMap.Other);
+        catalog.ById("a").Should().NotBeNull();
+    }
+
+    // A user's stations.json is not gated, so two entries can genuinely collide on Id.
+    // The first one - the one already on screen - has to keep winning rather than the
+    // page's contents flipping depending on which duplicate the map happened to keep.
+    [Fact]
+    public void ById_KeepsTheFirstStationWhenTwoEntriesShareAnId()
+    {
+        RadioStation first = new()
+        {
+            Id = "dup",
+            Name = "First",
+            StreamUrl = "https://example.com/first",
+            Genre = "Ambient",
+        };
+        RadioStation second = new()
+        {
+            Id = "dup",
+            Name = "Second",
+            StreamUrl = "https://example.com/second",
+            Genre = "Rock",
+        };
+
+        StationCatalog catalog = StationCatalog.Create(
+            [first, second], CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.ById("dup").Should().NotBeNull();
+        catalog.ById("dup")!.Name.Should().Be("First");
     }
 
     [Fact]
