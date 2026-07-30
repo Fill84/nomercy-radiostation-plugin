@@ -67,6 +67,14 @@ public sealed class StationCatalog
     public static StationCatalog Empty(bool lastFetchFailed = false) =>
         new([], CatalogSource.Unavailable, fetchedAt: null, lastFetchFailed);
 
+    /// <summary>
+    /// The same catalogue, marked as having survived a failed refresh. Lets the
+    /// settings page distinguish "cached because it is fresh" from "cached because
+    /// the network is down".
+    /// </summary>
+    public StationCatalog WithFailedFetch() =>
+        new([.. Stations], Source, FetchedAt, lastFetchFailed: true);
+
     public RadioStation? ById(string id) =>
         _byId.TryGetValue(id, out RadioStation? station) ? station : null;
 
