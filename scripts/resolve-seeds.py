@@ -69,13 +69,23 @@ def fetch_records(uuids: list[str]) -> dict[str, dict]:
 
 
 def gate_failures(record: dict) -> list[str]:
-    """The plugin's own admission rules, kept in step with StationGates.Admits."""
+    """The plugin's own admission rules, kept in step with StationGates.Admits.
+
+    A second copy of one set of rules, in a different language, is a standing
+    invitation to drift - see the cross-reference comment on StationGates.Admits
+    in src/NoMercy.Plugin.InternetRadio/Catalog/StationGates.cs. If either changes,
+    check the other: this used to differ on two points - "HTTPS://..." (uppercase
+    scheme) was reported GATED here while StationGates.Admits (via Uri.Scheme,
+    which normalises case) admitted it, and this never checked stationuuid at all.
+    """
     url = record.get("url_resolved") or record.get("url") or ""
     failures = []
 
+    if not str(record.get("stationuuid") or "").strip():
+        failures.append("no-uuid")
     if not str(record.get("name") or "").strip():
         failures.append("no-name")
-    if not url.startswith("https://"):
+    if not url.lower().startswith("https://"):
         failures.append("not-https")
     if record.get("hls"):
         failures.append("hls")

@@ -143,6 +143,26 @@ jobs:
         run: |
           set -eu
           chmod +x scripts/fetch-abstractions.sh
+
+          # fetch-abstractions.sh documents SERVER_REF as what CI sets to a SHA for
+          # a tag build, so the artifact is reproducible instead of "whatever dev
+          # happened to be" - that claim needs this to actually happen. Resolved
+          # here, not hardcoded: the SHA is not known ahead of time, only that a
+          # tag build must pin to one rather than floating on SERVER_BRANCH like a
+          # normal push build does.
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              SERVER_REF=$(git ls-remote https://github.com/NoMercy-Entertainment/nomercy-media-server.git \
+                             "refs/heads/$SERVER_BRANCH" | cut -f1)
+              if [ -z "$SERVER_REF" ]; then
+                echo "::error::could not resolve $SERVER_BRANCH to a commit for a reproducible tag build" >&2
+                exit 1
+              fi
+              export SERVER_REF
+              echo "tag build: pinning the contract to $SERVER_BRANCH@$SERVER_REF"
+              ;;
+          esac
+
           ./scripts/fetch-abstractions.sh
 
           # Recorded so a release names the exact contract it was built against.
@@ -167,7 +187,7 @@ jobs:
       - name: Assert no station data is hardcoded
         run: |
           set -eu
-          if grep -rn --include='*.cs' -E 'https?://' "$PLUGIN_DIR" \
+          if grep -rn --include='*.cs' --exclude-dir=obj --exclude-dir=bin -E 'https?://' "$PLUGIN_DIR" \
              | grep -v 'radio-browser' \
              | grep -v 'forgejo.phillippepelzer.me' \
              | grep -v 'github.com'; then

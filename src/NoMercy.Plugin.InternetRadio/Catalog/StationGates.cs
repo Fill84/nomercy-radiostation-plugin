@@ -22,6 +22,11 @@ public static class StationGates
     public static string EffectiveUrl(RadioBrowserStation station) =>
         !string.IsNullOrWhiteSpace(station.UrlResolved) ? station.UrlResolved : station.Url ?? string.Empty;
 
+    // Mirrored in Python by scripts/resolve-seeds.py's gate_failures(), which checks
+    // the same pinned seeds the way a release does before checking whether the
+    // stream itself answers. That copy cannot import this class, so it has to
+    // reimplement these rules - if this method changes, check gate_failures() too,
+    // or the two can quietly disagree about what "admissible" means.
     public static bool Admits(RadioBrowserStation station)
     {
         // Both are nullable on the wire DTO precisely so a row missing one does not
