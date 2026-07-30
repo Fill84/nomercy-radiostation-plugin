@@ -1,96 +1,49 @@
-# NoMercy.Plugin.InternetRadio
+# Internet Radio
 
-An official-style **`IMediaSourcePlugin`** for the
-[NoMercy MediaServer](https://github.com/NoMercy-Entertainment/nomercy-media-server)
-that exposes a curated list of internet radio stations as a music media
-source. Each station becomes a `MediaFile` of `MediaType.Music`, with its
-stream URL in `Path` and metadata (logo, homepage, genre, bitrate, codec,
-country) in `Properties`.
+Browse and play internet radio stations in the NoMercy MediaServer's built-in
+player.
 
-## What's included
+Adds two entries to the dashboard: **Internet Radio** under Music, and a
+read-only status page under plugin settings.
 
-- `Plugin.cs` — the entry class implementing `IMediaSourcePlugin`.
-- `RadioStation.cs` — immutable record describing a station.
-- `RadioStations.cs` — twelve bundled stations (SomaFM Groove Salad,
-  SomaFM Drone Zone, Radio Paradise, BBC Radio 1, BBC Radio 6 Music,
-  NTS 1, KEXP, FIP, plus four Tomorrowland stations: One World Radio,
-  Anthems, Daybreak Sessions, bigFM One World Radio).
-- `plugin.json` — the manifest the server reads at start-up.
+## What it does
 
-## Plugin contract (recap)
+- Fetches its station catalogue from [radio-browser.info](https://www.radio-browser.info/)
+  — ten curated stations pinned by id, plus the most popular stations in each of
+  seventeen genres.
+- Browse by genre, or scan every station in one table with bitrate and codec.
+- Selecting a station plays it immediately in the built-in player. A station's own
+  page also offers **Add to queue** and a link to its homepage.
 
-The server's `PluginManager` (see
-[`src/NoMercy.Plugins/PluginManager.cs`](https://github.com/NoMercy-Entertainment/nomercy-media-server/blob/dev/src/NoMercy.Plugins/PluginManager.cs))
-scans every sub-directory of `<server>/plugins/` (skipping `data/` and
-`configurations/`). For each one it:
+## What it declares
 
-1. Reads `plugin.json` (validated by `PluginManifestParser`).
-2. Loads the DLL named by `assembly` into an isolated `AssemblyLoadContext`.
-3. Reflects every public, non-abstract type implementing `IPlugin`.
-4. Calls `Activator.CreateInstance` — so the class **must** have a
-   parameterless constructor.
-5. Calls `Initialize(IPluginContext)` once; the context exposes the event
-   bus, DI container, logger, per-plugin data folder, and a JSON config
-   helper.
-6. Specialised interfaces (`IMediaSourcePlugin`, `IMetadataPlugin`,
-   `IEncoderPlugin`, `IAuthPlugin`, `IScheduledTaskPlugin`) are picked up
-   by the relevant subsystems via `PluginManager.GetPluginsOfType<T>()`.
+| Capability | Why |
+| --- | --- |
+| `ui` | The five pages above. |
+| `scheduledTask` | One job, `refresh`, daily at 04:00, which updates the catalogue. |
+| `network` → `*.api.radio-browser.info` | The only host it contacts. Streams are played by your client, not by the server. |
 
-This plugin implements `IMediaSourcePlugin`:
+It declares no `rest`, no `ws`, no library access and no secrets storage.
 
-```csharp
-Task<IEnumerable<MediaFile>> ScanAsync(string path, CancellationToken ct = default);
-```
+**You will need to enable it once.** A plugin that declares a network host is not
+auto-enabled however `autoEnabled` is set, so the server starts it disabled until
+you approve it in the dashboard. That is deliberate on the server's part, and
+correct: this plugin calls a third-party API on a schedule.
 
-The `path` argument is normally a filesystem path. Because radio is
-network-backed, this plugin re-purposes it as an optional case-insensitive
-**genre filter**:
+## Stations it will not have
 
-```csharp
-await provider.ScanAsync("");           // all stations
-await provider.ScanAsync("ambient");    // SomaFM Groove Salad + Drone Zone
-await provider.ScanAsync("rock");       // Radio Paradise
-```
+Only HTTPS, non-HLS streams are admitted. Your dashboard is served over HTTPS, so
+a plain `http://` stream is blocked by the browser as mixed content and cannot
+play at all — listing one would be listing something that does not work.
 
-## Building
+This is why **BBC Radio 1 and BBC Radio 6 Music are absent**: radio-browser carries
+them only as HLS over `http://`. Earlier versions of this plugin shipped BBC URLs
+that could never play in a browser for exactly that reason.
 
-Requires **.NET 10 SDK** (matches the server's `Directory.Build.props`).
+## Using your own station list
 
-```bash
-dotnet restore
-dotnet build -c Release
-```
-
-The output folder `bin/Release/net10.0/` contains both
-`NoMercy.Plugin.InternetRadio.dll` and `plugin.json` — copy that folder
-contents into a directory under the server's `plugins/`:
-
-```
-<server>/plugins/
-└── NoMercy.Plugin.InternetRadio/
-    ├── plugin.json
-    └── NoMercy.Plugin.InternetRadio.dll
-```
-
-Restart the server. The plugin is auto-enabled (`autoEnabled: true` in
-`plugin.json`) and you should see:
-
-```
-Internet Radio Provider v1.0.0 initialised with 8 station(s).
-```
-
-## Overriding the station list
-
-You can replace the built-in list at runtime without recompiling. Drop a
-file named `stations.json` into the plugin's data folder:
-
-```
-<server>/plugins/data/<pluginId-no-dashes>/stations.json
-```
-
-The pluginId is the manifest's `id` field with the dashes removed —
-`b3d4f1a27c5e4d8a9f101c2b3a4d5e6f` for this build. The file format is a
-JSON array of `RadioStation` records:
+Drop a file named `stations.json` into the plugin's data folder — the settings page
+shows you the exact path — and it replaces the fetched catalogue entirely:
 
 ```json
 [
@@ -107,29 +60,18 @@ JSON array of `RadioStation` records:
 ]
 ```
 
-If parsing fails the plugin logs a warning and falls back to the built-in
-defaults.
+Only `name` and `streamUrl` are required. Your file is used exactly as written and
+is **not** filtered, so it is also how you add a station radio-browser does not
+carry. If it cannot be parsed, the plugin logs a warning and fetches as normal.
 
-## Manifest (`plugin.json`)
+## There is nothing to configure
 
-```json
-{
-  "id": "b3d4f1a2-7c5e-4d8a-9f10-1c2b3a4d5e6f",
-  "name": "Internet Radio Provider",
-  "description": "Adds a curated list of internet radio stations as a music media source.",
-  "version": "1.0.0",
-  "targetAbi": "10.0",
-  "author": "NoMercy Community",
-  "projectUrl": "https://github.com/NoMercy-Entertainment/nomercy-media-server",
-  "assembly": "NoMercy.Plugin.InternetRadio.dll",
-  "autoEnabled": true
-}
-```
-
-All fields except `targetAbi`, `author`, `projectUrl`, and `autoEnabled`
-are required by `PluginManifestParser.Validate`. The `id` GUID must be
-non-empty and stable across releases — `PluginManager` keys lifecycle
-state off it.
+The settings page is read-only, and not by choice. A plugin cannot currently
+receive anything from its own UI on this server: plugin REST routes are served
+unversioned while the dashboard posts to `/api/v1`
+([media-server issue #26](https://github.com/NoMercy-Entertainment/nomercy-media-server/issues/26)),
+and the hub is not an alternative because plugin hub handlers are never registered.
+Favourites and station editing arrive when either is fixed.
 
 ## License
 
