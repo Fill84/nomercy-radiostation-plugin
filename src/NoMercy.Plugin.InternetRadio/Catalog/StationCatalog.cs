@@ -98,7 +98,14 @@ public sealed class StationCatalog
         _byGenreSlug.TryGetValue(slug, out List<RadioStation>? bucket) ? bucket : [];
 
     /// <summary>
-    /// Only sections that have stations, in <see cref="GenreMap"/> order, with
+    /// Every genre bucket that actually has a station in it - not only the ones
+    /// <see cref="GenreMap"/> knows about. A station.json owner is free to write
+    /// any genre label they like (see <see cref="StationOverrides"/>, which passes
+    /// it through unnormalised on purpose), and that label has to be reachable from
+    /// here or it is only reachable via /all - the README-documented escape hatch
+    /// would otherwise leave its own stations undiscoverable.
+    /// <see cref="GenreMap.Sections"/> order first for the genres that are known,
+    /// then any additional user-supplied genres sorted for determinism, then
     /// "Other" last. A chip leading to an empty page is worse than no chip.
     /// </summary>
     public IReadOnlyList<GenreSummary> Genres =>
@@ -106,8 +113,36 @@ public sealed class StationCatalog
             .. GenreMap.Sections
                 .Select(section => new GenreSummary(section, ByGenreSlug(section.Slug).Count))
                 .Where(summary => summary.Count > 0),
+            .. UserSuppliedGenreSummaries(),
             .. OtherSummary(),
         ];
+
+    /// <summary>
+    /// Buckets that exist but are neither a known <see cref="GenreMap"/> section nor
+    /// "Other" - i.e. a user's own genre label from stations.json. The label is
+    /// taken from the bucket's own stations rather than re-derived from the slug,
+    /// so it renders exactly as the owner wrote it.
+    /// </summary>
+    private IEnumerable<GenreSummary> UserSuppliedGenreSummaries()
+    {
+        HashSet<string> knownSlugs = new(StringComparer.OrdinalIgnoreCase)
+        {
+            StationGates.Slugify(GenreMap.Other),
+        };
+        foreach (GenreSection section in GenreMap.Sections)
+        {
+            knownSlugs.Add(section.Slug);
+        }
+
+        return _byGenreSlug
+            .Where(bucket => !knownSlugs.Contains(bucket.Key) && bucket.Value.Count > 0)
+            .Select(bucket =>
+            {
+                string label = bucket.Value[0].Genre ?? GenreMap.Other;
+                return new GenreSummary(new GenreSection(label, label, bucket.Key), bucket.Value.Count);
+            })
+            .OrderBy(summary => summary.Section.Label, StringComparer.OrdinalIgnoreCase);
+    }
 
     private IEnumerable<GenreSummary> OtherSummary()
     {

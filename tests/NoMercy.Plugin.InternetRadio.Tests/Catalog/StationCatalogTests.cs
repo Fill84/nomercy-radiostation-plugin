@@ -194,6 +194,56 @@ public class StationCatalogTests
         catalog.Popular(50).Should().HaveCount(1);
     }
 
+    // The README-documented escape hatch: an owner's stations.json can carry any
+    // genre label, and StationOverrides passes it through unnormalised. That label
+    // has to be a real destination - not just reachable via /all - or "N stations
+    // across 0 genres" is what the owner sees for their own file.
+    [Fact]
+    public void Genres_IncludesAUserSuppliedGenreNotKnownToGenreMap()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", "Ambient"), Station("t", "Schlager")],
+            CatalogSource.UserOverride, fetchedAt: null);
+
+        catalog.Genres.Select(genre => genre.Section.Label).Should().Contain("Schlager");
+
+        GenreSummary schlager = catalog.Genres.Single(genre => genre.Section.Label == "Schlager");
+        schlager.Count.Should().Be(1);
+
+        catalog.ByGenreSlug(schlager.Section.Slug)
+            .Should().ContainSingle().Which.Id.Should().Be("t");
+    }
+
+    // Known sections keep GenreMap order, then user genres are sorted for
+    // determinism, then Other is always last - regardless of insertion order.
+    [Fact]
+    public void Genres_OrdersKnownSectionsThenUserGenresSortedThenOtherLast()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [
+                Station("a", "Zeta"),
+                Station("b", GenreMap.Other),
+                Station("c", "Alpha"),
+                Station("d", "Rock"),
+                Station("e", "Ambient"),
+            ],
+            CatalogSource.UserOverride, fetchedAt: null);
+
+        catalog.Genres.Select(genre => genre.Section.Label)
+            .Should().Equal("Ambient", "Rock", "Alpha", "Zeta", GenreMap.Other);
+    }
+
+    // A user genre that happens to spell a known section exactly must not be
+    // double-counted as both a known section and a user-supplied one.
+    [Fact]
+    public void Genres_DoesNotDuplicateAUserGenreThatMatchesAKnownSection()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", "Rock")], CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.Genres.Should().ContainSingle(genre => genre.Section.Label == "Rock");
+    }
+
     [Fact]
     public void Empty_IsUnavailableAndRemembersWhetherAFetchFailed()
     {
