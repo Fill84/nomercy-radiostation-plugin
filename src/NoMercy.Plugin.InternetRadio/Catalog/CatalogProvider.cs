@@ -182,28 +182,56 @@ public sealed class CatalogProvider(
 
         if (stations.Count > 0)
         {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
             // A degraded sweep (some but not all requests failed) must never
-            // overwrite a good cache with a smaller result: the next 36-hour TTL
-            // window would then quietly serve the degraded catalogue as if nothing
-            // had gone wrong, with no indicator that most of it is missing. The
-            // fallback - what was already on screen a minute ago - is kept instead,
-            // marked as having survived a failed refresh. Only when there is
-            // nothing usable to fall back on is writing the degraded result the
-            // right call: it is still better than nothing.
+            // overwrite a good cache's STATIONS with a smaller result: 70 good
+            // stations must not be replaced by 10. The fallback's stations win
+            // instead, marked as having survived a failed refresh.
+            //
+            // But the fallback still has to be rewritten with a fresh fetchedAt,
+            // not left untouched: skipping the write entirely never resets the
+            // TTL, and GetAsync re-enters this same 18-request sweep on every
+            // single view once the cache is past its 36-hour TTL - unbounded
+            // repeated load on a volunteer-run service, and worse than the
+            // once-a-day degraded catalogue this design replaced. Renewing
+            // fetchedAt costs one sweep per TTL window, the same as a healthy
+            // refresh, while losing no station the fallback had.
+            //
+            // Deliberately NOT gated on stations.Count < fallback.Stations.Count:
+            // count is a poor proxy for quality - a sweep can legitimately return
+            // fewer stations - and comparing counts would reintroduce the clobber
+            // whenever a degraded result happened to be larger.
             if (anythingFailed && fallback is { Stations.Count: > 0 })
             {
                 logger.LogWarning(
-                    "Internet Radio kept its {CachedCount}-station cache from {FetchedAt} instead of "
-                        + "overwriting it with a degraded refresh that only returned {FetchedCount}.",
+                    "Internet Radio kept the {CachedCount} stations already in its cache instead of "
+                        + "a degraded refresh that only returned {FetchedCount}, and renewed the "
+                        + "cache's freshness so the next view is served from it rather than "
+                        + "re-sweeping.",
                     fallback.Stations.Count,
-                    fallback.FetchedAt,
                     stations.Count);
 
-                return StationCatalog.Create(fallback.Stations, CatalogSource.Cache, fallback.FetchedAt)
+                try
+                {
+                    await cache.WriteAsync(fallback.Stations, now, ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    // A read-only or full data folder costs the cache, not the
+                    // screen - same tolerance as the plain-write path below. This
+                    // caller's in-memory result is unaffected either way, though a
+                    // write failure here does mean the next view re-sweeps.
+                    logger.LogWarning(exception, "Internet Radio could not write its catalogue cache.");
+                }
+
+                return StationCatalog.Create(fallback.Stations, CatalogSource.Cache, now)
                     .WithFailedFetch();
             }
-
-            DateTimeOffset now = DateTimeOffset.UtcNow;
 
             try
             {

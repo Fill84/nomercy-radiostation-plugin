@@ -274,21 +274,79 @@ public sealed class CatalogProviderTests : IDisposable
                     { Content = new StringContent("boom") };
         });
 
+        DateTimeOffset before = DateTimeOffset.UtcNow;
         StationCatalog catalog = await Provider(TimeSpan.FromHours(1)).GetAsync(CancellationToken.None);
+        DateTimeOffset after = DateTimeOffset.UtcNow;
 
-        // The old cache is what is on screen, marked as having survived a failed
-        // refresh - not the one-station degraded result, and not a clean Fetched.
+        // The old cache's STATIONS are what is on screen, marked as having survived
+        // a failed refresh - not the one-station degraded result. But its
+        // freshness is renewed to now: skipping the write entirely would leave
+        // FetchedAt frozen at cachedAt, so the very next view - once again past a
+        // now-stale TTL - would re-enter this same 18-request sweep, and every
+        // view after that, forever. Renewing FetchedAt is what makes a degraded
+        // refresh cost one sweep per TTL window rather than one sweep per view.
         catalog.Source.Should().Be(CatalogSource.Cache);
-        catalog.FetchedAt.Should().Be(cachedAt);
+        catalog.FetchedAt.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
         catalog.LastFetchFailed.Should().BeTrue();
         catalog.Stations.Select(station => station.Id).Should().BeEquivalentTo(goodCache.Select(s => s.Id));
 
-        // And the cache file on disk must still be the good one - not overwritten
-        // by the degraded result, which would silently become the next 36 hours'
-        // worth of "fresh" cache with no indicator anything had gone wrong.
+        // The cache file on disk carries the same renewed freshness, with the
+        // fallback's stations preserved unchanged - not the degraded result, and
+        // not the original stale FetchedAt either.
         CachedCatalog? onDisk = await new CatalogCache(_folder).ReadAsync(CancellationToken.None);
-        onDisk!.FetchedAt.Should().Be(cachedAt);
+        onDisk!.FetchedAt.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
+        onDisk.FetchedAt.Should().BeAfter(cachedAt);
         onDisk.Stations.Select(station => station.Id).Should().BeEquivalentTo(goodCache.Select(s => s.Id));
+    }
+
+    // The actual regression the whole-branch re-review found: skipping the write
+    // entirely (the first version of this fix) never reset the TTL, so a second
+    // render after a degraded sweep re-entered the same 18-request sweep instead of
+    // being served from cache - unbounded repeated load on radio-browser. Pins that
+    // a degraded sweep now costs one sweep per TTL window, not one per view.
+    [Fact]
+    public async Task ServesFromCacheWithoutAnotherSweepAfterADegradedFetchPreservedIt()
+    {
+        RadioStation[] goodCache =
+            [.. Enumerable.Range(0, 5).Select(i =>
+                new RadioStation
+                {
+                    Id = $"good-{i}",
+                    Name = $"Good FM {i}",
+                    StreamUrl = $"https://example.com/good-{i}",
+                })];
+        await new CatalogCache(_folder).WriteAsync(
+            goodCache, DateTimeOffset.UtcNow - TimeSpan.FromHours(20), CancellationToken.None);
+
+        int call = 0;
+        _handler.RespondPerRequest(_ =>
+        {
+            call++;
+            return call == 1
+                ? new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        Payload("degraded-1", "Degraded FM", "https://example.com/degraded-1"),
+                        System.Text.Encoding.UTF8,
+                        "application/json"),
+                }
+                : new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    { Content = new StringContent("boom") };
+        });
+
+        CatalogProvider provider = Provider(TimeSpan.FromHours(1));
+
+        StationCatalog first = await provider.GetAsync(CancellationToken.None);
+        int requestsAfterDegradedSweep = _handler.Requests.Count;
+
+        StationCatalog second = await provider.GetAsync(CancellationToken.None);
+
+        second.Source.Should().Be(CatalogSource.Cache);
+        second.Stations.Select(station => station.Id)
+            .Should().BeEquivalentTo(first.Stations.Select(station => station.Id));
+        // The regression: without renewing FetchedAt, this second call would find
+        // the cache still past its TTL and run the full sweep again.
+        _handler.Requests.Should().HaveCount(requestsAfterDegradedSweep);
     }
 
     // The other half of the same fix: when there is nothing usable to fall back on,

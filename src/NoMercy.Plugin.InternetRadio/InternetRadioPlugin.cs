@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using NoMercy.Plugins.Abstractions;
 
@@ -29,8 +30,14 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// plugin has no reason to poll it harder than the catalogue actually changes.
     /// Not `const`: a numeric substitution into a const interpolated string is not
     /// itself a compile-time constant in C#, so this is `static readonly` instead.
+    /// Built via <see cref="string.Create(IFormatProvider, ref DefaultInterpolatedStringHandler)"/>
+    /// with <see cref="CultureInfo.InvariantCulture"/> rather than a bare `$"..."` -
+    /// a plain interpolated int otherwise formats through CurrentCulture, and some
+    /// cultures substitute non-ASCII native digits, which would corrupt the cron
+    /// expression a scheduler has to parse as plain ASCII.
     /// </summary>
-    private static readonly string DefaultCron = $"0 {RefreshHourUtc} * * *";
+    private static readonly string DefaultCron =
+        string.Create(CultureInfo.InvariantCulture, $"0 {RefreshHourUtc} * * *");
 
     /// <summary>
     /// The next time <see cref="DefaultCron"/> fires from <paramref name="now"/>.

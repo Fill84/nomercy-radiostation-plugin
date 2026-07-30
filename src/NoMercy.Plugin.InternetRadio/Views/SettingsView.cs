@@ -150,7 +150,12 @@ public static class SettingsView
             _ => $"in {(int)Math.Ceiling(until.TotalHours)} hours",
         };
 
-        return $"Next automatic refresh {relative}, at {nextRefreshUtc:HH:mm} UTC.";
+        // NOT nextRefreshUtc:HH:mm inside the interpolation: a custom date/time
+        // format treats ':' as the CURRENT CULTURE's time separator, not a literal
+        // colon - fi-FI renders "04.00" instead of "04:00". ToString with an
+        // explicit InvariantCulture provider is what actually pins the separator.
+        string time = nextRefreshUtc.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        return $"Next automatic refresh {relative}, at {time} UTC.";
     }
 
     private static string Age(StationCatalog catalog, DateTimeOffset now)
