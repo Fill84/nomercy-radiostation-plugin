@@ -1,0 +1,2414 @@
+# Internet Radio UI Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Turn a plugin whose only hook nothing consumes into a working browse-and-play radio UI, with its station catalogue fetched live from radio-browser.info.
+
+**Architecture:** The plugin implements `IUiPlugin` (five path-based routes rendered as declarative `PluginView` trees) and `IScheduledTaskPlugin` (one daily job that refreshes the catalogue). Station data is fetched from radio-browser.info — ten seed stations by pinned UUID plus per-genre discovery — filtered through admission gates, cached to the plugin's data folder, and read from cache by every view. Playback happens entirely client-side via `playMedia` action intents, so nothing depends on the server's inbound plugin transports, both of which are currently broken.
+
+**Tech Stack:** C# / .NET 10, `NoMercy.Plugins.Abstractions`, xunit + FluentAssertions, Forgejo Actions.
+
+**Spec:** `docs/superpowers/specs/2026-07-30-internet-radio-ui-design.md`
+
+## Global Constraints
+
+- **Target framework** `net10.0`. **SDK** pinned by `global.json` to `10.0.302`, `rollForward: latestFeature`.
+- **`TreatWarningsAsErrors`** is true for the plugin project. The build step also passes `-p:TreatWarningsAsErrors=true` explicitly.
+- **Version is 1.0.2** and must read identically in exactly three places: `src/NoMercy.Plugin.InternetRadio/plugin.json`, the csproj `<Version>`, and `PluginIdentity.Version`.
+- **Plugin id is `b3d4f1a2-7c5e-4d8a-9f10-1c2b3a4d5e6f` and must never change** — the host keys lifecycle state off it across restarts.
+- **No station name, stream URL, logo, genre or country may appear in the source tree.** The only station data permitted is the ten seed UUIDs in `SeedStations.cs`.
+- **`PluginText` variants are `title`, `subtitle`, `caption` only.** Any other string silently renders as body text. Do not copy `heading`/`subheading`/`body` from `nomercy-torrent-plugin`.
+- **Routes carry state in the path, never the query string.** The web host sends only `route`; query parameters never leave the browser.
+- **Icons must exist in the Moooom set.** The ones used here are verified present: `portableRadio`, `play`, `playlistAdd`, `globe`, `arrowLeft`, `gridMasonry`, `settings`. An unknown name silently renders as `plugged`.
+- **Every file gets the SPDX header:**
+  ```csharp
+  // SPDX-License-Identifier: MIT
+  // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+  ```
+- **Never ship `NoMercy.Plugins.Abstractions.dll` or `NoMercy.Events.dll`.** Both are host-owned; a second copy gives the load context two incompatible identities of the same types.
+- **Commit messages:** Conventional Commits (`type(scope): description`). No attribution or co-author trailers.
+
+## File Structure
+
+| File | Responsibility |
+| --- | --- |
+| `src/NoMercy.Plugin.InternetRadio/PluginIdentity.cs` | Id, name, description, version, assembly filename — one source of truth |
+| `src/NoMercy.Plugin.InternetRadio/InternetRadioPlugin.cs` | `IUiPlugin` + `IScheduledTaskPlugin`: lifecycle, route dispatch, refresh job |
+| `src/NoMercy.Plugin.InternetRadio/plugin.json` | The manifest the server reads |
+| `Catalog/RadioStation.cs` | One station, plus its stable `StationId` |
+| `Catalog/StationGates.cs` | Admission rules: HTTPS, non-HLS, checked-ok, dedupe |
+| `Catalog/GenreMap.cs` | radio-browser tags → the browse page's genre sections |
+| `Catalog/SeedStations.cs` | The ten pinned UUIDs, and the genre list to discover |
+| `Catalog/RadioBrowserDto.cs` | Wire shape of a radio-browser station record |
+| `Catalog/RadioBrowserClient.cs` | `byuuid` + per-genre search over `IPluginContext.HttpClient` |
+| `Catalog/StationCatalog.cs` | The resolved catalogue: lookup by id, grouping by genre |
+| `Catalog/CatalogCache.cs` | Read/write `catalog-cache.json` in the data folder |
+| `Catalog/CatalogProvider.cs` | Override-wins, cache-first, fetch-on-empty |
+| `Views/RadioRoutes.cs` | The only place a route is parsed or built |
+| `Views/BrowseView.cs` | `/` — genre chips + popular grid |
+| `Views/GenreView.cs` | `/genre/{slug}` — one genre's grid |
+| `Views/AllStationsView.cs` | `/all` — metadata table, rows navigate to detail |
+| `Views/StationView.cs` | `/station/{id}` — detail, play/enqueue/homepage, full record |
+| `Views/SettingsView.cs` | `/settings` — provenance, cache age, refresh, diagnostics |
+
+Views are pure static `Build(...)` methods: catalogue in, `PluginView` out, no `IPluginContext` and no I/O. That is what makes them cheap to test exhaustively, and it keeps the plugin class the only thing that touches the network or the disk.
+
+---
+
+### Task 1: Repo restructure and build scaffolding
+
+Moves the project under `src/`, adds the test project, and brings over the build scaffolding from `nomercy-torrent-plugin` so CI and a developer's machine cannot drift. Ends with a green build and passing tests.
+
+**Files:**
+- Create: `global.json`, `nuget.config`, `LICENSE`, `.gitattributes`
+- Create: `scripts/fetch-abstractions.sh`, `scripts/fetch-abstractions.ps1`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/NoMercy.Plugin.InternetRadio.Tests.csproj`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/BuildSanityTests.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/RadioStation.cs` (placeholder, rewritten in Task 3)
+- Move: `NoMercy.Plugin.InternetRadio/` to `src/NoMercy.Plugin.InternetRadio/`
+- Delete: `src/NoMercy.Plugin.InternetRadio/Plugin.cs`, `RadioStation.cs`, `RadioStations.cs`
+- Modify: `.gitignore`, `nomercy-radiostation-plugin.sln`, the plugin csproj
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: a solution with `src/NoMercy.Plugin.InternetRadio` and `tests/NoMercy.Plugin.InternetRadio.Tests`; `./scripts/fetch-abstractions.sh` populating `./_nupkgs`.
+
+- [ ] **Step 1: Move the project under `src/`**
+
+```bash
+git mv NoMercy.Plugin.InternetRadio src/NoMercy.Plugin.InternetRadio
+```
+
+- [ ] **Step 2: Add `global.json`**
+
+```json
+{
+  "sdk": {
+    "version": "10.0.302",
+    "rollForward": "latestFeature"
+  }
+}
+```
+
+- [ ] **Step 3: Add `nuget.config`**
+
+The `packageSourceMapping` block is load-bearing, not decoration: `NoMercy.Plugins.Abstractions` is unclaimed on nuget.org, and the plugin's floating `Version="*"` would otherwise resolve the highest match across *every* enabled source.
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+    <add key="local" value="./_nupkgs" />
+  </packageSources>
+
+  <!--
+    NoMercy.* resolves from the local feed and nowhere else. The contract is not
+    published to nuget.org - which is why scripts/fetch-abstractions.* exists - so
+    anyone publishing that name at a higher version would otherwise get their
+    assembly compiled into this plugin in place of the host's real contract.
+  -->
+  <packageSourceMapping>
+    <packageSource key="local">
+      <package pattern="NoMercy.*" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+</configuration>
+```
+
+- [ ] **Step 4: Add `scripts/fetch-abstractions.sh`**
+
+Only `NoMercy.Plugins.Abstractions` and `NoMercy.Events` are packed. `NoMercy.Plugins.Mvc` holds `PluginControllerBase`, which only a plugin serving REST inherits; this plugin declares `"rest": false`.
+
+```sh
+#!/usr/bin/env sh
+# Packs NoMercy.Plugins.Abstractions into a local NuGet feed.
+#
+# The contract is not published to nuget.org, so we clone the server and pack it.
+# NoMercy.Events must be packed too: it is a ProjectReference of the abstractions,
+# so packing only the abstractions yields a package whose dependency cannot resolve.
+#
+# NoMercy.Plugins.Mvc is deliberately NOT packed - see the plan's Task 1.
+
+set -eu
+
+# CI puts the right SDK on PATH. On a Windows dev machine the `dotnet` on PATH is
+# an older SDK that cannot build net10.0, and the usable one is a side-by-side
+# install under the user profile, so prefer that when it is there.
+if [ -x "${USERPROFILE:-}/.dotnet/dotnet.exe" ]; then
+    dotnet="${USERPROFILE}/.dotnet/dotnet.exe"
+elif [ -x "${HOME:-}/.dotnet/dotnet" ]; then
+    dotnet="${HOME}/.dotnet/dotnet"
+else
+    dotnet=dotnet
+fi
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+server="$root/_server"
+feed="$root/_nupkgs"
+# A release must be rebuildable. SERVER_REF pins the contract to one commit; it
+# defaults to a branch for day-to-day work, but CI sets it to a SHA for a tag
+# build so the artifact is reproducible instead of "whatever dev happened to be".
+ref="${SERVER_REF:-${SERVER_BRANCH:-dev}}"
+
+if [ ! -d "$server" ]; then
+    git clone --depth=1 --branch="${SERVER_BRANCH:-dev}" --filter=blob:none --no-checkout \
+        https://github.com/NoMercy-Entertainment/nomercy-media-server.git "$server"
+    git -C "$server" sparse-checkout init --cone
+fi
+
+# Applied on every run, not only on the initial clone: setting it once means adding
+# a project to the list silently does nothing on a checkout that already exists.
+git -C "$server" sparse-checkout set \
+    src/NoMercy.Plugins.Abstractions src/NoMercy.Events
+
+git -C "$server" fetch --depth=1 origin "$ref"
+git -C "$server" reset --hard FETCH_HEAD
+
+mkdir -p "$feed"
+
+# MSB9008 about a missing NoMercy.Analyzers is expected under a sparse checkout.
+# It is an analyzer reference; the package builds correctly without it.
+"$dotnet" pack "$server/src/NoMercy.Events/NoMercy.Events.csproj" -c Release -o "$feed"
+"$dotnet" pack "$server/src/NoMercy.Plugins.Abstractions/NoMercy.Plugins.Abstractions.csproj" -c Release -o "$feed"
+
+find "$feed" -maxdepth 1 -name '*.nupkg' -print
+
+echo "contract packed from nomercy-media-server $(git -C "$server" rev-parse HEAD)"
+```
+
+- [ ] **Step 5: Add `scripts/fetch-abstractions.ps1`**
+
+```powershell
+#!/usr/bin/env pwsh
+# Packs NoMercy.Plugins.Abstractions into a local NuGet feed.
+# See fetch-abstractions.sh for why this exists and why Mvc is not packed.
+
+$ErrorActionPreference = 'Stop'
+
+$dotnet = Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'
+if (-not (Test-Path $dotnet)) { $dotnet = 'dotnet' }
+
+$root   = Split-Path -Parent $PSScriptRoot
+$server = Join-Path $root '_server'
+$feed   = Join-Path $root '_nupkgs'
+$branch = if ($env:SERVER_BRANCH) { $env:SERVER_BRANCH } else { 'dev' }
+$ref    = if ($env:SERVER_REF) { $env:SERVER_REF } else { $branch }
+
+if (-not (Test-Path $server)) {
+    git clone --depth=1 --branch=$branch --filter=blob:none --no-checkout `
+        https://github.com/NoMercy-Entertainment/nomercy-media-server.git $server
+    git -C $server sparse-checkout init --cone
+}
+
+git -C $server sparse-checkout set src/NoMercy.Plugins.Abstractions src/NoMercy.Events
+git -C $server fetch --depth=1 origin $ref
+git -C $server reset --hard FETCH_HEAD
+
+New-Item -ItemType Directory -Force $feed | Out-Null
+
+& $dotnet pack (Join-Path $server 'src\NoMercy.Events\NoMercy.Events.csproj') -c Release -o $feed
+if ($LASTEXITCODE -ne 0) { throw 'packing NoMercy.Events failed' }
+
+& $dotnet pack (Join-Path $server 'src\NoMercy.Plugins.Abstractions\NoMercy.Plugins.Abstractions.csproj') -c Release -o $feed
+if ($LASTEXITCODE -ne 0) { throw 'packing NoMercy.Plugins.Abstractions failed' }
+
+Get-ChildItem $feed -Filter *.nupkg | ForEach-Object { Write-Host "  $($_.Name)" }
+```
+
+- [ ] **Step 6: Add `LICENSE` and `.gitattributes`**
+
+`LICENSE` is the standard MIT text beginning:
+
+```
+MIT License
+
+Copyright (c) 2026 Phillippe Pelzer
+```
+
+`.gitattributes`:
+
+```
+* text=auto eol=lf
+*.sln text eol=crlf
+*.png binary
+```
+
+- [ ] **Step 7: Replace `.gitignore`**
+
+```
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+artifacts/
+TestResults/
+.claude/*
+_server/
+_nupkgs/
+```
+
+- [ ] **Step 8: Rewrite the plugin csproj**
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <AssemblyName>NoMercy.Plugin.InternetRadio</AssemblyName>
+        <RootNamespace>NoMercy.Plugin.InternetRadio</RootNamespace>
+        <Version>1.0.2</Version>
+        <Authors>NoMercy Community</Authors>
+        <Description>Browse and play internet radio stations in the built-in player.</Description>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!--
+            The host owns this assembly at runtime: it is in the server's shared-assembly
+            set, so the plugin load context deliberately resolves it to the host's copy
+            rather than one sitting next to the plugin.
+
+            Do NOT set CopyLocalLockFileAssemblies=true to "gather dependencies" for
+            packaging: it would drop NoMercy.Plugins.Abstractions.dll and NoMercy.Events.dll
+            beside the plugin, and the load context would then hold two incompatible
+            identities of the same types. That surfaces as an unrelated-looking cast error
+            far from its cause. The CI packaging step asserts neither assembly ships.
+        -->
+        <PackageReference Include="NoMercy.Plugins.Abstractions" Version="*" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="plugin.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+</Project>
+```
+
+- [ ] **Step 9: Create the test project**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/NoMercy.Plugin.InternetRadio.Tests.csproj`. The linked `plugin.json` is what lets `ManifestTests` read the shipped manifest from `AppContext.BaseDirectory` in Task 2.
+
+```xml
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <LangVersion>latest</LangVersion>
+        <IsPackable>false</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="FluentAssertions" Version="[7.0.0,8.0.0)" />
+        <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+        <PackageReference Include="xunit" Version="2.*" />
+        <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\NoMercy.Plugin.InternetRadio\NoMercy.Plugin.InternetRadio.csproj" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="..\..\src\NoMercy.Plugin.InternetRadio\plugin.json"
+              Link="plugin.json"
+              CopyToOutputDirectory="PreserveNewest" />
+    </ItemGroup>
+
+</Project>
+```
+
+- [ ] **Step 10: Delete the dead media-source implementation**
+
+Nothing in the server consumes `IMediaSourcePlugin` — it appears there only in its own declaration and one abstractions test. All three files go; `RadioStation` is rewritten in Task 3.
+
+```bash
+git rm src/NoMercy.Plugin.InternetRadio/Plugin.cs \
+       src/NoMercy.Plugin.InternetRadio/RadioStation.cs \
+       src/NoMercy.Plugin.InternetRadio/RadioStations.cs
+```
+
+- [ ] **Step 11: Add the placeholder `RadioStation`**
+
+`src/NoMercy.Plugin.InternetRadio/Catalog/RadioStation.cs` — replaced in full by Task 3, present now only so the solution compiles:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+namespace NoMercy.Plugin.InternetRadio;
+
+public sealed record RadioStation
+{
+    public required string Name { get; init; }
+    public required string StreamUrl { get; init; }
+}
+```
+
+- [ ] **Step 12: Write the sanity test**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/BuildSanityTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests;
+
+// Proves the test project resolves the plugin assembly and that the linked manifest
+// is copied next to the test binary. Both are wiring that fails silently otherwise:
+// a missing plugin.json makes every manifest assertion in Task 2 fail for a reason
+// that has nothing to do with the manifest.
+public class BuildSanityTests
+{
+    [Fact]
+    public void PluginAssembly_IsReferenced()
+    {
+        typeof(RadioStation).Assembly.GetName().Name
+            .Should().Be("NoMercy.Plugin.InternetRadio");
+    }
+
+    [Fact]
+    public void Manifest_IsCopiedNextToTheTestBinary()
+    {
+        File.Exists(Path.Combine(AppContext.BaseDirectory, "plugin.json"))
+            .Should().BeTrue("ManifestTests reads it from here");
+    }
+}
+```
+
+- [ ] **Step 13: Rebuild the solution file**
+
+```bash
+rm nomercy-radiostation-plugin.sln
+dotnet new sln -n nomercy-radiostation-plugin
+dotnet sln add src/NoMercy.Plugin.InternetRadio/NoMercy.Plugin.InternetRadio.csproj
+dotnet sln add tests/NoMercy.Plugin.InternetRadio.Tests/NoMercy.Plugin.InternetRadio.Tests.csproj
+```
+
+- [ ] **Step 14: Pack the contract, build and test**
+
+```bash
+chmod +x scripts/fetch-abstractions.sh
+./scripts/fetch-abstractions.sh
+dotnet restore
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+```
+
+Expected: restore resolves `NoMercy.Plugins.Abstractions` from `_nupkgs`, build is clean, 2 tests pass.
+
+- [ ] **Step 15: Commit**
+
+```bash
+git add -A
+git commit -m "build: restructure to src/ + tests/ and adopt the plugin build standard"
+```
+
+---
+
+### Task 2: Plugin identity, manifest 1.0.2, and the tests that pin them together
+
+The reported defect — tag `v1.0.1` shipping a manifest reading `1.0.0` — was possible because one number lived in three files with no guard. This task creates the single source of truth and the tests that fail when they drift.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/PluginIdentity.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/ManifestTests.cs`
+- Modify: `src/NoMercy.Plugin.InternetRadio/plugin.json`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: `PluginIdentity.Id` (`Guid`), `.Name` and `.Description` (`const string`), `.Version` (`Version`), `.AssemblyFileName` (`const string`); `ManifestTests.LoadManifest()` returning `PluginManifest`, `internal` so later tests reuse it.
+
+- [ ] **Step 1: Write `PluginIdentity.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// The manifest and the IPlugin implementation must agree on all of this, and the host
+// matches a loaded assembly to its manifest by id. A drift between the two is a plugin
+// that either fails to load or loads as something it is not, so both sides read these
+// constants and ManifestTests asserts they match the shipped json.
+//
+// The id is the one value here that must NEVER change: the host keys lifecycle state
+// off it across restarts, so a new id is a new plugin as far as every installed server
+// is concerned.
+public static class PluginIdentity
+{
+    public static Guid Id { get; } = new("b3d4f1a2-7c5e-4d8a-9f10-1c2b3a4d5e6f");
+
+    public const string Name = "Internet Radio";
+
+    public const string Description =
+        "Browse and play internet radio stations in the built-in player.";
+
+    public static Version Version { get; } = new(1, 0, 2);
+
+    public const string AssemblyFileName = "NoMercy.Plugin.InternetRadio.dll";
+}
+```
+
+- [ ] **Step 2: Rewrite `plugin.json`**
+
+```json
+{
+  "id": "b3d4f1a2-7c5e-4d8a-9f10-1c2b3a4d5e6f",
+  "name": "Internet Radio",
+  "description": "Browse and play internet radio stations in the built-in player.",
+  "version": "1.0.2",
+  "targetAbi": "10.0",
+  "author": "NoMercy Community",
+  "projectUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin",
+  "assembly": "NoMercy.Plugin.InternetRadio.dll",
+  "autoEnabled": true,
+  "capabilities": {
+    "hooks": ["ui", "scheduledTask"],
+    "rest": false,
+    "ws": false,
+    "network": { "hosts": ["*.api.radio-browser.info"] },
+    "ui": {
+      "mounts": [
+        { "section": "music",    "label": "Internet Radio", "icon": "portableRadio", "route": "/" },
+        { "section": "settings", "label": "Internet Radio", "icon": "portableRadio", "route": "/settings" }
+      ]
+    }
+  }
+}
+```
+
+- [ ] **Step 3: Write the failing manifest tests**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/ManifestTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Text.Json;
+using FluentAssertions;
+using NoMercy.Plugins.Abstractions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests;
+
+public class ManifestTests
+{
+    // Internal so every other test reads the manifest the same way rather than
+    // duplicating the load - two readers that could disagree about which file is the
+    // real one would defeat the point of asserting they agree.
+    internal static PluginManifest LoadManifest()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "plugin.json");
+        PluginManifest? manifest = JsonSerializer.Deserialize<PluginManifest>(File.ReadAllText(path));
+
+        manifest.Should().NotBeNull();
+        return manifest!;
+    }
+
+    [Fact]
+    public void Manifest_DeserialisesWithTheHostsOwnType()
+    {
+        PluginManifest manifest = LoadManifest();
+
+        manifest.Id.Should().NotBeEmpty();
+        manifest.Name.Should().NotBeNullOrWhiteSpace();
+        manifest.Description.Should().NotBeNullOrWhiteSpace();
+        manifest.Version.Should().NotBeNullOrWhiteSpace();
+        manifest.Assembly.Should().NotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void Manifest_IdMatchesPluginIdentity()
+    {
+        LoadManifest().Id.Should().Be(PluginIdentity.Id);
+    }
+
+    [Fact]
+    public void Manifest_NameAndDescriptionMatchPluginIdentity()
+    {
+        PluginManifest manifest = LoadManifest();
+
+        manifest.Name.Should().Be(PluginIdentity.Name);
+        manifest.Description.Should().Be(PluginIdentity.Description);
+    }
+
+    // The defect this repo actually shipped: v1.0.1 was tagged on a commit whose
+    // manifest read 1.0.0, so an installed server reported 1.0.0 and was told an
+    // update was available forever. CI gates the tag against this same value.
+    [Fact]
+    public void Manifest_VersionMatchesPluginIdentity()
+    {
+        Version.Parse(LoadManifest().Version).Should().Be(PluginIdentity.Version);
+    }
+
+    [Fact]
+    public void Manifest_VersionIsExactly_1_0_2()
+    {
+        LoadManifest().Version.Should().Be("1.0.2");
+    }
+
+    [Fact]
+    public void Manifest_AssemblyNameMatchesTheBuiltAssembly()
+    {
+        PluginManifest manifest = LoadManifest();
+
+        manifest.Assembly.Should().Be(PluginIdentity.AssemblyFileName);
+        File.Exists(Path.Combine(AppContext.BaseDirectory, manifest.Assembly)).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Manifest_TargetAbiIsCompatibleWithTheShippedAbi()
+    {
+        PluginAbi.IsCompatible(LoadManifest().TargetAbi).Should().BeTrue();
+    }
+
+    // PluginUiController.HasUi refuses to serve a view for a plugin that has not
+    // declared the ui hook, so this one is the difference between a working plugin
+    // and one that is installed, enabled and invisible.
+    [Fact]
+    public void Manifest_DeclaresExactlyTheHooksThisVersionImplements()
+    {
+        LoadManifest().Capabilities!.Hooks
+            .Should().BeEquivalentTo(new[] { PluginHookCapability.Ui, PluginHookCapability.ScheduledTask });
+    }
+
+    // mediaSource is gone on purpose: the server consumes it nowhere, and a manifest
+    // is what an owner reviews at consent time. Declaring a capability that does
+    // nothing is a false promise.
+    [Fact]
+    public void Manifest_NoLongerDeclaresTheMediaSourceHookNothingConsumes()
+    {
+        LoadManifest().Capabilities!.Hooks
+            .Should().NotContain(PluginHookCapability.MediaSource);
+    }
+
+    [Fact]
+    public void Manifest_DeclaresNoElevatedHook()
+    {
+        LoadManifest().Capabilities!.Hooks
+            .Should().NotContain(hook => PluginHookCapability.Elevated.Contains(hook));
+    }
+
+    // Both inbound transports are broken upstream (server issue #26 for REST; nothing
+    // registers hub handlers), and nothing in this plugin implements either. Declaring
+    // them would promise a save path that cannot work.
+    [Fact]
+    public void Manifest_DeclaresNeitherRestNorWs()
+    {
+        PluginCapabilities capabilities = LoadManifest().Capabilities!;
+
+        capabilities.Rest.Should().BeFalse();
+        capabilities.Ws.Should().BeFalse();
+    }
+
+    // Scoped to radio-browser's mirrors and nothing wider. The allowlist glob is
+    // label-scoped - '*' matches within one label - so this covers all./de1./nl1.
+    // and cannot broaden to another domain.
+    [Fact]
+    public void Manifest_DeclaresOnlyTheRadioBrowserHost()
+    {
+        LoadManifest().Capabilities!.Network!.Hosts
+            .Should().Equal("*.api.radio-browser.info");
+    }
+
+    [Fact]
+    public void Manifest_MountsBrowseUnderMusicAndSettingsUnderSettings()
+    {
+        List<PluginUiMount> mounts = LoadManifest().Capabilities!.Ui!.Mounts;
+
+        mounts.Should().HaveCount(2);
+        mounts.Should().ContainSingle(mount =>
+            mount.Section == PluginUiSection.Music && mount.Route == "/");
+        mounts.Should().ContainSingle(mount =>
+            mount.Section == PluginUiSection.Settings && mount.Route == "/settings");
+    }
+
+    // pluginIcon() silently substitutes 'plugged' for a name the app does not have,
+    // so a typo here is a nav entry the user cannot tell apart from any other.
+    [Fact]
+    public void Manifest_UsesAnIconThatExistsInTheMoooomSet()
+    {
+        LoadManifest().Capabilities!.Ui!.Mounts
+            .Should().OnlyContain(mount => mount.Icon == "portableRadio");
+    }
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they fail**
+
+```bash
+dotnet test -c Release --filter FullyQualifiedName~ManifestTests
+```
+
+Expected: FAIL, because the old manifest declares `mediaSource`, version `1.0.0`, no capabilities block and no UI mounts.
+
+- [ ] **Step 5: Build and run the full suite**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+```
+
+Expected: all pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "fix(manifest): read 1.0.2, declare only ui + scheduledTask, pin identity in tests"
+```
+
+---
+
+### Task 3: Station model, wire DTO, and the admission gates
+
+The gates are where a stream that cannot play is refused. This used to be assertable over shipped data; now it is code, so it is tested hard. Pure functions, no network.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/RadioBrowserStation.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/StationGates.cs`
+- Rewrite: `src/NoMercy.Plugin.InternetRadio/Catalog/RadioStation.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/StationGatesTests.cs`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces:
+  - `RadioBrowserStation` — wire record with `StationUuid`, `Name`, `Url`, `UrlResolved`, `Homepage`, `Favicon`, `Tags`, `CountryCode`, `Language`, `Codec`, `Bitrate`, `Hls`, `LastCheckOk`, `Votes`.
+  - `RadioStation` — `Id`, `Name`, `StreamUrl`, `LogoUrl`, `Homepage`, `Genre`, `Country`, `Language`, `BitrateKbps`, `Codec`, `Popularity`, `IsUserSupplied`.
+  - `StationGates.Admits(RadioBrowserStation) : bool`
+  - `StationGates.EffectiveUrl(RadioBrowserStation) : string`
+  - `StationGates.Deduplicate(IEnumerable<RadioStation>) : IReadOnlyList<RadioStation>`
+  - `StationGates.Slugify(string) : string`
+
+- [ ] **Step 1: Write the failing gate tests**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/StationGatesTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
+
+public class StationGatesTests
+{
+    private static RadioBrowserStation Wire(
+        string url = "https://example.com/stream.mp3",
+        int hls = 0,
+        int lastCheckOk = 1,
+        string name = "Example FM"
+    ) =>
+        new()
+        {
+            StationUuid = "11111111-2222-3333-4444-555555555555",
+            Name = name,
+            Url = url,
+            UrlResolved = url,
+            Hls = hls,
+            LastCheckOk = lastCheckOk,
+        };
+
+    // The gate that matters most. The web client is served over HTTPS, so an http
+    // stream is blocked as mixed content and never reaches the audio element. This
+    // is not hypothetical - it is why the BBC entries this plugin used to ship could
+    // never play.
+    [Fact]
+    public void Admits_RejectsPlainHttp()
+    {
+        StationGates.Admits(Wire(url: "http://example.com/stream.mp3")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Admits_AcceptsHttps()
+    {
+        StationGates.Admits(Wire(url: "https://example.com/stream.mp3")).Should().BeTrue();
+    }
+
+    // HLS in a plain audio element only works in Safari, so an m3u8 is silence on
+    // every other client.
+    [Fact]
+    public void Admits_RejectsHls()
+    {
+        StationGates.Admits(Wire(hls: 1)).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Admits_RejectsWhatRadioBrowserCouldNotCheck()
+    {
+        StationGates.Admits(Wire(lastCheckOk: 0)).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void Admits_RejectsAMissingName(string? name)
+    {
+        StationGates.Admits(Wire(name: name!)).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("not a url")]
+    [InlineData("ftp://example.com/stream")]
+    public void Admits_RejectsAnUnusableUrl(string url)
+    {
+        StationGates.Admits(Wire(url: url)).Should().BeFalse();
+    }
+
+    // url_resolved is what radio-browser followed redirects to and is the better
+    // answer; url is the fallback for a record that has not been resolved yet.
+    [Fact]
+    public void EffectiveUrl_PrefersTheResolvedUrl()
+    {
+        RadioBrowserStation station = new()
+        {
+            StationUuid = "a",
+            Name = "n",
+            Url = "https://example.com/original",
+            UrlResolved = "https://cdn.example.com/resolved",
+        };
+
+        StationGates.EffectiveUrl(station).Should().Be("https://cdn.example.com/resolved");
+    }
+
+    [Fact]
+    public void EffectiveUrl_FallsBackToUrlWhenNothingWasResolved()
+    {
+        RadioBrowserStation station = new()
+        {
+            StationUuid = "a",
+            Name = "n",
+            Url = "https://example.com/original",
+            UrlResolved = null,
+        };
+
+        StationGates.EffectiveUrl(station).Should().Be("https://example.com/original");
+    }
+
+    private static RadioStation Station(string id, string name, string url) =>
+        new() { Id = id, Name = name, StreamUrl = url };
+
+    // The seed set and the genre sweep overlap by design - a curated station is
+    // usually also popular in its genre - so the same station arrives twice.
+    [Fact]
+    public void Deduplicate_DropsTheSameStreamTwice()
+    {
+        IReadOnlyList<RadioStation> result = StationGates.Deduplicate(
+        [
+            Station("a", "First", "https://example.com/stream"),
+            Station("b", "Second", "https://example.com/stream"),
+        ]);
+
+        result.Should().ContainSingle().Which.Id.Should().Be("a");
+    }
+
+    [Fact]
+    public void Deduplicate_TreatsATrailingSlashAndCasingAsTheSameStream()
+    {
+        IReadOnlyList<RadioStation> result = StationGates.Deduplicate(
+        [
+            Station("a", "First", "https://Example.com/Stream/"),
+            Station("b", "Second", "https://example.com/Stream"),
+        ]);
+
+        result.Should().ContainSingle();
+    }
+
+    // Same station, different mirror host. Names collide even when URLs do not, and
+    // two identical rows in the grid look like a bug to the user.
+    [Fact]
+    public void Deduplicate_DropsTheSameNameOnADifferentMirror()
+    {
+        IReadOnlyList<RadioStation> result = StationGates.Deduplicate(
+        [
+            Station("a", "SomaFM Groove Salad", "https://ice1.example.com/gs"),
+            Station("b", "somafm  groove-salad!", "https://ice5.example.com/gs"),
+        ]);
+
+        result.Should().ContainSingle().Which.Id.Should().Be("a");
+    }
+
+    [Fact]
+    public void Deduplicate_KeepsGenuinelyDifferentStations()
+    {
+        IReadOnlyList<RadioStation> result = StationGates.Deduplicate(
+        [
+            Station("a", "First", "https://example.com/one"),
+            Station("b", "Second", "https://example.com/two"),
+        ]);
+
+        result.Should().HaveCount(2);
+    }
+
+    // First wins, so a seed keeps its place when the genre sweep finds it again.
+    [Fact]
+    public void Deduplicate_KeepsTheFirstOccurrence()
+    {
+        IReadOnlyList<RadioStation> result = StationGates.Deduplicate(
+        [
+            Station("seed", "Station", "https://example.com/s"),
+            Station("discovered", "Station", "https://example.com/s"),
+        ]);
+
+        result.Should().ContainSingle().Which.Id.Should().Be("seed");
+    }
+
+    [Theory]
+    [InlineData("SomaFM - Groove Salad", "somafm-groove-salad")]
+    [InlineData("FIP  (hifi.aac)", "fip-hifi-aac")]
+    [InlineData("  Radio  Paradise  ", "radio-paradise")]
+    [InlineData("100% Hits!", "100-hits")]
+    public void Slugify_ProducesAUrlSafeStableId(string name, string expected)
+    {
+        StationGates.Slugify(name).Should().Be(expected);
+    }
+
+    // A name with nothing slug-safe in it must still produce a routable id rather
+    // than an empty string, which would collide with every other such station.
+    [Fact]
+    public void Slugify_NeverReturnsEmpty()
+    {
+        StationGates.Slugify("!!!").Should().NotBeEmpty();
+    }
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+```bash
+dotnet test -c Release --filter FullyQualifiedName~StationGatesTests
+```
+
+Expected: FAIL — `RadioBrowserStation` and `StationGates` do not exist.
+
+- [ ] **Step 3: Write `RadioBrowserStation.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Text.Json.Serialization;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// The wire shape of one radio-browser station record. Only the fields this plugin
+// reads are declared; the API returns roughly forty and the rest are ignored.
+//
+// Every field is nullable or defaulted on purpose. This is a third party's JSON
+// arriving over the network, and a record missing a field it has always sent must
+// deserialise to something the gates can reject rather than throw during parsing -
+// one malformed row would otherwise lose the whole response.
+public sealed record RadioBrowserStation
+{
+    [JsonPropertyName("stationuuid")]
+    public required string StationUuid { get; init; }
+
+    [JsonPropertyName("name")]
+    public required string Name { get; init; }
+
+    [JsonPropertyName("url")]
+    public string? Url { get; init; }
+
+    [JsonPropertyName("url_resolved")]
+    public string? UrlResolved { get; init; }
+
+    [JsonPropertyName("homepage")]
+    public string? Homepage { get; init; }
+
+    [JsonPropertyName("favicon")]
+    public string? Favicon { get; init; }
+
+    [JsonPropertyName("tags")]
+    public string? Tags { get; init; }
+
+    [JsonPropertyName("countrycode")]
+    public string? CountryCode { get; init; }
+
+    [JsonPropertyName("language")]
+    public string? Language { get; init; }
+
+    [JsonPropertyName("codec")]
+    public string? Codec { get; init; }
+
+    [JsonPropertyName("bitrate")]
+    public int Bitrate { get; init; }
+
+    /// <summary>1 when the stream is HLS. Unplayable outside Safari in a plain audio element.</summary>
+    [JsonPropertyName("hls")]
+    public int Hls { get; init; }
+
+    /// <summary>
+    /// radio-browser's own liveness flag. Trusted for discovery and nothing more:
+    /// it reported a 404 Tomorrowland Anthems URL as healthy, which is how that
+    /// station came to need submitting by hand. Declaration is not verification.
+    /// </summary>
+    [JsonPropertyName("lastcheckok")]
+    public int LastCheckOk { get; init; }
+
+    [JsonPropertyName("votes")]
+    public int Votes { get; init; }
+}
+```
+
+- [ ] **Step 4: Rewrite `RadioStation.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Text.Json.Serialization;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// One station as this plugin uses it, after the wire record has been through the
+// gates. Separate from RadioBrowserStation so the views never see a field they
+// must not render and never depend on a third party's field names.
+public sealed record RadioStation
+{
+    /// <summary>
+    /// Stable and URL-safe: it is a path segment in /station/{id}. A radio-browser
+    /// UUID for a fetched station, a slug of the name for a user-supplied one.
+    /// </summary>
+    [JsonPropertyName("id")]
+    public required string Id { get; init; }
+
+    [JsonPropertyName("name")]
+    public required string Name { get; init; }
+
+    [JsonPropertyName("streamUrl")]
+    public required string StreamUrl { get; init; }
+
+    [JsonPropertyName("logoUrl")]
+    public string? LogoUrl { get; init; }
+
+    [JsonPropertyName("homepage")]
+    public string? Homepage { get; init; }
+
+    /// <summary>The mapped section label, not the raw tag list. See GenreMap.</summary>
+    [JsonPropertyName("genre")]
+    public string? Genre { get; init; }
+
+    [JsonPropertyName("country")]
+    public string? Country { get; init; }
+
+    [JsonPropertyName("language")]
+    public string? Language { get; init; }
+
+    /// <summary>Null when radio-browser reports 0, which means "unknown", not "silent".</summary>
+    [JsonPropertyName("bitrateKbps")]
+    public int? BitrateKbps { get; init; }
+
+    [JsonPropertyName("codec")]
+    public string? Codec { get; init; }
+
+    /// <summary>radio-browser votes. Ordering only - never shown.</summary>
+    [JsonPropertyName("popularity")]
+    public int Popularity { get; init; }
+
+    /// <summary>True for a station from the user's stations.json. Shown as provenance.</summary>
+    [JsonPropertyName("isUserSupplied")]
+    public bool IsUserSupplied { get; init; }
+}
+```
+
+- [ ] **Step 5: Write `StationGates.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Text;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// What a station has to be before it is allowed into the catalogue.
+//
+// These are admission rules for DISCOVERED stations, applied to what radio-browser
+// declares. They are not proof a stream works - see RadioBrowserStation.LastCheckOk
+// for why that distinction is real. A user's own stations.json is deliberately not
+// gated: a hand-written list is their call, and silently dropping their entries
+// would be worse than letting one fail visibly in the player.
+public static class StationGates
+{
+    /// <summary>
+    /// url_resolved is what radio-browser followed redirects to, and is the better
+    /// answer when it has one.
+    /// </summary>
+    public static string EffectiveUrl(RadioBrowserStation station) =>
+        !string.IsNullOrWhiteSpace(station.UrlResolved) ? station.UrlResolved : station.Url ?? string.Empty;
+
+    public static bool Admits(RadioBrowserStation station)
+    {
+        if (string.IsNullOrWhiteSpace(station.Name))
+        {
+            return false;
+        }
+
+        // HTTPS is mandatory, not preferred: the dashboard is served over HTTPS, so
+        // the browser blocks an http stream as mixed content before it reaches the
+        // player. A station that cannot play is worse than one that is absent,
+        // because the absent one does not look like the plugin is broken.
+        string url = EffectiveUrl(station);
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? parsed)
+            || parsed.Scheme != Uri.UriSchemeHttps)
+        {
+            return false;
+        }
+
+        // Silence on every client but Safari.
+        if (station.Hls != 0)
+        {
+            return false;
+        }
+
+        return station.LastCheckOk == 1;
+    }
+
+    /// <summary>
+    /// First occurrence wins, so a seed keeps its place when the genre sweep finds
+    /// the same station again — which it routinely does, since a curated station is
+    /// usually also a popular one.
+    /// </summary>
+    public static IReadOnlyList<RadioStation> Deduplicate(IEnumerable<RadioStation> stations)
+    {
+        HashSet<string> seenUrls = new(StringComparer.OrdinalIgnoreCase);
+        HashSet<string> seenNames = new(StringComparer.Ordinal);
+        List<RadioStation> kept = [];
+
+        foreach (RadioStation station in stations)
+        {
+            string url = station.StreamUrl.Trim().TrimEnd('/');
+            string name = Slugify(station.Name);
+
+            // Both keys, because the same station appears under different mirror
+            // hosts (same name, different URL) and under different names for the
+            // same stream (same URL, different name).
+            if (!seenUrls.Add(url) || !seenNames.Add(name))
+            {
+                continue;
+            }
+
+            kept.Add(station);
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// A lowercase, hyphen-separated, ASCII-safe form of a name. Used both as the
+    /// dedupe key and as the route id for a user-supplied station, so it has to be
+    /// stable for the same name and safe in a URL path segment.
+    /// </summary>
+    public static string Slugify(string name)
+    {
+        StringBuilder builder = new(name.Length);
+        bool pendingSeparator = false;
+
+        foreach (char character in name)
+        {
+            if (char.IsAsciiLetterOrDigit(character))
+            {
+                if (pendingSeparator && builder.Length > 0)
+                {
+                    builder.Append('-');
+                }
+
+                builder.Append(char.ToLowerInvariant(character));
+                pendingSeparator = false;
+            }
+            else
+            {
+                pendingSeparator = true;
+            }
+        }
+
+        // A name with nothing slug-safe in it still needs a routable id, and an
+        // empty one would collide with every other such station.
+        return builder.Length > 0 ? builder.ToString() : "station";
+    }
+}
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build --filter FullyQualifiedName~StationGatesTests
+```
+
+Expected: PASS.
+
+- [ ] **Step 7: Run the full suite**
+
+```bash
+dotnet test -c Release --no-build
+```
+
+Expected: all pass. `BuildSanityTests.PluginAssembly_IsReferenced` still compiles — `RadioStation` gained fields but kept its name and namespace.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add -A
+git commit -m "feat(catalog): add the station model and the admission gates"
+```
+
+---
+
+### Task 4: Genre sections and the pinned seed UUIDs
+
+radio-browser stations carry free-text tags — thousands of distinct ones. `GenreMap` collapses them onto a fixed set of sections so the browse page has stable navigation. `SeedStations` holds the ten pinned UUIDs, which are the only station data allowed in the source tree.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/GenreMap.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/SeedStations.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/GenreMapTests.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/SeedTests.cs`
+
+**Interfaces:**
+- Consumes: `StationGates.Slugify`.
+- Produces:
+  - `GenreSection` — record with `Tag`, `Label`, `Slug`.
+  - `GenreMap.Sections : IReadOnlyList<GenreSection>`
+  - `GenreMap.Other : string` (the `"Other"` label)
+  - `GenreMap.Resolve(string? tags) : string`
+  - `GenreMap.BySlug(string slug) : GenreSection?`
+  - `SeedStations.Uuids : IReadOnlyList<string>`
+  - `SeedStations.PerGenreLimit : int`
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/GenreMapTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
+
+public class GenreMapTests
+{
+    [Fact]
+    public void Sections_HaveUniqueSlugsSoARouteResolvesToOne()
+    {
+        GenreMap.Sections.Select(section => section.Slug)
+            .Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void Sections_HaveUniqueLabels()
+    {
+        GenreMap.Sections.Select(section => section.Label)
+            .Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void Sections_SlugsAreUrlSafe()
+    {
+        GenreMap.Sections.Should().OnlyContain(section => section.Slug == StationGates.Slugify(section.Label));
+    }
+
+    [Theory]
+    [InlineData("ambient,atmospheric,chillout,drone", "Ambient")]
+    [InlineData("dance,edm,electronic", "Dance & Electronic")]
+    [InlineData("jazz,smooth jazz", "Jazz")]
+    [InlineData("HIP HOP,rap", "Hip Hop")]
+    public void Resolve_MapsATagListOntoItsSection(string tags, string expected)
+    {
+        GenreMap.Resolve(tags).Should().Be(expected);
+    }
+
+    // Section order is the priority order. A station tagged both is a real case -
+    // "ambient,chillout" is the single commonest pair in the database - and it has to
+    // land in exactly one section, deterministically, or the same station appears
+    // twice in the browse page.
+    [Fact]
+    public void Resolve_PicksTheEarliestMatchingSection()
+    {
+        GenreMap.Resolve("chillout,ambient").Should().Be("Ambient");
+    }
+
+    // Several of the pinned Tomorrowland records carry no tags at all. They must
+    // still land somewhere routable rather than dropping out of the genre pages.
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    [InlineData("something,nobody,mapped")]
+    public void Resolve_FallsBackToOtherRatherThanNull(string? tags)
+    {
+        GenreMap.Resolve(tags).Should().Be(GenreMap.Other);
+    }
+
+    [Fact]
+    public void Resolve_IgnoresSurroundingWhitespaceOnATag()
+    {
+        GenreMap.Resolve("  rock ,  pop ").Should().Be("Rock");
+    }
+
+    // Substring matching would put "rockabilly" in Rock and "poparazzi" in Pop.
+    [Fact]
+    public void Resolve_MatchesAWholeTagAndNotASubstring()
+    {
+        GenreMap.Resolve("rockabilly").Should().Be(GenreMap.Other);
+    }
+
+    [Fact]
+    public void BySlug_FindsASectionAndIsCaseInsensitive()
+    {
+        GenreMap.BySlug("drum-bass")!.Label.Should().Be("Drum & Bass");
+        GenreMap.BySlug("AMBIENT")!.Label.Should().Be("Ambient");
+    }
+
+    [Fact]
+    public void BySlug_ReturnsNullForAnUnknownSlug()
+    {
+        GenreMap.BySlug("no-such-genre").Should().BeNull();
+    }
+}
+```
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/SeedTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
+
+// Only what can be asserted without a network. Whether each UUID still resolves and
+// still passes the gates is checked by scripts/resolve-seeds.sh before a release -
+// a unit test that reaches radio-browser would turn their outage into our red build.
+public class SeedTests
+{
+    [Fact]
+    public void Seeds_AreTheTenCuratedStations()
+    {
+        SeedStations.Uuids.Should().HaveCount(10);
+    }
+
+    [Fact]
+    public void Seeds_AreWellFormedGuids()
+    {
+        SeedStations.Uuids.Should().OnlyContain(uuid => Guid.TryParse(uuid, out _));
+    }
+
+    // A duplicate would ask radio-browser for the same station twice and then rely on
+    // dedupe to hide it, which is a silent way to be one station short of the ten.
+    [Fact]
+    public void Seeds_AreUnique()
+    {
+        SeedStations.Uuids.Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void PerGenreLimit_IsPositive()
+    {
+        SeedStations.PerGenreLimit.Should().BeGreaterThan(0);
+    }
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+```bash
+dotnet test -c Release --filter "FullyQualifiedName~GenreMapTests|FullyQualifiedName~SeedTests"
+```
+
+Expected: FAIL — `GenreMap` and `SeedStations` do not exist.
+
+- [ ] **Step 3: Write `GenreMap.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+namespace NoMercy.Plugin.InternetRadio;
+
+/// <param name="Tag">The radio-browser tag queried for discovery, and matched against a station's own tags.</param>
+/// <param name="Label">What the user sees.</param>
+/// <param name="Slug">The /genre/{slug} path segment.</param>
+public sealed record GenreSection(string Tag, string Label, string Slug);
+
+// radio-browser tags are free text and there are thousands of them, so browsing by
+// raw tag is not navigation - it is a word cloud. These are the sections the browse
+// page offers, and they are also exactly the queries the discovery sweep makes.
+//
+// ORDER IS PRIORITY. A station tagged "ambient,chillout" has to land in one section
+// and only one, or it appears twice on the browse page; the earliest match wins.
+public static class GenreMap
+{
+    /// <summary>Where a station lands when it carries no tag this plugin maps.</summary>
+    public const string Other = "Other";
+
+    public static IReadOnlyList<GenreSection> Sections { get; } =
+        [
+            Section("ambient", "Ambient"),
+            Section("chillout", "Chillout"),
+            Section("dance", "Dance & Electronic"),
+            Section("house", "House"),
+            Section("techno", "Techno"),
+            Section("trance", "Trance"),
+            Section("drum and bass", "Drum & Bass"),
+            Section("jazz", "Jazz"),
+            Section("classical", "Classical"),
+            Section("rock", "Rock"),
+            Section("metal", "Metal"),
+            Section("indie", "Indie"),
+            Section("pop", "Pop"),
+            Section("hip hop", "Hip Hop"),
+            Section("reggae", "Reggae"),
+            Section("soul", "Soul & Funk"),
+            Section("oldies", "Oldies"),
+        ];
+
+    private static GenreSection Section(string tag, string label) =>
+        new(tag, label, StationGates.Slugify(label));
+
+    /// <summary>
+    /// The section a station belongs to, from its own tag list. Whole-tag matching,
+    /// not substring: "rockabilly" is not Rock and "poparazzi" is not Pop.
+    /// </summary>
+    public static string Resolve(string? tags)
+    {
+        if (string.IsNullOrWhiteSpace(tags))
+        {
+            return Other;
+        }
+
+        HashSet<string> stationTags = new(StringComparer.OrdinalIgnoreCase);
+        foreach (string tag in tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            stationTags.Add(tag);
+        }
+
+        foreach (GenreSection section in Sections)
+        {
+            if (stationTags.Contains(section.Tag))
+            {
+                return section.Label;
+            }
+        }
+
+        return Other;
+    }
+
+    public static GenreSection? BySlug(string slug) =>
+        Sections.FirstOrDefault(section =>
+            string.Equals(section.Slug, slug, StringComparison.OrdinalIgnoreCase));
+}
+```
+
+- [ ] **Step 4: Write `SeedStations.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// The curated stations, pinned by radio-browser UUID and by nothing else. This is
+// the ONLY station data in the source tree: no names, no stream URLs, no logos, no
+// genres. All of that is fetched, so a station that changes its stream - as
+// Tomorrowland Anthems did - is corrected upstream instead of here.
+//
+// Each was resolved by matching the exact stream URL this plugin used to hardcode,
+// never by name similarity: an earlier pass that fell back to "most-voted station
+// with a similar name" silently swapped Radio Paradise Rock Mix in for Main Mix.
+//
+// scripts/resolve-seeds.sh re-checks that every one of these still resolves and
+// still passes the gates.
+//
+// Not here, and deliberately: BBC Radio 1 and BBC Radio 6 Music. radio-browser has
+// 13 and 3 records for them respectively and every one is HLS over http, so there is
+// nothing gate-passing to pin. They were unplayable in the browser before this
+// change too - the URLs this plugin shipped were http - so nothing that worked was
+// lost. Adding one back is one line, the day a usable record exists.
+public static class SeedStations
+{
+    public static IReadOnlyList<string> Uuids { get; } =
+        [
+            "960cf833-0601-11e8-ae97-52543be04c81", // SomaFM - Groove Salad
+            "960eb2e9-0601-11e8-ae97-52543be04c81", // SomaFM - Drone Zone
+            "4aad9a26-15ef-4c13-a947-74c483181b4f", // Radio Paradise - Main Mix (the HTTPS ti-main-320)
+            "a3dbc189-d23e-4308-803f-5aad26432b8c", // NTS Radio 1
+            "445cbb3a-1c4e-49aa-a268-f5b6acfa8f2e", // KEXP 90.3 Seattle
+            "a349e1e9-2844-443a-973b-09a02fa12c8e", // FIP - Radio France
+            "9e31c4e7-03b6-4a80-a4e2-5977b023d32c", // Tomorrowland - One World Radio
+            "93e04f4d-f964-453a-9c64-9dd7bc32f21d", // Tomorrowland - Anthems (submitted upstream by us)
+            "c77644fa-5d0d-47f6-93ef-850805efefad", // Tomorrowland - Daybreak Sessions
+            "d23f9ea2-80bd-4b43-b25c-31903bbbcaec", // Tomorrowland - bigFM One World Radio
+        ];
+
+    /// <summary>
+    /// How many stations to take per genre. Seventeen sections at five each is an
+    /// upper bound of eighty-five before dedupe, which is a browse page worth
+    /// scrolling rather than one worth searching.
+    /// </summary>
+    public const int PerGenreLimit = 5;
+}
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+```
+
+Expected: all pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A
+git commit -m "feat(catalog): add genre sections and the ten pinned seed UUIDs"
+```
+
+> **Known outcome, not a defect:** three of the four Tomorrowland records carry no
+> tags in radio-browser, so `Resolve` places them in **Other**. They appear on the
+> browse grid, the all-stations table and their own detail pages exactly like any
+> other station — only their genre section is generic. The fix is to tag them
+> upstream, which benefits every radio-browser consumer; hardcoding a genre here
+> would put station data back in the source tree.
+
+---
+
+### Task 5: The radio-browser client and its failure modes
+
+The only code in this plugin that touches the network. It is deliberately thin — two calls, no retry, no caching — so that the interesting behaviour (what happens when it fails) lives in one place that Task 6 owns.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/RadioBrowserClient.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/TestSupport/FakeHttpMessageHandler.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/RadioBrowserClientTests.cs`
+
+**Interfaces:**
+- Consumes: `RadioBrowserStation`, `SeedStations.PerGenreLimit`.
+- Produces:
+  - `RadioBrowserClient(HttpClient http)`
+  - `.GetByUuidsAsync(IReadOnlyList<string> uuids, CancellationToken ct) : Task<IReadOnlyList<RadioBrowserStation>>`
+  - `.SearchByTagAsync(string tag, int limit, CancellationToken ct) : Task<IReadOnlyList<RadioBrowserStation>>`
+  - `RadioBrowserClient.BaseAddress : string`
+  - `FakeHttpMessageHandler` with `.Respond(...)`, `.Fail(...)`, `.Requests`
+
+- [ ] **Step 1: Write the fake handler**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/TestSupport/FakeHttpMessageHandler.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Net;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.TestSupport;
+
+// Every network failure this plugin has to survive, without a socket. The real
+// HttpClient the host hands a plugin is wrapped in an allowlist handler that throws
+// for a host the manifest never declared, so tests that reached the internet would
+// be testing something the server does not do anyway.
+public sealed class FakeHttpMessageHandler : HttpMessageHandler
+{
+    private Func<HttpRequestMessage, HttpResponseMessage>? _responder;
+
+    public List<HttpRequestMessage> Requests { get; } = [];
+
+    public void Respond(string body, HttpStatusCode status = HttpStatusCode.OK) =>
+        _responder = _ => new HttpResponseMessage(status)
+        {
+            Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json"),
+        };
+
+    public void RespondPerRequest(Func<HttpRequestMessage, HttpResponseMessage> responder) =>
+        _responder = responder;
+
+    public void Fail(Exception exception) => _responder = _ => throw exception;
+
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken
+    )
+    {
+        Requests.Add(request);
+
+        if (_responder is null)
+        {
+            throw new InvalidOperationException("the test did not arrange a response");
+        }
+
+        return Task.FromResult(_responder(request));
+    }
+}
+```
+
+- [ ] **Step 2: Write the failing client tests**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/RadioBrowserClientTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Net;
+using System.Text.Json;
+using FluentAssertions;
+using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
+
+public class RadioBrowserClientTests
+{
+    private const string OneStation = """
+        [{
+          "stationuuid": "960cf833-0601-11e8-ae97-52543be04c81",
+          "name": "Example FM",
+          "url": "https://example.com/a",
+          "url_resolved": "https://cdn.example.com/a",
+          "homepage": "https://example.com",
+          "favicon": "https://example.com/logo.png",
+          "tags": "ambient,chillout",
+          "countrycode": "NL",
+          "language": "english",
+          "codec": "MP3",
+          "bitrate": 128,
+          "hls": 0,
+          "lastcheckok": 1,
+          "votes": 42
+        }]
+        """;
+
+    private static (RadioBrowserClient Client, FakeHttpMessageHandler Handler) Build()
+    {
+        FakeHttpMessageHandler handler = new();
+        HttpClient http = new(handler);
+        return (new RadioBrowserClient(http), handler);
+    }
+
+    [Fact]
+    public async Task GetByUuidsAsync_ReadsEveryFieldTheViewsNeed()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond(OneStation);
+
+        IReadOnlyList<RadioBrowserStation> stations =
+            await client.GetByUuidsAsync(["960cf833-0601-11e8-ae97-52543be04c81"], CancellationToken.None);
+
+        RadioBrowserStation station = stations.Should().ContainSingle().Subject;
+        station.Name.Should().Be("Example FM");
+        station.UrlResolved.Should().Be("https://cdn.example.com/a");
+        station.Favicon.Should().Be("https://example.com/logo.png");
+        station.Tags.Should().Be("ambient,chillout");
+        station.CountryCode.Should().Be("NL");
+        station.Codec.Should().Be("MP3");
+        station.Bitrate.Should().Be(128);
+        station.LastCheckOk.Should().Be(1);
+        station.Votes.Should().Be(42);
+    }
+
+    // One POST for all ten seeds rather than ten GETs. Verified against the live API
+    // before this was designed: the endpoint takes a comma-separated uuids field.
+    [Fact]
+    public async Task GetByUuidsAsync_AsksForEverySeedInOneRequest()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond(OneStation);
+
+        await client.GetByUuidsAsync(["aaa", "bbb", "ccc"], CancellationToken.None);
+
+        handler.Requests.Should().ContainSingle();
+        HttpRequestMessage request = handler.Requests[0];
+        request.Method.Should().Be(HttpMethod.Post);
+        request.RequestUri!.ToString().Should().EndWith("/json/stations/byuuid");
+        (await request.Content!.ReadAsStringAsync()).Should().Contain("aaa,bbb,ccc");
+    }
+
+    [Fact]
+    public async Task GetByUuidsAsync_MakesNoRequestForAnEmptySeedList()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+
+        IReadOnlyList<RadioBrowserStation> stations =
+            await client.GetByUuidsAsync([], CancellationToken.None);
+
+        stations.Should().BeEmpty();
+        handler.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task SearchByTagAsync_QueriesTheTagExactlyAndLimitsIt()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond(OneStation);
+
+        await client.SearchByTagAsync("drum and bass", 5, CancellationToken.None);
+
+        string url = handler.Requests.Should().ContainSingle().Subject.RequestUri!.ToString();
+        url.Should().Contain("/json/stations/search");
+        // Exact matching, or "rock" also returns every station tagged "rockabilly".
+        url.Should().Contain("tagExact=true");
+        url.Should().Contain("tag=drum%20and%20bass");
+        url.Should().Contain("limit=5");
+        // Cheap server-side pre-filtering. The gates still run: this narrows the
+        // response, it does not decide admission.
+        url.Should().Contain("hidebroken=true");
+        url.Should().Contain("is_https=true");
+        url.Should().Contain("order=votes");
+    }
+
+    // radio-browser asks callers to identify themselves. Set per request rather than
+    // on DefaultRequestHeaders: the HttpClient belongs to the host and is shared, so
+    // mutating it would leak this plugin's identity onto another plugin's traffic.
+    [Fact]
+    public async Task Requests_IdentifyThePlugin()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond(OneStation);
+
+        await client.SearchByTagAsync("ambient", 5, CancellationToken.None);
+
+        handler.Requests[0].Headers.UserAgent.ToString().Should().Contain("NoMercy.Plugin.InternetRadio");
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    public async Task Throws_WhenTheApiReturnsAnError(HttpStatusCode status)
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond("nope", status);
+
+        await FluentActions
+            .Awaiting(() => client.SearchByTagAsync("ambient", 5, CancellationToken.None))
+            .Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task Throws_WhenTheTransportFails()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Fail(new HttpRequestException("dns is having a day"));
+
+        await FluentActions
+            .Awaiting(() => client.SearchByTagAsync("ambient", 5, CancellationToken.None))
+            .Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task Throws_WhenTheBodyIsNotJson()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond("<html>a captive portal, probably</html>");
+
+        await FluentActions
+            .Awaiting(() => client.SearchByTagAsync("ambient", 5, CancellationToken.None))
+            .Should().ThrowAsync<JsonException>();
+    }
+
+    // An empty result is an answer, not a failure. A tag nobody uses returns [], and
+    // that must not be treated the same way as the API being down - one means "no
+    // stations here", the other means "do not throw the cache away".
+    [Fact]
+    public async Task ReturnsEmpty_WhenTheApiReturnsNoStations()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond("[]");
+
+        IReadOnlyList<RadioBrowserStation> stations =
+            await client.SearchByTagAsync("ambient", 5, CancellationToken.None);
+
+        stations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task ReturnsEmpty_WhenTheApiReturnsJsonNull()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond("null");
+
+        IReadOnlyList<RadioBrowserStation> stations =
+            await client.SearchByTagAsync("ambient", 5, CancellationToken.None);
+
+        stations.Should().BeEmpty();
+    }
+
+    // A record missing fields it usually sends must still parse: every optional
+    // property on the DTO is nullable or defaulted precisely so one sparse row does
+    // not cost the whole response.
+    [Fact]
+    public async Task ParsesARecordMissingItsOptionalFields()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond("""[{"stationuuid":"a","name":"Bare FM"}]""");
+
+        RadioBrowserStation station =
+            (await client.SearchByTagAsync("ambient", 5, CancellationToken.None)).Should().ContainSingle().Subject;
+
+        station.Name.Should().Be("Bare FM");
+        station.Url.Should().BeNull();
+        station.Bitrate.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PropagatesCancellation()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond(OneStation);
+        using CancellationTokenSource cts = new();
+        await cts.CancelAsync();
+
+        await FluentActions
+            .Awaiting(() => client.SearchByTagAsync("ambient", 5, cts.Token))
+            .Should().ThrowAsync<OperationCanceledException>();
+    }
+}
+```
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+```bash
+dotnet test -c Release --filter FullyQualifiedName~RadioBrowserClientTests
+```
+
+Expected: FAIL — `RadioBrowserClient` does not exist.
+
+- [ ] **Step 4: Write `RadioBrowserClient.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Net.Http.Json;
+using System.Text.Json;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// The only thing in this plugin that reaches the network.
+//
+// Deliberately thin: two calls, no retry, no caching, no swallowing. It throws what
+// went wrong and CatalogProvider decides what that means, because "the API is down"
+// and "this tag has no stations" need opposite responses and only the caller knows
+// whether it has a cache to fall back on.
+//
+// The HttpClient comes from IPluginContext and is bounded by the manifest's declared
+// hosts, so a request to anywhere but *.api.radio-browser.info throws
+// PluginNetworkDeniedException before it leaves the process. That is the enforcement
+// point; this class does not re-implement it.
+public sealed class RadioBrowserClient(HttpClient http)
+{
+    // 'all' is radio-browser's round-robin across its mirrors, which is what they ask
+    // clients to use rather than pinning one. The manifest's *.api.radio-browser.info
+    // covers it and every mirror it can hand back.
+    public const string BaseAddress = "https://all.api.radio-browser.info";
+
+    // radio-browser asks callers to identify themselves so they can contact whoever
+    // is hammering them.
+    private const string UserAgent =
+        "NoMercy.Plugin.InternetRadio/1.0.2 (+https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin)";
+
+    private static readonly JsonSerializerOptions JsonOptions =
+        new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>
+    /// The pinned seeds, in one request. A POST because the uuid list is a body
+    /// field, and ten GETs would be ten round trips for one screen.
+    /// </summary>
+    public async Task<IReadOnlyList<RadioBrowserStation>> GetByUuidsAsync(
+        IReadOnlyList<string> uuids,
+        CancellationToken ct
+    )
+    {
+        if (uuids.Count == 0)
+        {
+            return [];
+        }
+
+        using HttpRequestMessage request = Request(HttpMethod.Post, "/json/stations/byuuid");
+        request.Content = new FormUrlEncodedContent(
+            [new KeyValuePair<string, string>("uuids", string.Join(',', uuids))]
+        );
+
+        return await SendAsync(request, ct);
+    }
+
+    /// <summary>
+    /// One genre's stations, most-voted first.
+    /// <para>
+    /// <c>tagExact</c> is on because substring matching puts every "rockabilly"
+    /// station in Rock. <c>hidebroken</c> and <c>is_https</c> are server-side
+    /// pre-filtering that keeps the response small; they do not decide admission —
+    /// <see cref="StationGates"/> still runs over everything that comes back, and it
+    /// has to, because radio-browser has been observed reporting a 404 stream as
+    /// healthy.
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyList<RadioBrowserStation>> SearchByTagAsync(
+        string tag,
+        int limit,
+        CancellationToken ct
+    )
+    {
+        string query = string.Join(
+            '&',
+            $"tag={Uri.EscapeDataString(tag)}",
+            "tagExact=true",
+            $"limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            "order=votes",
+            "reverse=true",
+            "hidebroken=true",
+            "is_https=true"
+        );
+
+        using HttpRequestMessage request = Request(HttpMethod.Get, $"/json/stations/search?{query}");
+        return await SendAsync(request, ct);
+    }
+
+    private static HttpRequestMessage Request(HttpMethod method, string path)
+    {
+        HttpRequestMessage request = new(method, $"{BaseAddress}{path}");
+
+        // Per request, not on DefaultRequestHeaders: the HttpClient belongs to the
+        // host and is shared, so mutating it would put this plugin's identity on
+        // another plugin's traffic.
+        request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+        return request;
+    }
+
+    private async Task<IReadOnlyList<RadioBrowserStation>> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken ct
+    )
+    {
+        using HttpResponseMessage response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        List<RadioBrowserStation>? stations =
+            await response.Content.ReadFromJsonAsync<List<RadioBrowserStation>>(JsonOptions, ct);
+
+        // A JSON `null` body parses to null rather than throwing. Empty is the honest
+        // reading of it, and it keeps every caller off a null check.
+        return stations ?? [];
+    }
+}
+```
+
+- [ ] **Step 5: Run the tests to verify they pass**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build --filter FullyQualifiedName~RadioBrowserClientTests
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Run the full suite and commit**
+
+```bash
+dotnet test -c Release --no-build
+git add -A
+git commit -m "feat(catalog): add the radio-browser client"
+```
+
+---
+
+### Task 6: The catalogue model and its on-disk cache
+
+`StationCatalog` is what every view receives. `CatalogCache` is the only thing that touches the data folder.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/CatalogSource.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/StationCatalog.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/CatalogCache.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/StationCatalogTests.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/CatalogCacheTests.cs`
+
+**Interfaces:**
+- Consumes: `RadioStation`, `GenreMap`, `StationGates.Slugify`.
+- Produces:
+  - `CatalogSource` enum — `Unavailable`, `Fetched`, `Cache`, `UserOverride`.
+  - `GenreSummary(GenreSection Section, int Count)`.
+  - `StationCatalog` — `.Stations`, `.Source`, `.FetchedAt` (`DateTimeOffset?`), `.LastFetchFailed` (`bool`), `.Count`, `.IsEmpty`, `.ById(string)`, `.ByGenreSlug(string)`, `.Genres`, `.Popular(int)`, `.Empty(bool lastFetchFailed = false)`, `.Create(IEnumerable<RadioStation>, CatalogSource, DateTimeOffset?)`.
+  - `CatalogCache(string dataFolderPath)` — `.ReadAsync(CancellationToken)`, `.WriteAsync(IReadOnlyList<RadioStation>, DateTimeOffset, CancellationToken)`, `.FileName` const.
+  - `CachedCatalog` — `.FetchedAt`, `.Stations`.
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/StationCatalogTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
+
+public class StationCatalogTests
+{
+    private static RadioStation Station(string id, string genre, int popularity = 0) =>
+        new()
+        {
+            Id = id,
+            Name = $"Station {id}",
+            StreamUrl = $"https://example.com/{id}",
+            Genre = genre,
+            Popularity = popularity,
+        };
+
+    [Fact]
+    public void ById_FindsAStationAndIsCaseInsensitive()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("AbC", "Ambient")], CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.ById("abc").Should().NotBeNull();
+        catalog.ById("nope").Should().BeNull();
+    }
+
+    [Fact]
+    public void ByGenreSlug_ReturnsOnlyThatGenre()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", "Ambient"), Station("b", "Rock"), Station("c", "Ambient")],
+            CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.ByGenreSlug("ambient").Select(station => station.Id)
+            .Should().BeEquivalentTo(new[] { "a", "c" });
+    }
+
+    [Fact]
+    public void ByGenreSlug_ReturnsEmptyForAnUnknownSlug()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", "Ambient")], CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.ByGenreSlug("no-such-genre").Should().BeEmpty();
+    }
+
+    // Only genres that actually have stations, so the browse page never offers a chip
+    // that leads to an empty page.
+    [Fact]
+    public void Genres_ListOnlyNonEmptySectionsWithTheirCounts()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", "Ambient"), Station("b", "Ambient"), Station("c", "Rock")],
+            CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.Genres.Should().HaveCount(2);
+        catalog.Genres.Single(genre => genre.Section.Label == "Ambient").Count.Should().Be(2);
+        catalog.Genres.Should().NotContain(genre => genre.Section.Label == "Jazz");
+    }
+
+    // "Other" is a real destination - three of the four Tomorrowland records carry no
+    // tags - so it has to be reachable rather than swallowed.
+    [Fact]
+    public void Genres_IncludeOtherWhenSomethingLandedThere()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", GenreMap.Other)], CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.Genres.Should().ContainSingle().Which.Section.Label.Should().Be(GenreMap.Other);
+        catalog.ByGenreSlug(StationGates.Slugify(GenreMap.Other)).Should().ContainSingle();
+    }
+
+    [Fact]
+    public void Popular_ReturnsTheMostVotedFirstAndCapsTheCount()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", "Ambient", 10), Station("b", "Rock", 99), Station("c", "Jazz", 50)],
+            CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.Popular(2).Select(station => station.Id).Should().Equal("b", "c");
+    }
+
+    [Fact]
+    public void Popular_ReturnsEverythingWhenAskedForMoreThanItHas()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", "Ambient")], CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.Popular(50).Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void Empty_IsUnavailableAndRemembersWhetherAFetchFailed()
+    {
+        StationCatalog.Empty().Source.Should().Be(CatalogSource.Unavailable);
+        StationCatalog.Empty().IsEmpty.Should().BeTrue();
+        StationCatalog.Empty(lastFetchFailed: true).LastFetchFailed.Should().BeTrue();
+        StationCatalog.Empty().LastFetchFailed.Should().BeFalse();
+    }
+}
+```
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/CatalogCacheTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
+
+public sealed class CatalogCacheTests : IDisposable
+{
+    private readonly string _folder =
+        Path.Combine(Path.GetTempPath(), $"nm-radio-{Guid.NewGuid():N}");
+
+    public CatalogCacheTests() => Directory.CreateDirectory(_folder);
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_folder))
+        {
+            Directory.Delete(_folder, recursive: true);
+        }
+    }
+
+    private static RadioStation Station(string id = "a") =>
+        new() { Id = id, Name = "Example FM", StreamUrl = "https://example.com/a", Genre = "Ambient" };
+
+    [Fact]
+    public async Task RoundTripsWhatItWrote()
+    {
+        CatalogCache cache = new(_folder);
+        DateTimeOffset fetchedAt = new(2026, 7, 30, 12, 0, 0, TimeSpan.Zero);
+
+        await cache.WriteAsync([Station()], fetchedAt, CancellationToken.None);
+        CachedCatalog? read = await cache.ReadAsync(CancellationToken.None);
+
+        read.Should().NotBeNull();
+        read!.FetchedAt.Should().Be(fetchedAt);
+        read.Stations.Should().ContainSingle().Which.Name.Should().Be("Example FM");
+    }
+
+    [Fact]
+    public async Task ReadsNullWhenThereIsNoCacheYet()
+    {
+        CatalogCache cache = new(_folder);
+
+        (await cache.ReadAsync(CancellationToken.None)).Should().BeNull();
+    }
+
+    // A server killed mid-write leaves truncated JSON. That must read as "no cache"
+    // and let the plugin re-fetch, not throw out of a view.
+    [Fact]
+    public async Task ReadsNullWhenTheCacheIsCorrupt()
+    {
+        CatalogCache cache = new(_folder);
+        await File.WriteAllTextAsync(Path.Combine(_folder, CatalogCache.FileName), "{ truncated");
+
+        (await cache.ReadAsync(CancellationToken.None)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReadsNullWhenTheCacheIsJsonNull()
+    {
+        CatalogCache cache = new(_folder);
+        await File.WriteAllTextAsync(Path.Combine(_folder, CatalogCache.FileName), "null");
+
+        (await cache.ReadAsync(CancellationToken.None)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task WriteCreatesTheDataFolderIfTheHostHasNotYet()
+    {
+        string missing = Path.Combine(_folder, "nested", "deeper");
+        CatalogCache cache = new(missing);
+
+        await cache.WriteAsync([Station()], DateTimeOffset.UtcNow, CancellationToken.None);
+
+        File.Exists(Path.Combine(missing, CatalogCache.FileName)).Should().BeTrue();
+    }
+
+    // Written to a temp file and moved into place, so a crash mid-write cannot leave
+    // a half-written cache where a whole one used to be.
+    [Fact]
+    public async Task WriteReplacesAPreviousCacheAtomically()
+    {
+        CatalogCache cache = new(_folder);
+        await cache.WriteAsync([Station("first")], DateTimeOffset.UnixEpoch, CancellationToken.None);
+        await cache.WriteAsync([Station("second")], DateTimeOffset.UnixEpoch, CancellationToken.None);
+
+        CachedCatalog? read = await cache.ReadAsync(CancellationToken.None);
+
+        read!.Stations.Should().ContainSingle().Which.Id.Should().Be("second");
+        Directory.GetFiles(_folder).Should().ContainSingle("no temp file should be left behind");
+    }
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+```bash
+dotnet test -c Release --filter "FullyQualifiedName~StationCatalogTests|FullyQualifiedName~CatalogCacheTests"
+```
+
+Expected: FAIL — the types do not exist.
+
+- [ ] **Step 3: Write `CatalogSource.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// Where the stations on screen came from. Shown on the settings page, because "no
+// stations" and "stations from a three-day-old cache" are different problems and the
+// owner cannot tell them apart from the browse page.
+public enum CatalogSource
+{
+    /// <summary>Nothing to show: no override, no cache, and no successful fetch.</summary>
+    Unavailable,
+
+    /// <summary>Fetched from radio-browser during this run.</summary>
+    Fetched,
+
+    /// <summary>Read from the on-disk cache written by an earlier fetch.</summary>
+    Cache,
+
+    /// <summary>The user's own stations.json, which replaces everything else.</summary>
+    UserOverride,
+}
+```
+
+- [ ] **Step 4: Write `StationCatalog.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+namespace NoMercy.Plugin.InternetRadio;
+
+/// <param name="Section">The genre section.</param>
+/// <param name="Count">How many stations are in it. Shown on the settings page.</param>
+public sealed record GenreSummary(GenreSection Section, int Count);
+
+// What every view is handed. Immutable, and built once per view request from
+// whatever CatalogProvider resolved, so a view cannot accidentally do I/O and cannot
+// see a catalogue change underneath it mid-render.
+public sealed class StationCatalog
+{
+    private readonly Dictionary<string, RadioStation> _byId;
+    private readonly Dictionary<string, List<RadioStation>> _byGenreSlug;
+
+    private StationCatalog(
+        IReadOnlyList<RadioStation> stations,
+        CatalogSource source,
+        DateTimeOffset? fetchedAt,
+        bool lastFetchFailed
+    )
+    {
+        Stations = stations;
+        Source = source;
+        FetchedAt = fetchedAt;
+        LastFetchFailed = lastFetchFailed;
+
+        _byId = new(StringComparer.OrdinalIgnoreCase);
+        _byGenreSlug = new(StringComparer.OrdinalIgnoreCase);
+
+        foreach (RadioStation station in stations)
+        {
+            // First wins. Deduplicate has already run for fetched stations, but a
+            // user's stations.json is not gated, so this is where a collision in
+            // their file is resolved rather than throwing during a page render.
+            _byId.TryAdd(station.Id, station);
+
+            string slug = StationGates.Slugify(station.Genre ?? GenreMap.Other);
+            if (!_byGenreSlug.TryGetValue(slug, out List<RadioStation>? bucket))
+            {
+                bucket = [];
+                _byGenreSlug[slug] = bucket;
+            }
+
+            bucket.Add(station);
+        }
+    }
+
+    public IReadOnlyList<RadioStation> Stations { get; }
+    public CatalogSource Source { get; }
+    public DateTimeOffset? FetchedAt { get; }
+
+    /// <summary>True when the most recent fetch attempt failed, whatever is on screen.</summary>
+    public bool LastFetchFailed { get; }
+
+    public int Count => Stations.Count;
+    public bool IsEmpty => Stations.Count == 0;
+
+    public static StationCatalog Create(
+        IEnumerable<RadioStation> stations,
+        CatalogSource source,
+        DateTimeOffset? fetchedAt
+    ) => new([.. stations], source, fetchedAt, lastFetchFailed: false);
+
+    public static StationCatalog Empty(bool lastFetchFailed = false) =>
+        new([], CatalogSource.Unavailable, fetchedAt: null, lastFetchFailed);
+
+    public RadioStation? ById(string id) =>
+        _byId.TryGetValue(id, out RadioStation? station) ? station : null;
+
+    public IReadOnlyList<RadioStation> ByGenreSlug(string slug) =>
+        _byGenreSlug.TryGetValue(slug, out List<RadioStation>? bucket) ? bucket : [];
+
+    /// <summary>
+    /// Only sections that have stations, in <see cref="GenreMap"/> order, with
+    /// "Other" last. A chip leading to an empty page is worse than no chip.
+    /// </summary>
+    public IReadOnlyList<GenreSummary> Genres =>
+        [
+            .. GenreMap.Sections
+                .Select(section => new GenreSummary(section, ByGenreSlug(section.Slug).Count))
+                .Where(summary => summary.Count > 0),
+            .. OtherSummary(),
+        ];
+
+    private IEnumerable<GenreSummary> OtherSummary()
+    {
+        string slug = StationGates.Slugify(GenreMap.Other);
+        int count = ByGenreSlug(slug).Count;
+
+        if (count > 0)
+        {
+            yield return new GenreSummary(new GenreSection(GenreMap.Other, GenreMap.Other, slug), count);
+        }
+    }
+
+    /// <summary>Most-voted first. Ordering only — the number is never shown.</summary>
+    public IReadOnlyList<RadioStation> Popular(int count) =>
+        [.. Stations.OrderByDescending(station => station.Popularity).Take(count)];
+}
+```
+
+- [ ] **Step 5: Write `CatalogCache.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+/// <summary>What a previous fetch wrote to disk.</summary>
+public sealed record CachedCatalog
+{
+    [JsonPropertyName("fetchedAt")]
+    public required DateTimeOffset FetchedAt { get; init; }
+
+    [JsonPropertyName("stations")]
+    public required List<RadioStation> Stations { get; init; }
+}
+
+// The only thing in this plugin that touches the data folder.
+//
+// Every read failure is null, never an exception: the cache is a convenience, and a
+// truncated file - which is what a server killed mid-write leaves - has to mean
+// "fetch again", not "the settings page throws".
+public sealed class CatalogCache(string dataFolderPath)
+{
+    public const string FileName = "catalog-cache.json";
+
+    private static readonly JsonSerializerOptions JsonOptions =
+        new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
+
+    private string Path => System.IO.Path.Combine(dataFolderPath, FileName);
+
+    public async Task<CachedCatalog?> ReadAsync(CancellationToken ct)
+    {
+        if (!File.Exists(Path))
+        {
+            return null;
+        }
+
+        try
+        {
+            await using FileStream stream = File.OpenRead(Path);
+            return await JsonSerializer.DeserializeAsync<CachedCatalog>(stream, JsonOptions, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // Corrupt, truncated, or unreadable. Indistinguishable from absent as far
+            // as the caller is concerned, and treating it that way is what makes the
+            // next refresh fix it. The caller logs; this stays quiet so a cache miss
+            // does not need an ILogger threaded into it.
+            return null;
+        }
+    }
+
+    public async Task WriteAsync(
+        IReadOnlyList<RadioStation> stations,
+        DateTimeOffset fetchedAt,
+        CancellationToken ct
+    )
+    {
+        Directory.CreateDirectory(dataFolderPath);
+
+        // Written beside the target and moved into place. A crash partway through a
+        // direct write would replace a whole cache with half of one, and the next
+        // read would discard it - losing a good catalogue to a bad write.
+        string temporary = $"{Path}.tmp";
+
+        await using (FileStream stream = File.Create(temporary))
+        {
+            CachedCatalog payload = new() { FetchedAt = fetchedAt, Stations = [.. stations] };
+            await JsonSerializer.SerializeAsync(stream, payload, JsonOptions, ct);
+        }
+
+        File.Move(temporary, Path, overwrite: true);
+    }
+}
+```
+
+- [ ] **Step 6: Run the tests, then the full suite, then commit**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+git add -A
+git commit -m "feat(catalog): add the catalogue model and its on-disk cache"
+```
+
+Expected: all pass.
+
+---
