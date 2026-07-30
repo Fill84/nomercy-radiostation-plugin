@@ -23,7 +23,8 @@ public static class SettingsView
             new() { Key = "stations", Label = "Stations", Align = "right" },
         ];
 
-    public static PluginView Build(StationCatalog catalog, string dataFolderPath, DateTimeOffset now)
+    public static PluginView Build(
+        StationCatalog catalog, string dataFolderPath, DateTimeOffset now, DateTimeOffset nextRefreshUtc)
     {
         List<PluginComponent> children =
         [
@@ -33,11 +34,22 @@ public static class SettingsView
                 SourceBadge(catalog),
                 PluginViews.Text("settings-age", Age(catalog, now), "caption")
             ),
+            PluginViews.Text("settings-next-refresh", NextRefresh(nextRefreshUtc, now), "caption"),
+            // Labelled for what it honestly does. A cache younger than the 36-hour
+            // TTL - always, given the daily job - means RefreshView re-renders the
+            // same cache untouched, so this must not read as a button that forces a
+            // fetch. "Refresh now" claimed exactly that and did nothing about it.
             PluginViews.Button(
                 "settings-refresh",
-                "Refresh now",
+                "Reload",
                 PluginActionIntent.RefreshView(),
                 icon: "portableRadio"
+            ),
+            PluginViews.Text(
+                "settings-refresh-caption",
+                "Reloads this page from what is already cached. It does not force an early fetch - "
+                    + "the catalogue itself only refreshes on the schedule above.",
+                "caption"
             ),
         ];
 
@@ -118,6 +130,27 @@ public static class SettingsView
         };
 
         return PluginViews.Badge("settings-source", badge.Label, badge.Variant);
+    }
+
+    /// <summary>
+    /// When the scheduled refresh job next runs. The cron schedule belongs to
+    /// <see cref="InternetRadioPlugin"/> - this only formats a value it was handed,
+    /// keeping Build a pure function of its arguments rather than reaching for the
+    /// clock or a duplicated copy of the cron expression itself.
+    /// </summary>
+    private static string NextRefresh(DateTimeOffset nextRefreshUtc, DateTimeOffset now)
+    {
+        TimeSpan until = nextRefreshUtc - now;
+
+        string relative = until switch
+        {
+            { TotalMinutes: < 2 } => "in under a minute",
+            { TotalHours: < 1 } => $"in {(int)until.TotalMinutes} minutes",
+            { TotalHours: < 2 } => "in 1 hour",
+            _ => $"in {(int)Math.Ceiling(until.TotalHours)} hours",
+        };
+
+        return $"Next automatic refresh {relative}, at {nextRefreshUtc:HH:mm} UTC.";
     }
 
     private static string Age(StationCatalog catalog, DateTimeOffset now)

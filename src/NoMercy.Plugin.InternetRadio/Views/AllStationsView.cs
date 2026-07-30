@@ -33,8 +33,11 @@ public static class AllStationsView
             );
         }
 
+        // InvariantCulture, not CurrentCulture: this is the only culture-sensitive
+        // operation in the plugin, and the container's locale must not change row
+        // order between two otherwise-identical deployments.
         IEnumerable<PluginComponent> rows = catalog
-            .Stations.OrderBy(station => station.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Stations.OrderBy(station => station.Name, StringComparer.InvariantCultureIgnoreCase)
             .Select(Row);
 
         return PluginViews.Declarative(

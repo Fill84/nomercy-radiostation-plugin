@@ -25,7 +25,7 @@ public static class StationView
             return PluginViews.Declarative(
                 PluginViews.Container(
                     "station-root",
-                    BackToAll,
+                    BackButtons,
                     PluginViews.EmptyState(
                         "station-missing",
                         "Station not found",
@@ -38,7 +38,7 @@ public static class StationView
         return PluginViews.Declarative(
             PluginViews.Container(
                 "station-root",
-                BackToAll,
+                BackButtons,
                 PluginViews.Detail(
                     $"station-detail-{station.Id}",
                     station.Name,
@@ -156,11 +156,23 @@ public static class StationView
             ? $"Your own {StationOverrides.FileName}"
             : $"radio-browser.info ({station.Id})";
 
-    private static PluginComponent BackToAll =>
-        PluginViews.Button(
-            "station-back",
-            "All stations",
-            PluginActionIntent.Navigate(RadioRoutes.AllStations),
-            icon: "arrowLeft"
+    // The spec calls for both: back to the table this page is usually reached
+    // from, and back to the landing page for someone who arrived here from a
+    // bookmark or a grid card instead.
+    private static PluginComponent BackButtons =>
+        PluginViews.Row(
+            "station-back-row",
+            PluginViews.Button(
+                "station-back-all",
+                "All stations",
+                PluginActionIntent.Navigate(RadioRoutes.AllStations),
+                icon: "arrowLeft"
+            ),
+            PluginViews.Button(
+                "station-back-browse",
+                "Home",
+                PluginActionIntent.Navigate(RadioRoutes.Browse),
+                icon: "home"
+            )
         );
 }

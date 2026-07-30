@@ -31,8 +31,10 @@ public class SettingsViewTests
             .Where(value => value is string)
             .Select(value => (string)value!));
 
+    private static readonly DateTimeOffset NextRefresh = Now.AddHours(4);
+
     private static PluginView Build(StationCatalog catalog) =>
-        SettingsView.Build(catalog, "/data/plugins/data/abc", Now);
+        SettingsView.Build(catalog, "/data/plugins/data/abc", Now, NextRefresh);
 
     // The default arm of SourceBadge's switch emits a badge for anything, so merely
     // asserting a badge exists cannot catch two arms being swapped or mislabelled.
@@ -85,12 +87,29 @@ public class SettingsViewTests
         Text(Build(StationCatalog.Empty())).Should().Contain("has never been fetched");
     }
 
+    // "Refresh now" claimed to fetch. It re-rendered through GetAsync, which - with
+    // a cache younger than the 36-hour TTL, always given the daily job - returns the
+    // exact same cache untouched: a control that silently does nothing. The label
+    // has to say what the button honestly does.
     [Fact]
-    public void OffersARefresh()
+    public void OffersAReloadRatherThanClaimingToRefresh()
     {
-        AllNodes(Build(StationCatalog.Create([Station("a")], CatalogSource.Cache, Now)))
-            .Should().Contain(node => node.Action != null
-                && node.Action.Type == PluginActionType.RefreshView);
+        PluginComponent button = AllNodes(Build(StationCatalog.Create([Station("a")], CatalogSource.Cache, Now)))
+            .Should().ContainSingle(node => node.Action != null
+                && node.Action.Type == PluginActionType.RefreshView)
+            .Which;
+
+        button.Props["label"].Should().Be("Reload");
+        button.Props["label"].Should().NotBe("Refresh now");
+    }
+
+    // The spec asks for both how old the catalogue is and when it next refreshes -
+    // dropped from the plan for Task 9's page, this restores the second half.
+    [Fact]
+    public void SaysWhenTheRefreshJobNextRuns()
+    {
+        Text(Build(StationCatalog.Create([Station("a")], CatalogSource.Cache, Now)))
+            .Should().Contain("Next automatic refresh");
     }
 
     // So nobody has to derive the dashless-GUID path from a README.

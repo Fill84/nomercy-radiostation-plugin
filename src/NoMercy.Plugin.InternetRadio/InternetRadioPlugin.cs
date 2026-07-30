@@ -18,10 +18,31 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     public const string RefreshJobName = "refresh";
 
     /// <summary>
+    /// The quiet hour, UTC, the refresh job runs at. The one source for that hour -
+    /// <see cref="DefaultCron"/> and <see cref="NextRefreshUtc"/> both read it,
+    /// rather than each carrying its own copy of "4" that could drift apart.
+    /// </summary>
+    private const int RefreshHourUtc = 4;
+
+    /// <summary>
     /// Daily, at a quiet hour. radio-browser is a volunteer-run service and this
     /// plugin has no reason to poll it harder than the catalogue actually changes.
+    /// Not `const`: a numeric substitution into a const interpolated string is not
+    /// itself a compile-time constant in C#, so this is `static readonly` instead.
     /// </summary>
-    private const string DefaultCron = "0 4 * * *";
+    private static readonly string DefaultCron = $"0 {RefreshHourUtc} * * *";
+
+    /// <summary>
+    /// The next time <see cref="DefaultCron"/> fires from <paramref name="now"/>.
+    /// Static and cron-shaped rather than reading a saved schedule, because there is
+    /// no setting to read - see <see cref="Jobs"/>. Exposed so the settings page can
+    /// show it without duplicating the schedule itself.
+    /// </summary>
+    public static DateTimeOffset NextRefreshUtc(DateTimeOffset now)
+    {
+        DateTimeOffset todaysRun = new(now.Year, now.Month, now.Day, RefreshHourUtc, 0, 0, TimeSpan.Zero);
+        return now < todaysRun ? todaysRun : todaysRun.AddDays(1);
+    }
 
     private IPluginContext? _context;
     private CatalogProvider? _provider;
@@ -171,7 +192,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
                 RadioRouteKind.AllStations => AllStationsView.Build(catalog),
                 RadioRouteKind.Station => StationView.Build(catalog, route.Value),
                 RadioRouteKind.Settings => SettingsView.Build(
-                    catalog, context.DataFolderPath, DateTimeOffset.UtcNow),
+                    catalog, context.DataFolderPath, DateTimeOffset.UtcNow, NextRefreshUtc(DateTimeOffset.UtcNow)),
                 _ => PluginViews.Declarative(
                     PluginViews.EmptyState(
                         "unknown-route",

@@ -84,6 +84,37 @@ public class StationViewTests
         ActionOfType(view, PluginActionType.OpenWebView).Should().BeNull();
     }
 
+    // The spec calls for a row of back buttons to BOTH /all (where this page is
+    // usually reached from) and / (for a bookmark or a grid card that skipped it).
+    [Fact]
+    public void OffersWaysBackToAllStationsAndToBrowse()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "a");
+
+        AllNodes(view).Should().Contain(node =>
+            node.Action != null
+            && node.Action.Type == PluginActionType.Navigate
+            && (string)node.Action.Payload["route"]! == RadioRoutes.AllStations);
+
+        AllNodes(view).Should().Contain(node =>
+            node.Action != null
+            && node.Action.Type == PluginActionType.Navigate
+            && (string)node.Action.Payload["route"]! == RadioRoutes.Browse);
+    }
+
+    // The missing-station empty state is reached from the same routes as a found
+    // one - a stale link deserves the same way back, not just to /all.
+    [Fact]
+    public void OffersWaysBackEvenWhenTheStationIsMissing()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "gone");
+
+        AllNodes(view).Should().Contain(node =>
+            node.Action != null
+            && node.Action.Type == PluginActionType.Navigate
+            && (string)node.Action.Payload["route"]! == RadioRoutes.Browse);
+    }
+
     [Fact]
     public void ShowsTheFullRecordIncludingTheStreamUrl()
     {
