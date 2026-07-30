@@ -52,6 +52,19 @@ public static class StationGates
     /// First occurrence wins, so a seed keeps its place when the genre sweep finds
     /// the same station again — which it routinely does, since a curated station is
     /// usually also a popular one.
+    ///
+    /// Keying on the slugified name as well as the URL means this can also drop a
+    /// station that is genuinely not a duplicate — radio-browser carries plenty of
+    /// unrelated broadcasters that happen to share a generic name, separate "Jazz FM"
+    /// or "Rock Radio" licensees in different countries with nothing else in common.
+    /// That tradeoff is accepted anyway: two identical-looking rows in the grid read
+    /// as a bug to the user, while one station missing out of a sweep of hundreds
+    /// does not read as anything at all. Seeds are added before the genre sweep runs
+    /// and first occurrence wins, so the stations that were curated on purpose always
+    /// survive a name collision rather than being the ones dropped. There is no
+    /// logging for this, so a station suspected to be missing for this reason is
+    /// found by checking whether its name collides with one already kept, not by
+    /// looking for a log line.
     /// </summary>
     public static IReadOnlyList<RadioStation> Deduplicate(IEnumerable<RadioStation> stations)
     {
