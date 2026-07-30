@@ -117,12 +117,26 @@ public class BrowseViewTests
                 variant == null || variant == "title" || variant == "subtitle" || variant == "caption");
     }
 
-    // Two nodes with the same id make the client's keyed render ambiguous.
+    // Two nodes with the same id make the client's keyed render ambiguous. A
+    // catalogue-level id collision (a real possibility - see StationCatalog) has to
+    // be caught here too, since Popular() would otherwise hand the view two stations
+    // that both produce "station-card-a".
     [Fact]
     public void EveryNodeHasAUniqueId()
     {
+        RadioStation duplicate = new()
+        {
+            Id = "a",
+            Name = "Station A Duplicate",
+            StreamUrl = "https://example.com/a-duplicate",
+            LogoUrl = "https://example.com/logo.png",
+            Genre = "Ambient",
+            Country = "NL",
+            Popularity = 1,
+        };
+
         PluginView view = BrowseView.Build(
-            Catalog(Station("a", "Ambient"), Station("b", "Rock"), Station("c", "Jazz")));
+            Catalog(Station("a", "Ambient"), Station("b", "Rock"), Station("c", "Jazz"), duplicate));
 
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
     }

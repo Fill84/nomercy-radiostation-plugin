@@ -68,11 +68,22 @@ public class GenreViewTests
         AllNodes(view).Should().NotContain(node => node.Component == PluginComponentType.Card);
     }
 
+    // A catalogue-level id collision (a real possibility - see StationCatalog) has
+    // to be caught here too, since ByGenreSlug would otherwise hand the view two
+    // stations that both produce "station-card-a".
     [Fact]
     public void EveryNodeHasAUniqueId()
     {
+        RadioStation duplicate = new()
+        {
+            Id = "a",
+            Name = "Station A Duplicate",
+            StreamUrl = "https://example.com/a-duplicate",
+            Genre = "Ambient",
+        };
+
         PluginView view = GenreView.Build(
-            Catalog(Station("a", "Ambient"), Station("b", "Ambient")), "ambient");
+            Catalog(Station("a", "Ambient"), Station("b", "Ambient"), duplicate), "ambient");
 
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
     }

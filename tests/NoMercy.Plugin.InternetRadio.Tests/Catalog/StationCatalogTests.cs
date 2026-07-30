@@ -139,6 +139,42 @@ public class StationCatalogTests
         catalog.ById("dup")!.Name.Should().Be("First");
     }
 
+    // Stations is the raw source Popular() and ByGenreSlug() iterate, so if it still
+    // carried both halves of a collision, a card for each would land in the same
+    // grid with the same station-card-{id}, which is exactly the ambiguous keyed
+    // render this catalogue exists to prevent. All four surfaces have to agree on
+    // which one station survived.
+    [Fact]
+    public void ACollidingIdIsDroppedEverywhereNotJustFromById()
+    {
+        RadioStation first = new()
+        {
+            Id = "dup",
+            Name = "First",
+            StreamUrl = "https://example.com/first",
+            Genre = "Ambient",
+            Popularity = 10,
+        };
+        RadioStation second = new()
+        {
+            Id = "dup",
+            Name = "Second",
+            StreamUrl = "https://example.com/second",
+            Genre = "Rock",
+            Popularity = 99,
+        };
+
+        StationCatalog catalog = StationCatalog.Create(
+            [first, second], CatalogSource.Fetched, DateTimeOffset.UnixEpoch);
+
+        catalog.Stations.Should().ContainSingle().Which.Name.Should().Be("First");
+        catalog.ById("dup")!.Name.Should().Be("First");
+        catalog.Popular(10).Should().ContainSingle().Which.Name.Should().Be("First");
+        catalog.ByGenreSlug(StationGates.Slugify("Ambient"))
+            .Should().ContainSingle().Which.Name.Should().Be("First");
+        catalog.ByGenreSlug(StationGates.Slugify("Rock")).Should().BeEmpty();
+    }
+
     [Fact]
     public void Popular_ReturnsTheMostVotedFirstAndCapsTheCount()
     {

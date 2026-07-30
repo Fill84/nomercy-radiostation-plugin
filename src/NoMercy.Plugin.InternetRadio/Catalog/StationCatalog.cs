@@ -22,7 +22,6 @@ public sealed class StationCatalog
         bool lastFetchFailed
     )
     {
-        Stations = stations;
         Source = source;
         FetchedAt = fetchedAt;
         LastFetchFailed = lastFetchFailed;
@@ -30,12 +29,27 @@ public sealed class StationCatalog
         _byId = new(StringComparer.OrdinalIgnoreCase);
         _byGenreSlug = new(StringComparer.OrdinalIgnoreCase);
 
+        // Station ids are unique by construction: this is the one pass that decides
+        // what the catalogue contains, and Stations, _byId and _byGenreSlug are all
+        // built from it together so the three can never disagree. First wins - the
+        // same rule StationGates.Deduplicate uses for name/URL collisions - and a
+        // dropped collision is silent, same as there. Fetched stations have already
+        // been through Deduplicate and carry radio-browser UUIDs, so they cannot
+        // collide here; a user's stations.json is deliberately not gated (see
+        // StationGates), and StationOverrides falls back to Slugify(Name) for a
+        // blank id, so two hand-written entries whose names slugify the same - or a
+        // user station whose id happens to case-collide with a fetched one - are a
+        // real way to reach this, not a theoretical one.
+        List<RadioStation> kept = [];
+
         foreach (RadioStation station in stations)
         {
-            // First wins. Deduplicate has already run for fetched stations, but a
-            // user's stations.json is not gated, so this is where a collision in
-            // their file is resolved rather than throwing during a page render.
-            _byId.TryAdd(station.Id, station);
+            if (!_byId.TryAdd(station.Id, station))
+            {
+                continue;
+            }
+
+            kept.Add(station);
 
             string slug = StationGates.Slugify(station.Genre ?? GenreMap.Other);
             if (!_byGenreSlug.TryGetValue(slug, out List<RadioStation>? bucket))
@@ -46,6 +60,8 @@ public sealed class StationCatalog
 
             bucket.Add(station);
         }
+
+        Stations = kept;
     }
 
     public IReadOnlyList<RadioStation> Stations { get; }
