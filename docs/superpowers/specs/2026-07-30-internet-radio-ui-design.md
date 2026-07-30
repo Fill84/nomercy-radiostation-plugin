@@ -45,6 +45,8 @@ reading both sides of each path, not by assuming the contract is honoured.
 | `callPlugin` over hub | **no** | nothing ever calls `IPluginHubRouter.Register`, so `RouteAsync` drops at its first lookup |
 | `IMediaSourcePlugin.ScanAsync` | **no** | no consumer anywhere in the server |
 | `PluginViewRequest.Query` from web | **no** | the host sends only `route`; query params never leave the browser |
+| Manifest-declared outbound hosts | yes, no prompt | `PluginNetworkAllowlistHandler` allows "the union of the manifest's static hosts and whatever the owner has granted since" |
+| `autoEnabled` with a `network` capability | **no** | `PluginConsentService.IsBaseline` returns false when `Network is not null`, so `PluginLoader` starts it `Disabled` until the owner consents |
 
 Two consequences shape this design.
 
@@ -115,7 +117,7 @@ means neither surface has to carry two competing affordances per station.
   (`enqueue`, icon `playlistAdd`), and **Open homepage** (`openWebView`, icon
   `globe`) when a homepage is known.
 - `Table` of the full record: genre, country, language, bitrate, codec, stream
-  URL, and provenance — the radio-browser station UUID for a bundled station, or
+  URL, and provenance — the radio-browser station UUID for a fetched station, or
   "user-supplied" for one from `stations.json`.
 - `Row` of back `Button`s to `/all` and `/`.
 
@@ -126,12 +128,17 @@ Unknown id → `EmptyState`.
 There is nothing to configure, so this page says what it is instead of
 pretending otherwise:
 
-- `Badge` reading either "Bundled catalogue" or "Custom catalogue" so it is
-  clear which list is live.
-- `caption` text with the plugin's real `DataFolderPath` and the
-  `stations.json` filename, so nobody has to derive the dashless-GUID path from
-  the README.
+- `Badge` for where the catalogue came from — fetched, served from cache, or a
+  user override — so it is clear which list is live.
+- **How old the catalogue is**, and when the refresh job next runs. This is the
+  first thing anyone will want when a station is missing.
+- A **Refresh now** `Button` (`refreshView`). It costs nothing: re-rendering
+  re-runs the cache-first read, which fetches when the cache is empty or stale.
+- `caption` text with the plugin's real `DataFolderPath` and the `stations.json`
+  filename, so nobody has to derive the dashless-GUID path from the README.
 - A `Table` of station counts per genre — the one diagnostic worth having.
+- When the last fetch failed, a `Badge` and the failure's shape (not the
+  exception text), so a stale catalogue explains itself.
 - A short `Text` stating that editable settings wait on the server's inbound
   plugin path, naming issue #26 and the hub gap.
 
@@ -150,12 +157,17 @@ views never learn where a station came from.
 ```
 src/NoMercy.Plugin.InternetRadio/
   PluginIdentity.cs            id, name, description, version, assembly — one source of truth
-  InternetRadioPlugin.cs       IUiPlugin: lifecycle, catalogue load, route dispatch
+  InternetRadioPlugin.cs       IUiPlugin + IScheduledTaskPlugin: lifecycle, route dispatch, refresh job
   Catalog/
     RadioStation.cs            one station; StationId, Slug
-    StationCatalog.cs          embedded catalogue + optional override, grouped by genre
-    CatalogSource.cs           bundled vs user-supplied, for the settings badge
-    stations.json              embedded resource, generated (see Catalogue)
+    StationCatalog.cs          the resolved catalogue, grouped by genre
+    CatalogSource.cs           fetched / cached / user override, for the settings badge
+    SeedStations.cs            the ten pinned UUIDs, and nothing else about them
+    RadioBrowserClient.cs      byuuid + per-genre search, over IPluginContext.HttpClient
+    StationGates.cs            https / non-HLS / checked-ok / dedupe — the admission rules
+    GenreMap.cs                radio-browser tags -> the browse page's genre sections
+    CatalogCache.cs            read/write catalog-cache.json in the data folder
+    CatalogProvider.cs         cache-first, fetch-on-empty, override-wins
   Views/
     RadioRoutes.cs             the only place a route is parsed or built
     BrowseView.cs
@@ -167,16 +179,23 @@ tests/NoMercy.Plugin.InternetRadio.Tests/
   ManifestTests.cs             manifest agrees with PluginIdentity and the built assembly
   DiscoveryContractTests.cs    parameterless ctor, IUiPlugin, hooks match NavEntries
   PluginLifecycleTests.cs      Initialize / Dispose / view-after-dispose / bad config
-  Catalog/StationCatalogTests.cs
-  Catalog/CatalogDataTests.cs  every shipped station: https, unique id, required fields
+  Catalog/StationGatesTests.cs http rejected, HLS rejected, checkok, dedupe
+  Catalog/RadioBrowserClientTests.cs   500 / timeout / bad JSON / empty / all-rejected
+  Catalog/CatalogProviderTests.cs      cache-first, fetch-on-empty, stale-beats-empty, override-wins
+  Catalog/SeedTests.cs         the pinned UUIDs are well-formed and unique (offline)
+  Catalog/GenreMapTests.cs
   Views/*Tests.cs              one per view
   Routing/RadioRoutesTests.cs
-  TestSupport/                 FakePluginContext, FakeConfiguration, RecordingLogger
+  TestSupport/                 FakePluginContext, FakeConfiguration, FakeHttpMessageHandler,
+                               RecordingLogger
 scripts/
   fetch-abstractions.sh|.ps1   pack the contract to a local feed (from the torrent plugin)
-  build-catalog.sh             regenerate stations.json from radio-browser.info
-  verify-streams.sh            HEAD-check every stream URL
+  resolve-seeds.sh             re-check the pinned UUIDs still exist and still pass the gates
 ```
+
+The network client, the gates and the provider are separate on purpose: the
+gates are where a mixed-content stream is refused, and they are worth testing
+without a socket in sight.
 
 `GetViewAsync` never throws into the request pipeline: a view built after
 `Dispose`, or from a config the host cannot read, returns a rendered
@@ -185,50 +204,116 @@ surface and a failure that hides its own cause is worse than a visible one.
 
 ## Catalogue
 
-Twelve hand-written stations is both too few to be useful and, as the
-Tomorrowland URL fix showed, a maintenance liability — a URL nobody sourced is a
-URL nobody can re-check.
+**No station data is hardcoded.** Every name, stream URL, logo, genre, country,
+bitrate and codec comes from `radio-browser.info` at runtime. A hand-written URL
+is a URL nobody can re-check, which is how the Tomorrowland fix became necessary
+and how BBC Radio 1 came to ship a stream that cannot play at all.
 
-So the catalogue becomes **generated data, not code**: `scripts/build-catalog.sh`
-queries `radio-browser.info` per genre and writes `Catalog/stations.json`, which
-ships as an embedded resource. Adding a station is a data change.
+The only station data in the source tree is **ten UUIDs** — see *Seed stations*
+below. No URLs, no logos, no names.
 
-Selection gates, applied in the script:
+### How the catalogue is built at runtime
 
-- **`is_https=true` — mandatory, not a preference.** The web client is served
-  over HTTPS, so an `http://` stream is blocked as mixed content and simply will
-  not play. The current catalogue's BBC Radio 1 entry
-  (`http://stream.live.vc.bbcmedia.co.uk/bbc_radio_one`) is unplayable in the
-  browser today for exactly this reason.
-- `hls=0` — HLS in a plain audio element only works in Safari.
-- `lastcheckok=1`, `hidebroken=true` — radio-browser's own liveness signal.
-- Deduplicated by resolved stream URL and by normalised name.
-- Ordered by votes, capped per genre; roughly 14 genres, about 60 stations.
-- Written in a deterministic order with a `source` and `generatedAt` header, so
-  a regeneration produces a reviewable diff rather than a reshuffle.
+1. **Seeds** — one `POST /json/stations/byuuid` with all ten pinned UUIDs
+   returns the curated stations with current data. Verified: one request, all
+   seeds, HTTP 200.
+2. **Discovery** — one `GET /json/stations/search?tagList=…` per configured
+   genre, ordered by votes, so the catalogue is broad without anyone curating
+   it.
+3. **Gates**, applied to everything including seeds:
+   - **HTTPS only — mandatory, not a preference.** The web client is served over
+     HTTPS, so an `http://` stream is blocked as mixed content and will not
+     play. This is not hypothetical: the current catalogue's BBC entries are
+     `http://` and are unplayable in the browser today.
+   - **Not HLS** — HLS in a plain audio element only works in Safari.
+   - `lastcheckok == 1` and `hidebroken=true` — radio-browser's own liveness
+     signal.
+   - A name and a resolved URL must both be present.
+4. **Dedupe** by resolved stream URL, then by normalised name.
+5. **Genre** comes from the station's `tags`, mapped onto the configured genre
+   list so the browse page has stable sections rather than a thousand raw tags.
+6. **Cache** the result to `catalog-cache.json` in the plugin's data folder,
+   with the fetch timestamp.
 
-The existing curated stations (SomaFM, Radio Paradise, the Tomorrowland set) are
-looked up by name in radio-browser and kept **if they pass the same gates**, so
-they carry a station UUID and provenance like everything else. Any that do not
-pass are dropped and named in the script's output rather than carried on trust.
+`GetViewAsync` reads the cache and never the network — a view is rendered on
+every navigation, and a screen that makes fifteen API calls per click is not a
+screen. A `refresh` scheduled job rebuilds the cache daily.
 
-`CatalogDataTests` then asserts offline, over the shipped resource, that every
-station is HTTPS, has a unique id, and has the fields the views require — so a
-mixed-content regression fails the build instead of a user's player.
+### Cold start and failure
 
-`scripts/verify-streams.sh` actually connects to each stream. It is a
-development and `workflow_dispatch` tool, deliberately **not** on the push path:
-a third party's outage must not turn a green build red.
+- **Cache present:** served immediately, however old. Stale beats empty.
+- **Cache empty (first run):** one bounded fetch inline, so the first visit
+  works instead of waiting for the cron tick.
+- **Fetch fails and no cache:** an `EmptyState` saying so, with a **Retry**
+  button (`refreshView`), and the failure logged. The page never renders a
+  spinner forever or an empty grid that reads as "no stations exist".
+- **Fetch fails but a cache exists:** the cache is served and the settings page
+  shows how old it is. A third party's outage must not empty a working
+  catalogue.
+
+Because the plugin now talks to the network, the failure modes are tested with a
+fake `HttpMessageHandler`: HTTP 500, a timeout, malformed JSON, an empty array,
+and a payload where every station fails the gates. The gate filtering itself is
+tested the same way, which is what stops a mixed-content regression — the
+assertion moved from shipped data to the code that admits it.
+
+### Seed stations — the curated ten
+
+Resolved against radio-browser by matching **the exact stream URL** we already
+had, never by name popularity. An early attempt that fell back to "most-voted
+station with a similar name" silently substituted Radio Paradise *Rock Mix* for
+*Main Mix*, which is the same inventing this design exists to stop. Where a URL
+matched nothing that passes the gates, the station is dropped and named here
+rather than quietly replaced.
+
+| Station | radio-browser UUID | Note |
+| --- | --- | --- |
+| SomaFM — Groove Salad | `960cf833-0601-11e8-ae97-52543be04c81` | 47,433 votes; canonical entry |
+| SomaFM — Drone Zone | `960eb2e9-0601-11e8-ae97-52543be04c81` | |
+| Radio Paradise — Main Mix | `4aad9a26-15ef-4c13-a947-74c483181b4f` | **corrected**: `ti-main-320`, the HTTPS Main Mix. Our `stream.radioparadise.com/aac-320` is recorded as `http://` |
+| NTS Radio 1 | `a3dbc189-d23e-4308-803f-5aad26432b8c` | the HTTPS record of the same stream |
+| KEXP 90.3 FM Seattle | `445cbb3a-1c4e-49aa-a268-f5b6acfa8f2e` | |
+| FIP — Radio France | `a349e1e9-2844-443a-973b-09a02fa12c8e` | no logo in radio-browser; view handles a missing image |
+| Tomorrowland — One World Radio | `9e31c4e7-03b6-4a80-a4e2-5977b023d32c` | |
+| Tomorrowland — Anthems | `5f3fa761-76be-4672-98fd-c5e71771834d` | `OWR_DAB.mp3`; the `_ADP` variant we had is not in radio-browser |
+| Tomorrowland — Daybreak Sessions | `c77644fa-5d0d-47f6-93ef-850805efefad` | |
+| Tomorrowland — bigFM One World Radio | `d23f9ea2-80bd-4b43-b25c-31903bbbcaec` | |
+
+**Dropped: BBC Radio 1 and BBC Radio 6 Music.** radio-browser carries 13 and 3
+records for them respectively, and every one is HLS over `http://`. There is no
+gate-passing record to pin.
+
+This costs nothing that worked. Both stations are `http://` in the current
+catalogue too, so they are already blocked as mixed content in the browser — the
+plugin has never been able to play either one. They can return the moment a
+gate-passing record exists, which is a one-line change because the seed list is
+just UUIDs.
+
+### Keeping the seeds honest
+
+`scripts/resolve-seeds.sh` re-runs the resolution: it checks each pinned UUID
+still exists, still passes the gates, and reports what its stream URL is now. It
+is a development and `workflow_dispatch` tool, deliberately **not** on the push
+path — a third party's outage must not turn a green build red. `SeedTests`
+asserts offline only what can be asserted offline: the UUIDs are well-formed and
+unique.
 
 ### The user override stays compatible
 
-`stations.json` in the plugin's data folder still replaces the bundled list, and
-the bare-JSON-array shape the current README documents still parses. The
-generated resource uses the richer `{ source, generatedAt, stations: [...] }`
-object, and the loader accepts either. A station with no id gets a stable slug
-derived from its name; if two stations resolve to the same id the first wins and
-the loader logs the one it dropped, because a route that resolves to two
-stations is worse than a catalogue that is visibly one short.
+`stations.json` in the plugin's data folder still replaces the fetched catalogue
+entirely, and the bare-JSON-array shape the current README documents still
+parses. It is also the escape hatch for anything radio-browser cannot supply —
+BBC included, for anyone who has an HTTPS URL for it.
+
+A station with no id gets a stable slug derived from its name; if two stations
+resolve to the same id the first wins and the loader logs the one it dropped,
+because a route that resolves to two stations is worse than a catalogue that is
+visibly one short.
+
+An override skips the network entirely and is **not** gate-filtered — a
+hand-written list is the user's own call, and silently dropping their entries
+would be worse than letting an `http://` URL fail visibly in the player. The
+settings page badges an override as such.
 
 ## Version integrity
 
@@ -279,9 +364,10 @@ Three additions of our own:
   "assembly": "NoMercy.Plugin.InternetRadio.dll",
   "autoEnabled": true,
   "capabilities": {
-    "hooks": ["ui"],
+    "hooks": ["ui", "scheduledTask"],
     "rest": false,
     "ws": false,
+    "network": { "hosts": ["*.api.radio-browser.info"] },
     "ui": {
       "mounts": [
         { "section": "music",    "label": "Internet Radio", "icon": "portableRadio", "route": "/" },
@@ -293,23 +379,43 @@ Three additions of our own:
 ```
 
 - **`id` is unchanged.** The host keys lifecycle state off it across restarts.
-- **`hooks` is `["ui"]` and nothing else.** `PluginUiController.HasUi` requires
-  the `ui` hook or the plugin is installed, enabled and invisible. `mediaSource`
-  is removed because nothing consumes it, and a manifest is the thing an owner
-  reviews at consent time — declaring a capability that does nothing is the
-  false promise this standard exists to prevent. No user behaviour changes,
-  because nothing called it.
-- **`rest` and `ws` stay false.** No controller, no hub handler, nothing to
-  declare. They flip when there is something behind them.
-- **No `network` capability and no grants.** The client fetches the streams; the
-  plugin never opens a socket, so it needs no host grant for any station.
+- **`ui` is required or the plugin is invisible.** `PluginUiController.HasUi`
+  refuses to serve a view for a plugin that has not declared it, so this is not
+  decoration.
+- **`scheduledTask`** carries the daily catalogue refresh. Consumed for real, by
+  `PluginCronRegistrar`.
+- **`mediaSource` is removed** because nothing consumes it. A manifest is what an
+  owner reviews at consent time, and declaring a capability that does nothing is
+  the false promise this standard exists to prevent. No user behaviour changes,
+  because nothing ever called it.
+- **`network.hosts` names radio-browser's mirrors.**
+  `PluginNetworkAllowlistHandler` allows the union of the manifest's hosts and
+  any later grant, so declaring the host here is sufficient and **no runtime
+  grant prompt is needed**. The glob is label-scoped — `*` matches within one
+  label — so `*.api.radio-browser.info` covers `all.`, `de1.`, `nl1.` and the
+  rest, and nothing wider.
+- **`rest` and `ws` stay false.** No controller, no hub handler, nothing behind
+  them. They flip when there is.
 - **`projectUrl` now points at this repository** instead of the media server. A
   catalogue entry uses it as the plugin's own page.
 - **Name and description** drop "Provider" and the media-source claim, both of
   which described the hook being removed.
 
-`autoEnabled` stays `true`: the only declared hook is `ui`, none of it is in
-`PluginHookCapability.Elevated`, and there is no network access to consent to.
+### `autoEnabled` no longer takes effect on first install
+
+`PluginConsentService.IsBaseline` returns false when `Network is not null`, and
+`PluginLoader` starts a non-baseline plugin `Disabled` regardless of
+`autoEnabled` until the owner consents from the dashboard.
+
+So this is the one real cost of fetching live: **the owner has to enable the
+plugin once.** It is also the correct behaviour — a plugin that calls a
+third-party API on a schedule should be something the owner agreed to, not
+something that starts on its own. `autoEnabled` stays `true` so that consent is
+the only step, and the value is honoured on every load after it.
+
+The alternative — shipping the catalogue as embedded data — would keep the plugin
+baseline and prompt-free, at the cost of a station list that goes stale between
+releases and cannot be corrected without one. Live data is worth one click.
 
 ## Upstream reports
 
@@ -351,9 +457,11 @@ would break the moment the real fix lands.
 ## Definition of done
 
 - `dotnet build -c Release -p:TreatWarningsAsErrors=true` clean.
-- `dotnet test -c Release` green, including manifest, catalogue, routing and
-  every view.
-- `scripts/verify-streams.sh` run once by hand against the generated catalogue,
-  with any dead station removed before release.
+- `dotnet test -c Release` green, including the manifest, the gates, the network
+  failure modes, the provider's cache behaviour, routing and every view.
+- `scripts/resolve-seeds.sh` run once by hand: all ten UUIDs resolve and pass the
+  gates.
+- No station name, stream URL, logo or genre appears anywhere in the source tree
+  — grep for `http` under `src/` returns only documentation and the API base.
 - Committed locally. Pushed and tagged `v1.0.2` only on explicit ask, then
   `ci-watch`.
