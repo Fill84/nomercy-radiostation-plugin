@@ -34,19 +34,35 @@ public class SettingsViewTests
     private static PluginView Build(StationCatalog catalog) =>
         SettingsView.Build(catalog, "/data/plugins/data/abc", Now);
 
+    // The default arm of SourceBadge's switch emits a badge for anything, so merely
+    // asserting a badge exists cannot catch two arms being swapped or mislabelled.
+    // Pin the actual label and variant per source, including that a failed refresh
+    // changes both for Cache - otherwise "Cached" and "Cached - refresh failed"
+    // would be indistinguishable to this test.
     [Theory]
-    [InlineData(CatalogSource.Fetched)]
-    [InlineData(CatalogSource.Cache)]
-    [InlineData(CatalogSource.UserOverride)]
-    [InlineData(CatalogSource.Unavailable)]
-    public void BadgesWhereTheStationsCameFrom(CatalogSource source)
+    [InlineData(CatalogSource.Fetched, false, "Fetched from radio-browser.info", PluginBadgeVariant.Success)]
+    [InlineData(CatalogSource.Cache, false, "Cached", PluginBadgeVariant.Neutral)]
+    [InlineData(CatalogSource.Cache, true, "Cached — refresh failed", PluginBadgeVariant.Warning)]
+    [InlineData(CatalogSource.UserOverride, false, "Your own station list", PluginBadgeVariant.Info)]
+    [InlineData(CatalogSource.Unavailable, false, "No stations", PluginBadgeVariant.Danger)]
+    public void BadgesWhereTheStationsCameFrom(
+        CatalogSource source, bool lastFetchFailed, string expectedLabel, string expectedVariant)
     {
         StationCatalog catalog = source == CatalogSource.Unavailable
             ? StationCatalog.Empty()
             : StationCatalog.Create([Station("a")], source, Now);
 
-        AllNodes(Build(catalog))
-            .Should().Contain(node => node.Component == PluginComponentType.Badge);
+        if (lastFetchFailed)
+        {
+            catalog = catalog.WithFailedFetch();
+        }
+
+        PluginComponent badge = AllNodes(Build(catalog))
+            .Where(node => node.Component == PluginComponentType.Badge)
+            .Should().ContainSingle().Which;
+
+        badge.Props["label"].Should().Be(expectedLabel);
+        badge.Props["variant"].Should().Be(expectedVariant);
     }
 
     // The first thing anyone wants when a station is missing.
@@ -59,10 +75,14 @@ public class SettingsViewTests
         Text(Build(catalog)).Should().Contain("3 hours ago");
     }
 
+    // "never" alone is satisfied by the always-rendered explanatory paragraph
+    // ("...plugin hub handlers are never registered"), regardless of catalogue
+    // state. Match the never-fetched sentence itself so this can only pass because
+    // Age() actually took its null-FetchedAt branch.
     [Fact]
     public void SaysWhenTheCatalogueHasNeverBeenFetched()
     {
-        Text(Build(StationCatalog.Empty())).Should().Contain("never");
+        Text(Build(StationCatalog.Empty())).Should().Contain("has never been fetched");
     }
 
     [Fact]
