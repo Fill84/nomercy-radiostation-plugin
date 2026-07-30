@@ -35,16 +35,20 @@
 | `src/NoMercy.Plugin.InternetRadio/PluginIdentity.cs` | Id, name, description, version, assembly filename — one source of truth |
 | `src/NoMercy.Plugin.InternetRadio/InternetRadioPlugin.cs` | `IUiPlugin` + `IScheduledTaskPlugin`: lifecycle, route dispatch, refresh job |
 | `src/NoMercy.Plugin.InternetRadio/plugin.json` | The manifest the server reads |
-| `Catalog/RadioStation.cs` | One station, plus its stable `StationId` |
-| `Catalog/StationGates.cs` | Admission rules: HTTPS, non-HLS, checked-ok, dedupe |
+| `Catalog/RadioStation.cs` | One station as this plugin uses it, with its stable route `Id` |
+| `Catalog/RadioBrowserStation.cs` | Wire shape of a radio-browser station record |
+| `Catalog/StationGates.cs` | Admission rules: HTTPS, non-HLS, checked-ok, dedupe, slugs |
 | `Catalog/GenreMap.cs` | radio-browser tags → the browse page's genre sections |
-| `Catalog/SeedStations.cs` | The ten pinned UUIDs, and the genre list to discover |
-| `Catalog/RadioBrowserDto.cs` | Wire shape of a radio-browser station record |
+| `Catalog/SeedStations.cs` | The ten pinned UUIDs and the per-genre limit |
 | `Catalog/RadioBrowserClient.cs` | `byuuid` + per-genre search over `IPluginContext.HttpClient` |
+| `Catalog/CatalogSource.cs` | Where the stations on screen came from |
 | `Catalog/StationCatalog.cs` | The resolved catalogue: lookup by id, grouping by genre |
 | `Catalog/CatalogCache.cs` | Read/write `catalog-cache.json` in the data folder |
+| `Catalog/StationOverrides.cs` | The user's `stations.json`, which replaces everything |
 | `Catalog/CatalogProvider.cs` | Override-wins, cache-first, fetch-on-empty |
 | `Views/RadioRoutes.cs` | The only place a route is parsed or built |
+| `Views/StationCards.cs` | One station as a play-on-click card, shared by both grids |
+| `Views/EmptyCatalog.cs` | The "no stations" panel, shared so it reads the same everywhere |
 | `Views/BrowseView.cs` | `/` — genre chips + popular grid |
 | `Views/GenreView.cs` | `/genre/{slug}` — one genre's grid |
 | `Views/AllStationsView.cs` | `/all` — metadata table, rows navigate to detail |
@@ -4577,3 +4581,1420 @@ git commit -m "feat(views): add the settings status page"
 Expected: all pass.
 
 ---
+
+### Task 12: The plugin class
+
+The class the server loads. It owns the lifecycle, dispatches routes, and runs the daily refresh — and it is the only thing that touches `IPluginContext`.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/InternetRadioPlugin.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/TestSupport/FakePluginContext.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/PluginLifecycleTests.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/DiscoveryContractTests.cs`
+
+**Interfaces:**
+- Consumes: everything above.
+- Produces: `InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin`, with a public parameterless constructor.
+
+- [ ] **Step 1: Write `FakePluginContext`**
+
+Only the members this plugin reads are real; the rest throw if touched, so a test that quietly depends on something the plugin should not use fails loudly.
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using Microsoft.Extensions.Logging;
+using NoMercy.Events;
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.TestSupport;
+
+public sealed class FakePluginContext(string dataFolderPath, HttpClient httpClient) : IPluginContext
+{
+    public ILogger Logger { get; } = new RecordingLogger();
+    public string DataFolderPath { get; } = dataFolderPath;
+    public HttpClient HttpClient { get; } = httpClient;
+    public Guid PluginId => PluginIdentity.Id;
+
+    public RecordingLogger Recorded => (RecordingLogger)Logger;
+
+    // Not used by this plugin. Throwing rather than returning a null object means a
+    // test cannot accidentally pass while the plugin reaches for something it should
+    // not - the manifest declares no library access, no secrets and no hub.
+    public IEventBus EventBus => throw new NotSupportedException();
+    public IServiceProvider Services => throw new NotSupportedException();
+    public IPluginConfiguration Configuration => throw new NotSupportedException();
+    public IPluginSecretStore Secrets => throw new NotSupportedException();
+    public IPluginLibraryQuery Library => throw new NotSupportedException();
+    public IPluginLibraryWriter? LibraryWriter => null;
+    public IPluginGrants Grants => throw new NotSupportedException();
+    public IPluginHubContext Hub => throw new NotSupportedException();
+
+    public Task PublishAsync<T>(string name, T payload, CancellationToken ct = default) =>
+        throw new NotSupportedException();
+}
+```
+
+- [ ] **Step 2: Write `DiscoveryContractTests`**
+
+These pin the steps the server's `PluginManager` actually performs, none of which an ordinary unit test exercises — a test constructs the plugin with `new`, and the server does not.
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Reflection;
+using FluentAssertions;
+using NoMercy.Plugins.Abstractions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests;
+
+// The discovery contract:
+//   1. Scan <server>/plugins/<folder>/plugin.json.
+//   2. Load the assembly named by the manifest's "assembly" field.
+//   3. Reflect every public, non-abstract type assignable to IPlugin.
+//   4. Instantiate with Activator.CreateInstance - so it MUST have a public
+//      parameterless constructor.
+//   5. Call Initialize(IPluginContext) once.
+//   6. Pick up specialised interfaces by reflecting the TYPE.
+//
+// The failure these guard against is the plugin refusing to load at all, on a real
+// server, while every other test passes: give the entry class a constructor
+// parameter - the obvious move the day it wants something injected - and step 4
+// throws MissingMethodException and nothing here would otherwise notice.
+public class DiscoveryContractTests
+{
+    private static IReadOnlyList<Type> DiscoverablePluginTypes =>
+        [
+            .. typeof(InternetRadioPlugin).Assembly.GetTypes()
+                .Where(type => type.IsPublic && !type.IsAbstract && typeof(IPlugin).IsAssignableFrom(type)),
+        ];
+
+    [Fact]
+    public void Assembly_ExposesExactlyOneDiscoverablePluginType()
+    {
+        // Two would load a second plugin under the same manifest id; none would load
+        // nothing and report no error.
+        DiscoverablePluginTypes.Should().ContainSingle()
+            .Which.Should().Be<InternetRadioPlugin>();
+    }
+
+    [Fact]
+    public void EntryType_HasAPublicParameterlessConstructor()
+    {
+        typeof(InternetRadioPlugin)
+            .GetConstructor(BindingFlags.Public | BindingFlags.Instance, binder: null, types: [], modifiers: null)
+            .Should().NotBeNull("the server instantiates plugins with Activator.CreateInstance");
+    }
+
+    [Fact]
+    public void EntryType_CanBeCreatedTheWayTheServerCreatesIt()
+    {
+        object? created = Activator.CreateInstance(typeof(InternetRadioPlugin));
+
+        created.Should().BeOfType<InternetRadioPlugin>();
+        ((IDisposable)created!).Dispose();
+    }
+
+    // Step 6 reflects the type, not the manifest, so a hook declared in plugin.json
+    // with no matching interface is silently never picked up.
+    [Fact]
+    public void EntryType_ImplementsEveryInterfaceItsManifestClaims()
+    {
+        foreach (string hook in ManifestTests.LoadManifest().Capabilities?.Hooks ?? [])
+        {
+            Type expected = hook switch
+            {
+                PluginHookCapability.Ui => typeof(IUiPlugin),
+                PluginHookCapability.ScheduledTask => typeof(IScheduledTaskPlugin),
+                PluginHookCapability.MediaSource => typeof(IMediaSourcePlugin),
+                PluginHookCapability.Metadata => typeof(IMetadataPlugin),
+                PluginHookCapability.Auth => typeof(IAuthPlugin),
+                PluginHookCapability.Encoder => typeof(IEncoderPlugin),
+                _ => typeof(IPlugin),
+            };
+
+            expected.IsAssignableFrom(typeof(InternetRadioPlugin)).Should()
+                .BeTrue($"plugin.json declares '{hook}', so the entry type must implement {expected.Name}");
+        }
+    }
+
+    [Fact]
+    public void EntryType_IdMatchesTheManifestTheServerKeysLifecycleOn()
+    {
+        using InternetRadioPlugin plugin = new();
+
+        plugin.Id.Should().Be(ManifestTests.LoadManifest().Id);
+    }
+
+    // PluginUiDescriptorDto prefers the instance's NavEntries over the manifest's
+    // mounts, so these two are separate declarations of the same fact and nothing
+    // else would catch them drifting.
+    [Fact]
+    public void NavEntries_AgreeWithTheManifestMounts()
+    {
+        using InternetRadioPlugin plugin = new();
+        List<PluginUiMount> mounts = ManifestTests.LoadManifest().Capabilities!.Ui!.Mounts;
+
+        plugin.NavEntries.Should().HaveCount(mounts.Count);
+
+        foreach (PluginUiMount mount in mounts)
+        {
+            plugin.NavEntries.Should().ContainSingle(entry =>
+                entry.Section == mount.Section
+                && entry.Route == mount.Route
+                && entry.Label == mount.Label
+                && entry.Icon == mount.Icon);
+        }
+    }
+
+    [Fact]
+    public void Jobs_AreNamedAndCarryACronExpression()
+    {
+        using InternetRadioPlugin plugin = new();
+
+        plugin.Jobs.Should().NotBeEmpty();
+        plugin.Jobs.Should().OnlyContain(job =>
+            !string.IsNullOrWhiteSpace(job.Name) && !string.IsNullOrWhiteSpace(job.CronExpression));
+    }
+
+    // The host may read Jobs while registering the plugin, which can happen before
+    // Initialize. Throwing there fails registration outright.
+    [Fact]
+    public void Jobs_AreReadableBeforeInitialize()
+    {
+        using InternetRadioPlugin plugin = new();
+
+        plugin.Invoking(candidate => candidate.Jobs.ToList()).Should().NotThrow();
+        plugin.Invoking(candidate => _ = candidate.CronExpression).Should().NotThrow();
+    }
+}
+```
+
+- [ ] **Step 3: Write `PluginLifecycleTests`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
+using NoMercy.Plugins.Abstractions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests;
+
+public sealed class PluginLifecycleTests : IDisposable
+{
+    private readonly string _folder =
+        Path.Combine(Path.GetTempPath(), $"nm-radio-{Guid.NewGuid():N}");
+    private readonly FakeHttpMessageHandler _handler = new();
+
+    public PluginLifecycleTests() => Directory.CreateDirectory(_folder);
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_folder))
+        {
+            Directory.Delete(_folder, recursive: true);
+        }
+    }
+
+    private const string OneStation = """
+        [{"stationuuid":"u1","name":"Example FM","url":"https://example.com/a",
+          "url_resolved":"https://example.com/a","tags":"ambient","countrycode":"NL",
+          "codec":"MP3","bitrate":128,"hls":0,"lastcheckok":1,"votes":5}]
+        """;
+
+    private InternetRadioPlugin Started()
+    {
+        _handler.Respond(OneStation);
+        InternetRadioPlugin plugin = new();
+        plugin.Initialize(new FakePluginContext(_folder, new HttpClient(_handler)));
+        return plugin;
+    }
+
+    private static PluginViewRequest Request(string route) => new() { Route = route };
+
+    [Fact]
+    public async Task ServesTheBrowsePageAtTheRoot()
+    {
+        using InternetRadioPlugin plugin = Started();
+
+        PluginView view = await plugin.GetViewAsync(Request("/"), CancellationToken.None);
+
+        view.Components.Should().NotBeNullOrEmpty();
+    }
+
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/all")]
+    [InlineData("/settings")]
+    [InlineData("/genre/ambient")]
+    public async Task ServesEveryDeclaredRoute(string route)
+    {
+        using InternetRadioPlugin plugin = Started();
+
+        PluginView view = await plugin.GetViewAsync(Request(route), CancellationToken.None);
+
+        view.Components.Should().NotBeNullOrEmpty();
+    }
+
+    [Fact]
+    public async Task ServesAnEmptyStateForAnUnknownRoute()
+    {
+        using InternetRadioPlugin plugin = Started();
+
+        PluginView view = await plugin.GetViewAsync(Request("/nope"), CancellationToken.None);
+
+        view.Components.Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+    }
+
+    // Initialize is synchronous with nowhere to await a fix, and a plugin that throws
+    // from it fails to load. So it captures the context and does nothing else - the
+    // first real work happens on a view or a tick.
+    [Fact]
+    public void InitializeDoesNoIoAndDoesNotThrow()
+    {
+        using InternetRadioPlugin plugin = new();
+
+        plugin.Invoking(candidate =>
+                candidate.Initialize(new FakePluginContext(_folder, new HttpClient(_handler))))
+            .Should().NotThrow();
+
+        _handler.Requests.Should().BeEmpty();
+    }
+
+    // A tick can only arrive after registration, so a missing context here is the
+    // host calling out of order - worth surfacing rather than swallowing.
+    [Fact]
+    public async Task ThrowsWhenTickedBeforeInitialize()
+    {
+        using InternetRadioPlugin plugin = new();
+
+        await plugin.Invoking(candidate => candidate.ExecuteAsync(CancellationToken.None))
+            .Should().ThrowAsync<InvalidOperationException>();
+    }
+
+    [Fact]
+    public async Task RefreshTickFetchesAndWritesTheCache()
+    {
+        using InternetRadioPlugin plugin = Started();
+
+        await plugin.ExecuteAsync(CancellationToken.None);
+
+        File.Exists(Path.Combine(_folder, CatalogCache.FileName)).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ThrowsForAJobNameItDoesNotHave()
+    {
+        using InternetRadioPlugin plugin = Started();
+
+        await plugin.Invoking(candidate => candidate.ExecuteAsync("nope", CancellationToken.None))
+            .Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    // A tick after Dispose is the host calling a plugin it already tore down.
+    [Fact]
+    public async Task ThrowsWhenTickedAfterDispose()
+    {
+        InternetRadioPlugin plugin = Started();
+        plugin.Dispose();
+
+        await plugin.Invoking(candidate => candidate.ExecuteAsync(CancellationToken.None))
+            .Should().ThrowAsync<ObjectDisposedException>();
+    }
+
+    // A view request racing Dispose is NOT the same case: the host may still be
+    // draining a page render while tearing down, so this answers with something
+    // renderable rather than throwing into the request pipeline.
+    [Fact]
+    public async Task ServesARenderableViewAfterDispose()
+    {
+        InternetRadioPlugin plugin = Started();
+        plugin.Dispose();
+
+        PluginView view = await plugin.GetViewAsync(Request("/"), CancellationToken.None);
+
+        view.Components.Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+    }
+
+    // This page is the plugin's only diagnostic surface. Letting a failure throw
+    // through it hides its own cause behind a broken page.
+    [Fact]
+    public async Task ServesAnErrorViewRatherThanThrowingWhenTheCatalogueCannotBeBuilt()
+    {
+        InternetRadioPlugin plugin = new();
+        _handler.Fail(new HttpRequestException("down"));
+        plugin.Initialize(new FakePluginContext(_folder, new HttpClient(_handler)));
+
+        PluginView view = await plugin.GetViewAsync(Request("/"), CancellationToken.None);
+
+        view.Components.Should().NotBeNullOrEmpty();
+        plugin.Dispose();
+    }
+
+    [Fact]
+    public void DisposeIsIdempotent()
+    {
+        InternetRadioPlugin plugin = Started();
+
+        plugin.Dispose();
+        plugin.Invoking(candidate => candidate.Dispose()).Should().NotThrow();
+    }
+
+    [Fact]
+    public void DisposeIsSafeBeforeInitialize()
+    {
+        InternetRadioPlugin plugin = new();
+
+        plugin.Invoking(candidate => candidate.Dispose()).Should().NotThrow();
+    }
+}
+```
+
+- [ ] **Step 4: Run to verify failure**
+
+```bash
+dotnet test -c Release --filter "FullyQualifiedName~PluginLifecycleTests|FullyQualifiedName~DiscoveryContractTests"
+```
+
+Expected: FAIL — `InternetRadioPlugin` does not exist.
+
+- [ ] **Step 5: Write `InternetRadioPlugin.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using Microsoft.Extensions.Logging;
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// The class the server loads.
+//
+// Two contracts, one lifecycle. IUiPlugin serves five routes; IScheduledTaskPlugin
+// keeps the catalogue current so a view never waits on the network when it can help
+// it. Everything that touches IPluginContext lives here: the views are pure
+// functions and the provider takes what it needs as arguments.
+public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
+{
+    /// <summary>The single job's name. It appears in the server's job list as plugin:{id}:refresh.</summary>
+    public const string RefreshJobName = "refresh";
+
+    /// <summary>
+    /// Daily, at a quiet hour. radio-browser is a volunteer-run service and this
+    /// plugin has no reason to poll it harder than the catalogue actually changes.
+    /// </summary>
+    private const string DefaultCron = "0 4 * * *";
+
+    private IPluginContext? _context;
+    private CatalogProvider? _provider;
+    private bool _disposed;
+
+    // Field-initialised so Dispose has something to cancel even when the host
+    // disposes a plugin whose load never completed. Every tick links this into the
+    // token it runs under, which is what makes "Dispose cancels in-flight work" real
+    // rather than aspirational.
+    private readonly CancellationTokenSource _lifecycleCts = new();
+
+    public string Name => PluginIdentity.Name;
+    public string Description => PluginIdentity.Description;
+    public Guid Id => PluginIdentity.Id;
+    public Version Version => PluginIdentity.Version;
+
+    // Captures the context and nothing else. No I/O, no network, no config read: a
+    // plugin that throws from here fails to load, and Initialize is synchronous with
+    // nowhere to await a fix. Real work belongs on the first view or the first tick.
+    public void Initialize(IPluginContext context)
+    {
+        _context = context;
+    }
+
+    private IPluginContext Context =>
+        _context ?? throw new InvalidOperationException("the plugin was used before Initialize");
+
+    private CatalogProvider Provider =>
+        _provider ??= new CatalogProvider(
+            new RadioBrowserClient(Context.HttpClient),
+            new CatalogCache(Context.DataFolderPath),
+            Context.DataFolderPath,
+            Context.Logger
+        );
+
+    // === IScheduledTaskPlugin ==============================================
+
+    public string CronExpression => DefaultCron;
+
+    // Read before Initialize by the host while it registers the plugin, so this must
+    // not reach for the context. A constant cadence is the honest answer anyway:
+    // there is no setting to read, because there is no way to save one.
+    public IReadOnlyList<PluginScheduledJob> Jobs { get; } =
+        [new PluginScheduledJob(RefreshJobName, DefaultCron)];
+
+    public Task ExecuteAsync(CancellationToken ct = default) => ExecuteAsync(RefreshJobName, ct);
+
+    public async Task ExecuteAsync(string jobName, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (jobName != RefreshJobName)
+        {
+            throw new ArgumentOutOfRangeException(nameof(jobName), jobName, "Unknown job name.");
+        }
+
+        IPluginContext context = Context;
+        using CancellationTokenSource linked =
+            CancellationTokenSource.CreateLinkedTokenSource(ct, _lifecycleCts.Token);
+
+        StationCatalog catalog = await Provider.RefreshAsync(linked.Token);
+
+        context.Logger.LogInformation(
+            "Internet Radio refreshed its catalogue: {Count} stations from {Source}.",
+            catalog.Count,
+            catalog.Source
+        );
+    }
+
+    // === IUiPlugin =========================================================
+
+    // One entry per manifest mount. DiscoveryContractTests asserts the two agree,
+    // since PluginUiDescriptorDto prefers this over the manifest and nothing else
+    // would catch them drifting.
+    public IReadOnlyList<PluginNavEntry> NavEntries { get; } =
+        [
+            new PluginNavEntry
+            {
+                Section = PluginUiSection.Music,
+                Label = PluginIdentity.Name,
+                Icon = "portableRadio",
+                Route = RadioRoutes.Browse,
+            },
+            new PluginNavEntry
+            {
+                Section = PluginUiSection.Settings,
+                Label = PluginIdentity.Name,
+                Icon = "portableRadio",
+                Route = RadioRoutes.Settings,
+            },
+        ];
+
+    public async Task<PluginView> GetViewAsync(PluginViewRequest request, CancellationToken ct)
+    {
+        // A view request racing Dispose is not the caller's bug the way a tick is:
+        // the host may still be draining a page render while tearing down. Answer
+        // with something renderable instead of throwing into the request pipeline.
+        if (_disposed)
+        {
+            return PluginViews.Declarative(
+                PluginViews.EmptyState(
+                    "plugin-unavailable",
+                    "Internet Radio is unavailable",
+                    "This plugin is disabled or is being unloaded."
+                )
+            );
+        }
+
+        IPluginContext context = Context;
+        RadioRoute route = RadioRoutes.Parse(request.Route);
+
+        // Resolved before the switch so every route sees the same catalogue, and the
+        // failure below covers building it as well as rendering from it.
+        try
+        {
+            StationCatalog catalog = await Provider.GetAsync(ct);
+
+            return route.Kind switch
+            {
+                RadioRouteKind.Browse => BrowseView.Build(catalog),
+                RadioRouteKind.Genre => GenreView.Build(catalog, route.Value),
+                RadioRouteKind.AllStations => AllStationsView.Build(catalog),
+                RadioRouteKind.Station => StationView.Build(catalog, route.Value),
+                RadioRouteKind.Settings => SettingsView.Build(
+                    catalog, context.DataFolderPath, DateTimeOffset.UtcNow),
+                _ => PluginViews.Declarative(
+                    PluginViews.EmptyState(
+                        "unknown-route",
+                        "Nothing here",
+                        "This version of Internet Radio has no page at that address."
+                    )
+                ),
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // These pages are the plugin's only diagnostic surface, so a failure that
+            // throws through them hides its own cause: the owner sees a broken panel
+            // instead of learning what went wrong. The rendered text names what
+            // failed and never the exception detail.
+            context.Logger.LogError(exception, "Internet Radio could not build the view for {Route}.", request.Route);
+
+            return PluginViews.Declarative(
+                PluginViews.Container(
+                    "view-error",
+                    PluginViews.Badge("view-error-badge", "Unavailable", PluginBadgeVariant.Danger),
+                    PluginViews.EmptyState(
+                        "view-error-empty",
+                        "This page could not be built",
+                        "Check the server log for Internet Radio."
+                    ),
+                    PluginViews.Button("view-error-retry", "Try again", PluginActionIntent.RefreshView())
+                )
+            );
+        }
+    }
+
+    // Null-safe before Initialize (the host may dispose a plugin whose load failed)
+    // and idempotent (a double dispose is not worth throwing over).
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        _lifecycleCts.Cancel();
+        _lifecycleCts.Dispose();
+    }
+}
+```
+
+- [ ] **Step 6: Run tests and commit**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+git add -A
+git commit -m "feat: serve the radio UI and refresh the catalogue on a schedule"
+```
+
+Expected: all pass.
+
+---
+
+### Task 13: The seed-checking script and the READMEs
+
+`resolve-seeds.sh` is the only thing that verifies a stream really works, which matters because radio-browser's own liveness flag has been observed reporting a 404 as healthy.
+
+**Files:**
+- Create: `scripts/resolve-seeds.sh`
+- Rewrite: `src/NoMercy.Plugin.InternetRadio/README.md` (ships beside the DLL)
+- Create: `README.md` (repository root, for someone building or contributing)
+
+**Interfaces:**
+- Consumes: `SeedStations.Uuids` (read out of the C# source by the script).
+- Produces: nothing the code depends on.
+
+- [ ] **Step 1: Write `scripts/resolve-seeds.sh`**
+
+```sh
+#!/usr/bin/env sh
+# Checks every pinned seed UUID: that radio-browser still has it, that it still
+# passes the plugin's admission gates, and that its stream actually answers.
+#
+# That last check is the point. radio-browser's lastcheckok is a claim, not a fact:
+# it reported Tomorrowland Anthems' OWR_DAB.mp3 as healthy while the URL was a 404,
+# which is why that station had to be resubmitted. Nothing else in this repository
+# connects to a stream.
+#
+# Run before tagging a release. Deliberately NOT on the push path - a station's
+# outage is not a reason for this repository's build to go red.
+
+set -eu
+
+SEEDS_FILE="$(cd "$(dirname "$0")/.." && pwd)/src/NoMercy.Plugin.InternetRadio/Catalog/SeedStations.cs"
+API="https://all.api.radio-browser.info"
+UA="nomercy-radiostation-plugin/1.0.2"
+
+command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
+
+# Read the UUIDs out of the C# rather than keeping a second copy here: two lists that
+# could disagree would make this script's PASS meaningless.
+uuids=$(grep -oE '"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"' "$SEEDS_FILE" \
+        | tr -d '"' | sort -u)
+
+if [ -z "$uuids" ]; then
+    echo "no seed uuids found in $SEEDS_FILE" >&2
+    exit 1
+fi
+
+count=$(printf '%s\n' "$uuids" | wc -l | tr -d ' ')
+echo "checking $count seed stations"
+echo
+
+joined=$(printf '%s\n' "$uuids" | paste -sd, -)
+records=$(curl -fsS -m 60 -A "$UA" -X POST "$API/json/stations/byuuid" -d "uuids=$joined")
+
+failures=0
+
+for uuid in $uuids; do
+    record=$(printf '%s' "$records" | jq -c --arg u "$uuid" '.[] | select(.stationuuid == $u)')
+
+    if [ -z "$record" ]; then
+        printf 'MISSING  %s  (radio-browser no longer has this station)\n' "$uuid"
+        failures=$((failures + 1))
+        continue
+    fi
+
+    name=$(printf '%s' "$record" | jq -r '.name')
+    url=$(printf '%s' "$record" | jq -r '.url_resolved // .url')
+    hls=$(printf '%s' "$record" | jq -r '.hls')
+    ok=$(printf '%s' "$record" | jq -r '.lastcheckok')
+
+    gate=""
+    case "$url" in https://*) ;; *) gate="$gate not-https" ;; esac
+    [ "$hls" = "0" ] || gate="$gate hls"
+    [ "$ok" = "1" ] || gate="$gate not-checked"
+
+    if [ -n "$gate" ]; then
+        printf 'GATED    %-42s %s (%s)\n' "$name" "$uuid" "$gate"
+        failures=$((failures + 1))
+        continue
+    fi
+
+    # The part radio-browser cannot be trusted for. A range request takes the first
+    # couple of kilobytes and hangs up rather than streaming indefinitely.
+    status=$(curl -s -m 20 -A "$UA" -L -r 0-2047 -o /dev/null -w '%{http_code}' "$url" || echo 000)
+
+    case "$status" in
+        200|206) printf 'OK       %-42s %s\n' "$name" "$uuid" ;;
+        *)
+            printf 'DEAD     %-42s %s (stream returned %s)\n' "$name" "$uuid" "$status"
+            failures=$((failures + 1))
+            ;;
+    esac
+done
+
+echo
+if [ "$failures" -gt 0 ]; then
+    echo "$failures of $count seeds need attention before release" >&2
+    exit 1
+fi
+
+echo "all $count seeds resolve, pass the gates, and answer"
+```
+
+- [ ] **Step 2: Make it executable and run it**
+
+```bash
+chmod +x scripts/resolve-seeds.sh
+./scripts/resolve-seeds.sh
+```
+
+Expected: `OK` for all ten. Any `DEAD` or `GATED` line must be resolved before release — by finding the station's current record on radio-browser and repinning, or by submitting the working stream there as was done for Anthems.
+
+- [ ] **Step 3: Rewrite the plugin README**
+
+`src/NoMercy.Plugin.InternetRadio/README.md` — this one ships inside the zip, beside the DLL, so it answers what the thing does and what it declares, not how to build it.
+
+````markdown
+# Internet Radio
+
+Browse and play internet radio stations in the NoMercy MediaServer's built-in
+player.
+
+Adds two entries to the dashboard: **Internet Radio** under Music, and a
+read-only status page under plugin settings.
+
+## What it does
+
+- Fetches its station catalogue from [radio-browser.info](https://www.radio-browser.info/)
+  — ten curated stations pinned by id, plus the most popular stations in each of
+  seventeen genres.
+- Browse by genre, or scan every station in one table with bitrate and codec.
+- Selecting a station plays it immediately in the built-in player. A station's own
+  page also offers **Add to queue** and a link to its homepage.
+
+## What it declares
+
+| Capability | Why |
+| --- | --- |
+| `ui` | The five pages above. |
+| `scheduledTask` | One job, `refresh`, daily at 04:00, which updates the catalogue. |
+| `network` → `*.api.radio-browser.info` | The only host it contacts. Streams are played by your client, not by the server. |
+
+It declares no `rest`, no `ws`, no library access and no secrets storage.
+
+**You will need to enable it once.** A plugin that declares a network host is not
+auto-enabled however `autoEnabled` is set, so the server starts it disabled until
+you approve it in the dashboard. That is deliberate on the server's part, and
+correct: this plugin calls a third-party API on a schedule.
+
+## Stations it will not have
+
+Only HTTPS, non-HLS streams are admitted. Your dashboard is served over HTTPS, so
+a plain `http://` stream is blocked by the browser as mixed content and cannot
+play at all — listing one would be listing something that does not work.
+
+This is why **BBC Radio 1 and BBC Radio 6 Music are absent**: radio-browser carries
+them only as HLS over `http://`. Earlier versions of this plugin shipped BBC URLs
+that could never play in a browser for exactly that reason.
+
+## Using your own station list
+
+Drop a file named `stations.json` into the plugin's data folder — the settings page
+shows you the exact path — and it replaces the fetched catalogue entirely:
+
+```json
+[
+  {
+    "name": "Local Jazz FM",
+    "streamUrl": "https://example.com/jazz.aac",
+    "logoUrl": "https://example.com/jazz.png",
+    "homepage": "https://example.com/",
+    "genre": "Jazz",
+    "country": "US",
+    "bitrateKbps": 256,
+    "codec": "aac"
+  }
+]
+```
+
+Only `name` and `streamUrl` are required. Your file is used exactly as written and
+is **not** filtered, so it is also how you add a station radio-browser does not
+carry. If it cannot be parsed, the plugin logs a warning and fetches as normal.
+
+## There is nothing to configure
+
+The settings page is read-only, and not by choice. A plugin cannot currently
+receive anything from its own UI on this server: plugin REST routes are served
+unversioned while the dashboard posts to `/api/v1`
+([media-server issue #26](https://github.com/NoMercy-Entertainment/nomercy-media-server/issues/26)),
+and the hub is not an alternative because plugin hub handlers are never registered.
+Favourites and station editing arrive when either is fixed.
+
+## License
+
+MIT.
+````
+
+- [ ] **Step 4: Write the repository README**
+
+`README.md` at the repository root — for someone building or contributing.
+
+````markdown
+# nomercy-radiostation-plugin
+
+An `IUiPlugin` for [NoMercy MediaServer](https://github.com/NoMercy-Entertainment/nomercy-media-server)
+that browses and plays internet radio. See
+[the plugin's own README](src/NoMercy.Plugin.InternetRadio/README.md) for what it
+does and how to use it.
+
+## Building
+
+Requires the .NET 10 SDK (pinned in `global.json`).
+
+`NoMercy.Plugins.Abstractions` is not published to nuget.org, so it is cloned and
+packed into a local feed first. `nuget.config` already points at that feed, and
+`packageSourceMapping` pins `NoMercy.*` to it so nobody can publish that name on
+nuget.org and get their assembly compiled in instead.
+
+```bash
+./scripts/fetch-abstractions.sh     # or scripts/fetch-abstractions.ps1
+dotnet restore
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+```
+
+## Layout
+
+| Path | |
+| --- | --- |
+| `src/NoMercy.Plugin.InternetRadio/Catalog/` | Fetching, gating and caching the station list |
+| `src/NoMercy.Plugin.InternetRadio/Views/` | Pure `Build(...)` functions returning a `PluginView` |
+| `tests/` | xunit + FluentAssertions; no test touches the network |
+| `scripts/resolve-seeds.sh` | Checks the pinned stations still resolve and still answer |
+| `docs/superpowers/` | The design spec and this implementation plan |
+
+## No station data in the source tree
+
+Names, stream URLs, logos, genres and countries are all fetched at runtime. The
+only station data committed here is ten radio-browser UUIDs in
+`Catalog/SeedStations.cs`.
+
+That is not tidiness. A hardcoded URL is one nobody re-checks: this repository has
+already had to correct Tomorrowland URLs once, and shipped BBC streams over `http://`
+that could never play in a browser. Anything wrong with a station is now fixed
+upstream at radio-browser, where the fix reaches everyone.
+
+Run `scripts/resolve-seeds.sh` before tagging a release.
+
+## Releasing
+
+CI builds on every push and creates a Forgejo release on a `v*` tag.
+
+**The manifest version must match the tag.** The build asserts
+`v{plugin.json version} == {tag}` and fails naming both if not — `v1.0.1` was once
+tagged on a commit whose manifest read `1.0.0`, so every server that installed it
+reported the wrong version and was told an update was available forever. After a
+release publishes, CI opens the next patch version on the default branch.
+
+A release carries the plugin zip, its SHA-256, and a `repository.json` that a plugin
+catalogue can point at directly.
+
+## License
+
+MIT.
+````
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add -A
+git commit -m "docs: document the plugin, and add the seed verification script"
+```
+
+---
+
+### Task 14: CI — the version gate, the checksum, and the catalogue manifest
+
+The build that makes another 1.0.1-labelled-1.0.0 impossible.
+
+**Files:**
+- Rewrite: `.forgejo/workflows/build.yml`
+
+**Interfaces:**
+- Consumes: `scripts/fetch-abstractions.sh`, `src/NoMercy.Plugin.InternetRadio/plugin.json`.
+- Produces: a release with `NoMercy.Plugin.InternetRadio-{version}.zip`, its SHA-256, and `repository.json`.
+
+- [ ] **Step 1: Replace the workflow**
+
+```yaml
+name: build
+
+# Builds, tests and packages the Internet Radio plugin.
+#
+# The plugin builds against NoMercy.Plugins.Abstractions, which is NOT published to
+# nuget.org. scripts/fetch-abstractions.sh clones the server and packs it into a
+# local feed that the committed nuget.config points at. The script is shared with
+# local development on purpose, so CI and a developer's machine cannot drift.
+#
+# Build, test and release run in one job so we don't need the artifact
+# upload/download API, which the act_runner routes through the internal
+# `forgejo:3000` hostname the per-workflow network can't resolve.
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:     [ 'v*' ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PLUGIN_NAME: NoMercy.Plugin.InternetRadio
+  PLUGIN_DIR: src/NoMercy.Plugin.InternetRadio
+  SERVER_BRANCH: dev
+  DOTNET_CHANNEL: "10.0"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  # Public URL — the runner's default GITHUB_SERVER_URL is an internal hostname
+  # (http://forgejo:3000) the workflow container can't resolve.
+  PUBLIC_FORGEJO_URL: https://forgejo.phillippepelzer.me
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Runs on a host runner, so root is not a given and the image may already
+      # carry these. Install only what is missing, and only if we can.
+      - name: Install base tooling
+        run: |
+          set -eu
+          missing=""
+          for tool in git curl zip unzip jq; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+
+          if [ -z "$missing" ]; then
+            echo "all required tools present"
+            exit 0
+          fi
+
+          echo "missing:$missing"
+          if [ "$(id -u)" = "0" ]; then
+            SUDO=""
+          elif command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+          else
+            echo "cannot install$missing - not root and no sudo available" >&2
+            exit 1
+          fi
+
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y --no-install-recommends ca-certificates libicu-dev $missing
+
+      - name: Install .NET SDK ${{ env.DOTNET_CHANNEL }}
+        run: |
+          set -eux
+          curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
+          chmod +x /tmp/dotnet-install.sh
+          /tmp/dotnet-install.sh --channel "$DOTNET_CHANNEL" --install-dir "$HOME/.dotnet"
+          echo "DOTNET_ROOT=$HOME/.dotnet" >> "$GITHUB_ENV"
+          echo "$HOME/.dotnet" >> "$GITHUB_PATH"
+          "$HOME/.dotnet/dotnet" --info
+
+      # Manual checkout instead of actions/checkout: the action clones from
+      # $GITHUB_SERVER_URL, which the runner sets to an internal hostname.
+      - name: Checkout plugin (via public URL)
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # NO `set -x` IN THIS STEP. The auth header is base64 of the token, and the
+          # runner's secret masking only redacts the token's literal text - it cannot
+          # recognise an encoded form. With xtrace on, the token lands in the build
+          # log in full, which for a public repo is a publicly readable credential.
+          set -eu
+          : "${TOKEN:?missing GITHUB_TOKEN}"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          shopt -s dotglob nullglob
+          rm -rf -- *
+          git init -q .
+          git remote add origin "${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}.git"
+
+          # Written to a file rather than passed with `git -c`: an argument is visible
+          # in the host's process list, which on a self-hosted runner means any
+          # co-tenant process. Removed immediately afterwards.
+          umask 077
+          printf 'Authorization: basic %s\n' \
+            "$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" > /tmp/gh-auth
+          git config --local http.extraHeader "$(cat /tmp/gh-auth)"
+          rm -f /tmp/gh-auth
+
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git config --local --unset-all http.extraHeader
+          git checkout -q FETCH_HEAD
+          git log --oneline -1
+
+      # THE GATE. This repository shipped v1.0.1 from a commit whose manifest read
+      # 1.0.0: every server that installed it reported the wrong version and was told
+      # an update was available forever. Nothing checked, so nothing failed.
+      #
+      # Runs before the build, so a mismatched tag costs seconds rather than a full
+      # build and a published-then-deleted release.
+      - name: Assert the manifest version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -eu
+          MANIFEST_VERSION=$(jq -r '.version' "$PLUGIN_DIR/plugin.json")
+          TAG="${GITHUB_REF_NAME}"
+
+          if [ "v$MANIFEST_VERSION" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match plugin.json version $MANIFEST_VERSION" >&2
+            echo "the manifest and the tag must agree, or an installed server reports" >&2
+            echo "the wrong version and is offered an update it already has." >&2
+            echo "fix: set \"version\": \"${TAG#v}\" in $PLUGIN_DIR/plugin.json," >&2
+            echo "     <Version> in the csproj, and PluginIdentity.Version - then retag." >&2
+            exit 1
+          fi
+
+          echo "tag $TAG matches manifest version $MANIFEST_VERSION"
+
+      - name: Pack the plugin contract to a local feed
+        id: contract
+        run: |
+          set -eu
+          chmod +x scripts/fetch-abstractions.sh
+          ./scripts/fetch-abstractions.sh
+
+          # Recorded so a release names the exact contract it was built against.
+          # "built against @dev" says nothing a year later.
+          SERVER_SHA=$(git -C _server rev-parse HEAD)
+          echo "sha=$SERVER_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Restore
+        run: dotnet restore
+
+      # TreatWarningsAsErrors belongs on the step that compiles. Passing it to
+      # `dotnet test --no-build` does nothing: that command compiles nothing.
+      - name: Build (Release, warnings as errors)
+        run: dotnet build -c Release --no-restore -p:TreatWarningsAsErrors=true
+
+      # A plugin that fails its own tests must not produce a release artifact.
+      - name: Test (Release)
+        run: dotnet test -c Release --no-build --logger "console;verbosity=normal"
+
+      # The constraint that stops station data creeping back into the source tree.
+      # Only the radio-browser API base and documentation links may contain a URL.
+      - name: Assert no station data is hardcoded
+        run: |
+          set -eu
+          if grep -rn --include='*.cs' -E 'https?://' "$PLUGIN_DIR" \
+             | grep -v 'radio-browser' \
+             | grep -v 'forgejo.phillippepelzer.me' \
+             | grep -v 'github.com'; then
+            echo "::error::a URL that is not the API base or a documentation link" >&2
+            echo "station data is fetched, never committed - see Catalog/SeedStations.cs" >&2
+            exit 1
+          fi
+          echo "no hardcoded station URLs"
+
+      - name: Stage the plugin directory
+        id: stage
+        run: |
+          set -eux
+          BIN="$PLUGIN_DIR/bin/Release/net10.0"
+          STAGING="$PWD/_stage/$PLUGIN_NAME"
+          mkdir -p "$STAGING"
+
+          cp "$BIN/$PLUGIN_NAME.dll"      "$STAGING/"
+          cp "$BIN/$PLUGIN_NAME.deps.json" "$STAGING/"
+          cp "$PLUGIN_DIR/plugin.json"     "$STAGING/"
+          # The plugin's own README, not the repository's: what belongs beside an
+          # installed DLL is what the thing does, not how to build it.
+          cp "$PLUGIN_DIR/README.md"       "$STAGING/"
+          cp LICENSE                       "$STAGING/"
+
+          # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll and
+          # NoMercy.Events.dll. Both are the host's and live in its shared-assembly
+          # set. Shipping a copy gives the load context two incompatible identities of
+          # the same types, and the failure looks like an unrelated cast error far
+          # from its cause.
+          #
+          # Checked against $BIN, not $STAGING: staging holds exactly the five files
+          # copied above by name, so neither could ever appear there and the check
+          # could never fire.
+          if ls "$BIN" | grep -E '^NoMercy\.(Plugins\.Abstractions|Events)\.dll$'; then
+            echo "::error::a host-owned assembly was copied into the build output" >&2
+            echo "see the PackageReference comment in the plugin csproj" >&2
+            exit 1
+          fi
+
+          # The staged list is an allowlist, so an assembly added later would be named
+          # in deps.json, missing from the zip, and the plugin would fail to load with
+          # a FileNotFoundException while CI went green.
+          #
+          # Scoped to assemblies built from THIS repo, which deps.json distinguishes:
+          # a project reference gets a bare filename key, a package gets a path key
+          # like lib/net10.0/Foo.dll. Only the first group is ours to ship.
+          command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
+
+          PROJECT_ASSEMBLIES=$(jq -r '.targets[] | to_entries[] | .value.runtime // {} | keys[]' \
+                                "$STAGING/$PLUGIN_NAME.deps.json" | grep -v '/' | sort -u)
+          if [ -z "$PROJECT_ASSEMBLIES" ]; then
+            echo "::error::deps.json listed no project-built assemblies - its shape changed" >&2
+            exit 1
+          fi
+
+          MISSING=""
+          for dep in $PROJECT_ASSEMBLIES; do
+            [ -f "$STAGING/$dep" ] || MISSING="$MISSING $dep"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::deps.json names project-built assemblies missing from the artifact:$MISSING" >&2
+            exit 1
+          fi
+
+          REF="${GITHUB_REF_NAME:-}"
+          case "$REF" in
+            v*) VERSION="${REF#v}" ;;
+            *)  VERSION="dev-${GITHUB_SHA:0:8}" ;;
+          esac
+
+          ZIP="$PLUGIN_NAME-$VERSION.zip"
+          (cd "$PWD/_stage" && zip -r "../$ZIP" "$PLUGIN_NAME")
+
+          # A catalogue needs this to verify a download, and it is what makes a
+          # listing checkable rather than trusted.
+          SHA=$(sha256sum "$ZIP" | cut -d' ' -f1)
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "zip=$ZIP"         >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA"         >> "$GITHUB_OUTPUT"
+          echo "sha256 $SHA  $ZIP"
+
+      # One URL a plugin catalogue can point at, instead of someone hand-writing the
+      # entry and hand-checking the version - which is exactly how the 1.0.0/1.0.1
+      # mismatch became somebody else's problem.
+      - name: Build repository.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -eu
+          MANIFEST="$PLUGIN_DIR/plugin.json"
+          ZIP="${{ steps.stage.outputs.zip }}"
+          DOWNLOAD="${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${ZIP}"
+
+          jq -n \
+            --slurpfile manifest "$MANIFEST" \
+            --arg version "${{ steps.stage.outputs.version }}" \
+            --arg download "$DOWNLOAD" \
+            --arg checksum "sha256:${{ steps.stage.outputs.sha }}" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              name: "NoMercy Internet Radio",
+              url: $download,
+              plugins: [{
+                id: $manifest[0].id,
+                name: $manifest[0].name,
+                description: $manifest[0].description,
+                author: $manifest[0].author,
+                projectUrl: $manifest[0].projectUrl,
+                versions: [{
+                  version: $version,
+                  targetAbi: $manifest[0].targetAbi,
+                  downloadUrl: $download,
+                  checksum: $checksum,
+                  timestamp: $timestamp
+                }]
+              }]
+            }' > repository.json
+
+          cat repository.json
+
+      - name: Create Forgejo release & attach assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONTRACT_SHA: ${{ steps.contract.outputs.sha }}
+        run: |
+          set -euo pipefail
+          ZIP="${{ steps.stage.outputs.zip }}"
+          SHA="${{ steps.stage.outputs.sha }}"
+          TAG="${GITHUB_REF_NAME}"
+          REPO="${GITHUB_REPOSITORY}"
+          API="${PUBLIC_FORGEJO_URL%/}/api/v1"
+
+          BODY=$(cat <<EOF
+          ## Internet Radio — ${TAG}
+
+          Browse and play internet radio stations in the NoMercy MediaServer's built-in player.
+
+          ### Install
+          1. Extract \`${ZIP}\` into \`<server>/plugins/\`.
+          2. Restart the server.
+          3. **Enable the plugin in the dashboard.** It declares a network host, so the
+             server starts it disabled until you approve it.
+
+          ### Verify
+          \`\`\`
+          sha256  ${SHA}
+          \`\`\`
+
+          Stations are fetched from radio-browser.info and refreshed daily; nothing is
+          bundled. HTTPS, non-HLS streams only — an http stream is blocked by the browser
+          as mixed content and cannot play.
+
+          Built and tested against \`NoMercy-Entertainment/nomercy-media-server@${CONTRACT_SHA}\`.
+          To rebuild this exact artifact: \`SERVER_REF=${CONTRACT_SHA} ./scripts/fetch-abstractions.sh\`
+          then \`dotnet build -c Release\`.
+          EOF
+          )
+
+          # The token goes in a config file, not on the command line: a curl argument
+          # is visible in the host's process list to any co-tenant process.
+          umask 077
+          CURL_CFG=$(mktemp)
+          trap 'rm -f "$CURL_CFG"' EXIT
+          printf 'header = "Authorization: token %s"\n' "$TOKEN" > "$CURL_CFG"
+
+          REL_JSON=$(curl -fsSL --config "$CURL_CFG" -X POST \
+            -H "Content-Type: application/json" \
+            "$API/repos/$REPO/releases" \
+            -d "$(jq -n --arg tag "$TAG" --arg body "$BODY" \
+                  '{tag_name:$tag, name:$tag, body:$body, draft:false, prerelease:false}')")
+
+          REL_ID=$(echo "$REL_JSON" | jq -r '.id')
+          if [ -z "$REL_ID" ] || [ "$REL_ID" = "null" ]; then
+            echo "::error::release creation returned no id - refusing to upload an asset" >&2
+            exit 1
+          fi
+
+          for asset in "$ZIP" repository.json; do
+            echo "uploading $asset"
+            curl -fsSL --config "$CURL_CFG" -X POST \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$asset" \
+              "$API/repos/$REPO/releases/$REL_ID/assets?name=$(basename "$asset")"
+          done
+
+          echo "Release published: $TAG"
+
+      # Opens the next patch version so the default branch is never sitting on a
+      # version that has already shipped.
+      #
+      # This is convenience, not the guard: by the time it runs the artifact is
+      # published, so it cannot protect anything. The gate at the top of this job is
+      # what makes a mismatched release impossible.
+      - name: Open the next patch version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          RELEASED="${GITHUB_REF_NAME#v}"
+          MAJOR=$(echo "$RELEASED" | cut -d. -f1)
+          MINOR=$(echo "$RELEASED" | cut -d. -f2)
+          PATCH=$(echo "$RELEASED" | cut -d. -f3)
+          NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
+
+          echo "opening $NEXT for development"
+
+          # The tag build checked out a detached FETCH_HEAD, so the edits have to be
+          # made ON the default branch - editing here first and then checking out
+          # would simply discard them.
+          BRANCH="${GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH:-main}"
+          git config user.name  "forgejo-actions"
+          git config user.email "actions@noreply.localhost"
+
+          umask 077
+          printf 'Authorization: basic %s\n' \
+            "$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" > /tmp/gh-auth
+          git config --local http.extraHeader "$(cat /tmp/gh-auth)"
+          rm -f /tmp/gh-auth
+
+          git fetch --depth=1 origin "$BRANCH"
+          git checkout -q -B "$BRANCH" FETCH_HEAD
+
+          # All three, or ManifestTests fails on the very next push.
+          jq --arg v "$NEXT" '.version = $v' "$PLUGIN_DIR/plugin.json" > /tmp/manifest.json
+          mv /tmp/manifest.json "$PLUGIN_DIR/plugin.json"
+          sed -i "s|<Version>$RELEASED</Version>|<Version>$NEXT</Version>|" \
+            "$PLUGIN_DIR/$PLUGIN_NAME.csproj"
+          sed -i "s|new($MAJOR, $MINOR, $PATCH)|new($MAJOR, $MINOR, $((PATCH + 1)))|" \
+            "$PLUGIN_DIR/PluginIdentity.cs"
+
+          git add "$PLUGIN_DIR/plugin.json" "$PLUGIN_DIR/$PLUGIN_NAME.csproj" \
+                  "$PLUGIN_DIR/PluginIdentity.cs"
+
+          if git diff --cached --quiet; then
+            echo "already at $NEXT - nothing to do"
+          else
+            # [skip ci] or this push retriggers the workflow for no reason.
+            git commit -m "chore(release): open $NEXT for development [skip ci]"
+            git push origin "HEAD:$BRANCH"
+          fi
+
+          git config --local --unset-all http.extraHeader
+```
+
+- [ ] **Step 2: Verify the gate locally**
+
+The gate is the point of this task, so prove it fires before trusting it.
+
+```bash
+# Should print the version and succeed.
+jq -r '.version' src/NoMercy.Plugin.InternetRadio/plugin.json
+
+# Simulate the comparison the workflow makes, with a deliberately wrong tag.
+MANIFEST_VERSION=$(jq -r '.version' src/NoMercy.Plugin.InternetRadio/plugin.json)
+TAG="v9.9.9"
+[ "v$MANIFEST_VERSION" != "$TAG" ] && echo "gate correctly rejects $TAG"
+
+TAG="v$MANIFEST_VERSION"
+[ "v$MANIFEST_VERSION" = "$TAG" ] && echo "gate correctly accepts $TAG"
+```
+
+- [ ] **Step 3: Verify the hardcoded-URL check passes**
+
+```bash
+grep -rn --include='*.cs' -E 'https?://' src/NoMercy.Plugin.InternetRadio \
+  | grep -v 'radio-browser' | grep -v 'forgejo.phillippepelzer.me' | grep -v 'github.com' \
+  && echo "FAIL: a URL slipped in" || echo "OK: no hardcoded station URLs"
+```
+
+Expected: `OK`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add -A
+git commit -m "ci: gate the tag against the manifest, publish a checksum and repository.json"
+```
+
+---
+
+### Task 15: File the upstream findings (requires the boss's go-ahead)
+
+Four things were found while building this that are the server's or the web client's,
+not this plugin's. None is worked around here: a hand-rolled versioned route or a
+private ingest path would break the moment the real fix lands.
+
+**This task is outward-facing — do not file anything until explicitly approved.**
+
+**Files:** none in this repository.
+
+- [ ] **Step 1: Confirm approval before filing**
+
+- [ ] **Step 2: File each finding on `NoMercy-Entertainment/nomercy-media-server`**
+
+1. **`IPluginHubRouter.Register` is never called.** `PluginHubRouter` keeps a handler
+   dictionary that nothing populates, so `RouteAsync` drops every message at its first
+   lookup and `IPluginHubHandler` cannot receive anything. It matters most because the
+   hub is the natural workaround for issue #26 and is not available either — so there
+   is currently *no* inbound path from a plugin's UI to the plugin.
+2. **`IMediaSourcePlugin` has no consumer.** It appears in the whole server only in its
+   own declaration and one abstractions test. A plugin author implements it and gets
+   silence. Either wire it or say it is not yet live. (This plugin's previous release
+   implemented only that hook, which is why it did nothing at all.)
+3. **`PluginText` has an unnamed variant vocabulary.** The web renderer knows `title`,
+   `subtitle` and `caption`; anything else silently reads as body text. This is exactly
+   the failure `PluginComponentType` and `PluginActionType` exist to prevent, and
+   `nomercy-torrent-plugin` already mis-hits it — its settings headings render as
+   paragraphs. Suggest a `PluginTextVariant` constants class plus a doc comment on
+   `PluginViews.Text`.
+4. **The web host never forwards `PluginViewRequest.Query`.** The server populates it
+   from the request, but `Host/index.vue` sends only `route`, so a plugin using query
+   parameters loses them with no error. Either forward them, or state in
+   `PluginViewRequest` that path segments are the portable option.
+
+- [ ] **Step 3: Link the filed issues into the spec's *Upstream reports* section**
+
+---
+
+## Final verification
+
+Run before declaring the work done. This is the spec's definition of done.
+
+- [ ] **All green from clean**
+
+```bash
+rm -rf _server _nupkgs
+./scripts/fetch-abstractions.sh
+dotnet restore
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+```
+
+- [ ] **All ten seeds resolve and answer**
+
+```bash
+./scripts/resolve-seeds.sh
+```
+
+Expected: ten `OK` lines, including all four Tomorrowland stations.
+
+- [ ] **No station data in the source tree**
+
+```bash
+grep -rn --include='*.cs' -E 'https?://' src/NoMercy.Plugin.InternetRadio \
+  | grep -v 'radio-browser' | grep -v 'forgejo.phillippepelzer.me' | grep -v 'github.com'
+```
+
+Expected: no output.
+
+- [ ] **The three version declarations agree, and read 1.0.2**
+
+```bash
+jq -r '.version' src/NoMercy.Plugin.InternetRadio/plugin.json
+grep -o '<Version>[^<]*</Version>' src/NoMercy.Plugin.InternetRadio/*.csproj
+grep -o 'new(1, 0, 2)' src/NoMercy.Plugin.InternetRadio/PluginIdentity.cs
+```
+
+- [ ] **Push and tag only on explicit ask**, then watch CI.
+
+```bash
+git push origin main
+git tag v1.0.2 && git push origin v1.0.2
+```
