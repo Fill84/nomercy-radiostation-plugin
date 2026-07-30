@@ -2412,3 +2412,2168 @@ git commit -m "feat(catalog): add the catalogue model and its on-disk cache"
 Expected: all pass.
 
 ---
+
+### Task 7: The catalogue provider — override wins, cache first, fetch on empty
+
+The decision layer, and the only place that knows a stale catalogue beats an empty one. Everything here is tested against the fake handler and a temp folder; nothing reaches the network.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/StationOverrides.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Catalog/CatalogProvider.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/TestSupport/RecordingLogger.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/CatalogProviderTests.cs`
+- Modify: `src/NoMercy.Plugin.InternetRadio/Catalog/StationCatalog.cs` (adds `WithFailedFetch`, Step 6)
+
+**Interfaces:**
+- Consumes: `RadioBrowserClient`, `CatalogCache`, `StationGates`, `GenreMap`, `SeedStations`, `StationCatalog`.
+- Produces:
+  - `StationOverrides.TryLoad(string dataFolderPath, ILogger logger) : IReadOnlyList<RadioStation>?`, `StationOverrides.FileName` const.
+  - `CatalogProvider(RadioBrowserClient client, CatalogCache cache, string dataFolderPath, ILogger logger, TimeSpan? cacheTtl = null)`
+  - `.GetAsync(CancellationToken) : Task<StationCatalog>`
+  - `.RefreshAsync(CancellationToken) : Task<StationCatalog>`
+  - `CatalogProvider.DefaultCacheTtl : TimeSpan`
+  - `RecordingLogger` implementing `ILogger`, with `.Entries`.
+
+- [ ] **Step 1: Write `RecordingLogger`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using Microsoft.Extensions.Logging;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.TestSupport;
+
+// Lets a test assert that a failure was reported without asserting on wording.
+public sealed class RecordingLogger : ILogger
+{
+    public List<(LogLevel Level, string Message, Exception? Exception)> Entries { get; } = [];
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => true;
+
+    public void Log<TState>(
+        LogLevel logLevel,
+        EventId eventId,
+        TState state,
+        Exception? exception,
+        Func<TState, Exception?, string> formatter
+    ) => Entries.Add((logLevel, formatter(state, exception), exception));
+}
+```
+
+- [ ] **Step 2: Write the failing provider tests**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/CatalogProviderTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Net;
+using FluentAssertions;
+using Microsoft.Extensions.Logging;
+using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
+
+public sealed class CatalogProviderTests : IDisposable
+{
+    private readonly string _folder =
+        Path.Combine(Path.GetTempPath(), $"nm-radio-{Guid.NewGuid():N}");
+    private readonly FakeHttpMessageHandler _handler = new();
+    private readonly RecordingLogger _logger = new();
+
+    public CatalogProviderTests() => Directory.CreateDirectory(_folder);
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_folder))
+        {
+            Directory.Delete(_folder, recursive: true);
+        }
+    }
+
+    private CatalogProvider Provider(TimeSpan? ttl = null) =>
+        new(new RadioBrowserClient(new HttpClient(_handler)),
+            new CatalogCache(_folder),
+            _folder,
+            _logger,
+            ttl);
+
+    private static string Payload(string uuid, string name, string url, string tags = "ambient") =>
+        $$"""
+        [{"stationuuid":"{{uuid}}","name":"{{name}}","url":"{{url}}","url_resolved":"{{url}}",
+          "tags":"{{tags}}","countrycode":"NL","codec":"MP3","bitrate":128,
+          "hls":0,"lastcheckok":1,"votes":5}]
+        """;
+
+    [Fact]
+    public async Task Fetches_WhenThereIsNoCache()
+    {
+        _handler.Respond(Payload("u1", "Example FM", "https://example.com/a"));
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Fetched);
+        catalog.Stations.Should().NotBeEmpty();
+        catalog.Stations[0].Genre.Should().Be("Ambient");
+    }
+
+    [Fact]
+    public async Task WritesTheCacheAfterAFetch()
+    {
+        _handler.Respond(Payload("u1", "Example FM", "https://example.com/a"));
+
+        await Provider().GetAsync(CancellationToken.None);
+
+        File.Exists(Path.Combine(_folder, CatalogCache.FileName)).Should().BeTrue();
+    }
+
+    // A view is rendered on every navigation. Hitting the API per click would be
+    // roughly eighteen requests a page.
+    [Fact]
+    public async Task ServesAFreshCacheWithoutTouchingTheNetwork()
+    {
+        _handler.Respond(Payload("u1", "Example FM", "https://example.com/a"));
+        CatalogProvider provider = Provider();
+        await provider.GetAsync(CancellationToken.None);
+        int afterFirst = _handler.Requests.Count;
+
+        StationCatalog catalog = await provider.GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Cache);
+        _handler.Requests.Should().HaveCount(afterFirst);
+    }
+
+    [Fact]
+    public async Task RefetchesWhenTheCacheIsOlderThanTheTtl()
+    {
+        _handler.Respond(Payload("u1", "Example FM", "https://example.com/a"));
+        await new CatalogCache(_folder).WriteAsync(
+            [new RadioStation { Id = "old", Name = "Old FM", StreamUrl = "https://example.com/old" }],
+            DateTimeOffset.UtcNow - TimeSpan.FromDays(30),
+            CancellationToken.None);
+
+        StationCatalog catalog = await Provider(TimeSpan.FromHours(1)).GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Fetched);
+    }
+
+    // The one that matters when radio-browser is down. A working catalogue must not
+    // be thrown away because a refresh failed.
+    [Fact]
+    public async Task ServesAStaleCacheWhenTheFetchFails()
+    {
+        await new CatalogCache(_folder).WriteAsync(
+            [new RadioStation { Id = "old", Name = "Old FM", StreamUrl = "https://example.com/old" }],
+            DateTimeOffset.UtcNow - TimeSpan.FromDays(30),
+            CancellationToken.None);
+        _handler.Fail(new HttpRequestException("down"));
+
+        StationCatalog catalog = await Provider(TimeSpan.FromHours(1)).GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Cache);
+        catalog.Stations.Should().ContainSingle().Which.Id.Should().Be("old");
+        catalog.LastFetchFailed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReturnsEmptyAndFlagsTheFailureWhenThereIsNoCacheAndNoNetwork()
+    {
+        _handler.Fail(new HttpRequestException("down"));
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.IsEmpty.Should().BeTrue();
+        catalog.Source.Should().Be(CatalogSource.Unavailable);
+        catalog.LastFetchFailed.Should().BeTrue();
+        _logger.Entries.Should().Contain(entry => entry.Level == LogLevel.Warning);
+    }
+
+    // One genre failing must not lose the other sixteen and the seeds with them.
+    [Fact]
+    public async Task KeepsWhatSucceededWhenOneGenreQueryFails()
+    {
+        int call = 0;
+        _handler.RespondPerRequest(_ =>
+        {
+            call++;
+            return call == 2
+                ? new HttpResponseMessage(HttpStatusCode.InternalServerError)
+                    { Content = new StringContent("boom") }
+                : new HttpResponseMessage(HttpStatusCode.OK)
+                    {
+                        Content = new StringContent(
+                            Payload($"u{call}", $"Station {call}", $"https://example.com/{call}"),
+                            System.Text.Encoding.UTF8,
+                            "application/json"),
+                    };
+        });
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Fetched);
+        catalog.Stations.Should().NotBeEmpty();
+    }
+
+    [Fact]
+    public async Task DropsStationsThatFailTheGates()
+    {
+        // http, so it would be blocked as mixed content in the browser.
+        _handler.Respond(Payload("u1", "Insecure FM", "http://example.com/a"));
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.Stations.Should().NotContain(station => station.Name == "Insecure FM");
+    }
+
+    [Fact]
+    public async Task UsesTheUserOverrideInsteadOfTheNetwork()
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(_folder, StationOverrides.FileName),
+            """[{"name":"My Station","streamUrl":"https://mine.example/stream"}]""");
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.UserOverride);
+        catalog.Stations.Should().ContainSingle().Which.Name.Should().Be("My Station");
+        _handler.Requests.Should().BeEmpty();
+    }
+
+    // Their file, their call. Gating it would silently delete their entries.
+    [Fact]
+    public async Task DoesNotGateTheUserOverride()
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(_folder, StationOverrides.FileName),
+            """[{"name":"Plain HTTP","streamUrl":"http://mine.example/stream"}]""");
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.Stations.Should().ContainSingle().Which.Name.Should().Be("Plain HTTP");
+    }
+
+    [Fact]
+    public async Task GivesAnOverrideStationARoutableIdAndMarksItUserSupplied()
+    {
+        await File.WriteAllTextAsync(
+            Path.Combine(_folder, StationOverrides.FileName),
+            """[{"name":"My Station!","streamUrl":"https://mine.example/stream"}]""");
+
+        RadioStation station = (await Provider().GetAsync(CancellationToken.None)).Stations.Single();
+
+        station.Id.Should().Be("my-station");
+        station.IsUserSupplied.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task FallsBackToTheNetworkWhenTheOverrideIsUnparseable()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_folder, StationOverrides.FileName), "{ not an array");
+        _handler.Respond(Payload("u1", "Example FM", "https://example.com/a"));
+
+        StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Fetched);
+        _logger.Entries.Should().Contain(entry => entry.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task RefreshAsyncAlwaysFetchesEvenWithAFreshCache()
+    {
+        _handler.Respond(Payload("u1", "Example FM", "https://example.com/a"));
+        CatalogProvider provider = Provider();
+        await provider.GetAsync(CancellationToken.None);
+        int afterFirst = _handler.Requests.Count;
+
+        StationCatalog catalog = await provider.RefreshAsync(CancellationToken.None);
+
+        catalog.Source.Should().Be(CatalogSource.Fetched);
+        _handler.Requests.Count.Should().BeGreaterThan(afterFirst);
+    }
+}
+```
+
+- [ ] **Step 3: Run the tests to verify they fail**
+
+```bash
+dotnet test -c Release --filter FullyQualifiedName~CatalogProviderTests
+```
+
+Expected: FAIL — `StationOverrides` and `CatalogProvider` do not exist.
+
+- [ ] **Step 4: Write `StationOverrides.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// The user's own station list, which replaces the fetched catalogue outright.
+//
+// Kept compatible with the bare JSON array the previous README documented, so an
+// existing stations.json keeps working across this rewrite.
+//
+// Deliberately NOT put through StationGates. A hand-written list is the owner's
+// call, and silently dropping their http entry would be worse than letting it fail
+// visibly in the player - at least then they can see which one it was. This is also
+// the escape hatch for anything radio-browser cannot supply, BBC included.
+public static class StationOverrides
+{
+    public const string FileName = "stations.json";
+
+    private static readonly JsonSerializerOptions JsonOptions =
+        new()
+        {
+            PropertyNameCaseInsensitive = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true,
+        };
+
+    /// <summary>
+    /// The override list, or null when there is no usable one — in which case the
+    /// caller fetches as normal.
+    /// </summary>
+    public static IReadOnlyList<RadioStation>? TryLoad(string dataFolderPath, ILogger logger)
+    {
+        string path = Path.Combine(dataFolderPath, FileName);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            List<RadioStation>? parsed =
+                JsonSerializer.Deserialize<List<RadioStation>>(File.ReadAllText(path), JsonOptions);
+
+            if (parsed is null)
+            {
+                return null;
+            }
+
+            List<RadioStation> valid =
+            [
+                .. parsed
+                    .Where(station =>
+                        !string.IsNullOrWhiteSpace(station.Name)
+                        && !string.IsNullOrWhiteSpace(station.StreamUrl))
+                    .Select(station => station with
+                    {
+                        // Their file need not carry an id, and a name is the only
+                        // stable thing it is guaranteed to have.
+                        Id = string.IsNullOrWhiteSpace(station.Id)
+                            ? StationGates.Slugify(station.Name)
+                            : station.Id,
+                        Genre = string.IsNullOrWhiteSpace(station.Genre) ? GenreMap.Other : station.Genre,
+                        IsUserSupplied = true,
+                    }),
+            ];
+
+            return valid.Count > 0 ? valid : null;
+        }
+        catch (Exception exception)
+        {
+            // Named so the owner can find their typo, without echoing the file's
+            // contents into the server log.
+            logger.LogWarning(
+                exception,
+                "Internet Radio could not read {FileName}; using the fetched catalogue instead.",
+                FileName
+            );
+            return null;
+        }
+    }
+}
+```
+
+- [ ] **Step 5: Write `CatalogProvider.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using Microsoft.Extensions.Logging;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// Decides what the views actually see.
+//
+// The order is override, then fresh cache, then fetch, then stale cache, then empty.
+// The last two are the point: a third party's outage must not empty a catalogue that
+// was working a minute ago, so a stale cache is preferred to nothing and the failure
+// is surfaced on the settings page rather than as a blank browse grid.
+public sealed class CatalogProvider(
+    RadioBrowserClient client,
+    CatalogCache cache,
+    string dataFolderPath,
+    ILogger logger,
+    TimeSpan? cacheTtl = null
+)
+{
+    /// <summary>
+    /// How long a cache is served without re-fetching. Longer than the refresh job's
+    /// daily cadence, so the job is what normally refreshes and a view only fetches
+    /// when the job has not run yet or has been failing.
+    /// </summary>
+    public static TimeSpan DefaultCacheTtl { get; } = TimeSpan.FromHours(36);
+
+    private TimeSpan Ttl => cacheTtl ?? DefaultCacheTtl;
+
+    public async Task<StationCatalog> GetAsync(CancellationToken ct)
+    {
+        if (StationOverrides.TryLoad(dataFolderPath, logger) is { } overrides)
+        {
+            return StationCatalog.Create(overrides, CatalogSource.UserOverride, fetchedAt: null);
+        }
+
+        CachedCatalog? cached = await cache.ReadAsync(ct);
+
+        if (cached is not null && DateTimeOffset.UtcNow - cached.FetchedAt < Ttl)
+        {
+            return StationCatalog.Create(cached.Stations, CatalogSource.Cache, cached.FetchedAt);
+        }
+
+        return await FetchAsync(cached, ct);
+    }
+
+    /// <summary>
+    /// Fetches whatever the cache says. This is what the scheduled job calls, and
+    /// what the settings page's Refresh reaches once the cache has aged out.
+    /// </summary>
+    public async Task<StationCatalog> RefreshAsync(CancellationToken ct) =>
+        await FetchAsync(await cache.ReadAsync(ct), ct);
+
+    private async Task<StationCatalog> FetchAsync(CachedCatalog? fallback, CancellationToken ct)
+    {
+        List<RadioStation> collected = [];
+        bool anythingFailed = false;
+
+        // Seeds first, so a curated station wins the dedupe against the same station
+        // rediscovered by the genre sweep.
+        try
+        {
+            collected.AddRange(Convert(await client.GetByUuidsAsync(SeedStations.Uuids, ct)));
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            anythingFailed = true;
+            logger.LogWarning(exception, "Internet Radio could not fetch its pinned stations.");
+        }
+
+        foreach (GenreSection section in GenreMap.Sections)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                collected.AddRange(
+                    Convert(await client.SearchByTagAsync(section.Tag, SeedStations.PerGenreLimit, ct)));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // One genre failing costs one genre. Letting it abort the sweep would
+                // throw away the seeds and sixteen other sections with it.
+                anythingFailed = true;
+                logger.LogWarning(
+                    exception, "Internet Radio could not fetch the {Genre} stations.", section.Label);
+            }
+        }
+
+        IReadOnlyList<RadioStation> stations = StationGates.Deduplicate(collected);
+
+        if (stations.Count > 0)
+        {
+            DateTimeOffset now = DateTimeOffset.UtcNow;
+
+            try
+            {
+                await cache.WriteAsync(stations, now, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                // A read-only or full data folder costs the cache, not the screen.
+                logger.LogWarning(exception, "Internet Radio could not write its catalogue cache.");
+            }
+
+            return StationCatalog.Create(stations, CatalogSource.Fetched, now);
+        }
+
+        // Nothing came back. Anything already on disk is better than an empty grid,
+        // however old it is.
+        if (fallback is not null && fallback.Stations.Count > 0)
+        {
+            logger.LogWarning(
+                "Internet Radio kept its cached catalogue from {FetchedAt} because the refresh returned nothing.",
+                fallback.FetchedAt);
+
+            return StationCatalog.Create(fallback.Stations, CatalogSource.Cache, fallback.FetchedAt)
+                .WithFailedFetch();
+        }
+
+        logger.LogWarning("Internet Radio has no stations: the refresh failed and there is no cache.");
+        return StationCatalog.Empty(lastFetchFailed: anythingFailed);
+    }
+
+    private static IEnumerable<RadioStation> Convert(IEnumerable<RadioBrowserStation> wire) =>
+        wire.Where(StationGates.Admits).Select(station => new RadioStation
+        {
+            Id = station.StationUuid,
+            Name = station.Name.Trim(),
+            StreamUrl = StationGates.EffectiveUrl(station),
+            LogoUrl = string.IsNullOrWhiteSpace(station.Favicon) ? null : station.Favicon,
+            Homepage = string.IsNullOrWhiteSpace(station.Homepage) ? null : station.Homepage,
+            Genre = GenreMap.Resolve(station.Tags),
+            Country = string.IsNullOrWhiteSpace(station.CountryCode) ? null : station.CountryCode,
+            Language = string.IsNullOrWhiteSpace(station.Language) ? null : station.Language,
+            // radio-browser reports 0 for "unknown", which is not the same as a
+            // zero-bitrate stream and must not render as "0 kbps".
+            BitrateKbps = station.Bitrate > 0 ? station.Bitrate : null,
+            Codec = string.IsNullOrWhiteSpace(station.Codec) ? null : station.Codec,
+            Popularity = station.Votes,
+        });
+}
+```
+
+- [ ] **Step 6: Add `WithFailedFetch` to `StationCatalog`**
+
+The provider needs to serve a cache while recording that the refresh behind it failed, so the settings page can say so. Add to `StationCatalog`:
+
+```csharp
+    /// <summary>
+    /// The same catalogue, marked as having survived a failed refresh. Lets the
+    /// settings page distinguish "cached because it is fresh" from "cached because
+    /// the network is down".
+    /// </summary>
+    public StationCatalog WithFailedFetch() =>
+        new([.. Stations], Source, FetchedAt, lastFetchFailed: true);
+```
+
+- [ ] **Step 7: Run the tests, full suite, and commit**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+git add -A
+git commit -m "feat(catalog): resolve the catalogue with override, cache and fetch precedence"
+```
+
+Expected: all pass.
+
+---
+
+### Task 8: Routes
+
+Every route is a path, never a query string: the web host derives `route` from `pathMatch` and sends only that, so `/station?id=x` arrives as `/station` with `x` gone. One file parses and builds them, so the view that links and the dispatcher that resolves cannot drift.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Views/RadioRoutes.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Views/RadioRoutesTests.cs`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces:
+  - `RadioRouteKind` enum — `Browse`, `Genre`, `AllStations`, `Station`, `Settings`, `Unknown`.
+  - `RadioRoute(RadioRouteKind Kind, string Value)`.
+  - `RadioRoutes.Parse(string? route) : RadioRoute`
+  - `RadioRoutes.Browse`, `.AllStations`, `.Settings` — `const string`
+  - `RadioRoutes.Genre(string slug) : string`, `.Station(string id) : string`
+
+- [ ] **Step 1: Write the failing tests**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Views;
+
+public class RadioRoutesTests
+{
+    [Theory]
+    [InlineData("/", RadioRouteKind.Browse)]
+    [InlineData("", RadioRouteKind.Browse)]
+    [InlineData(null, RadioRouteKind.Browse)]
+    [InlineData("/all", RadioRouteKind.AllStations)]
+    [InlineData("/settings", RadioRouteKind.Settings)]
+    public void Parse_ResolvesTheFixedRoutes(string? route, RadioRouteKind expected)
+    {
+        RadioRoutes.Parse(route).Kind.Should().Be(expected);
+    }
+
+    [Fact]
+    public void Parse_ReadsTheGenreSlugFromThePath()
+    {
+        RadioRoute parsed = RadioRoutes.Parse("/genre/drum-bass");
+
+        parsed.Kind.Should().Be(RadioRouteKind.Genre);
+        parsed.Value.Should().Be("drum-bass");
+    }
+
+    [Fact]
+    public void Parse_ReadsTheStationIdFromThePath()
+    {
+        RadioRoute parsed = RadioRoutes.Parse("/station/960cf833-0601-11e8-ae97-52543be04c81");
+
+        parsed.Kind.Should().Be(RadioRouteKind.Station);
+        parsed.Value.Should().Be("960cf833-0601-11e8-ae97-52543be04c81");
+    }
+
+    [Theory]
+    [InlineData("/all/")]
+    [InlineData("/settings/")]
+    [InlineData("//")]
+    public void Parse_ToleratesATrailingSlash(string route)
+    {
+        RadioRoutes.Parse(route).Kind.Should().NotBe(RadioRouteKind.Unknown);
+    }
+
+    [Fact]
+    public void Parse_IsCaseInsensitiveOnTheSegmentNames()
+    {
+        RadioRoutes.Parse("/Settings").Kind.Should().Be(RadioRouteKind.Settings);
+        RadioRoutes.Parse("/GENRE/rock").Kind.Should().Be(RadioRouteKind.Genre);
+    }
+
+    [Theory]
+    [InlineData("/nope")]
+    [InlineData("/genre")]          // no slug
+    [InlineData("/station")]        // no id
+    [InlineData("/genre//")]        // empty slug
+    [InlineData("/station/a/b")]    // an id cannot contain a slash
+    public void Parse_ReportsAnythingElseAsUnknown(string route)
+    {
+        RadioRoutes.Parse(route).Kind.Should().Be(RadioRouteKind.Unknown);
+    }
+
+    // The builders and the parser are two halves of the same agreement, and a link
+    // that does not parse is a dead end the user finds before any test does.
+    [Fact]
+    public void Builders_ProduceRoutesTheParserResolves()
+    {
+        RadioRoutes.Parse(RadioRoutes.Genre("ambient")).Should()
+            .Be(new RadioRoute(RadioRouteKind.Genre, "ambient"));
+        RadioRoutes.Parse(RadioRoutes.Station("abc")).Should()
+            .Be(new RadioRoute(RadioRouteKind.Station, "abc"));
+        RadioRoutes.Parse(RadioRoutes.Browse).Kind.Should().Be(RadioRouteKind.Browse);
+        RadioRoutes.Parse(RadioRoutes.AllStations).Kind.Should().Be(RadioRouteKind.AllStations);
+        RadioRoutes.Parse(RadioRoutes.Settings).Kind.Should().Be(RadioRouteKind.Settings);
+    }
+
+    // A user-supplied station id is a slug of their station name, so it can contain
+    // anything they typed. It has to survive the round trip through a URL path.
+    [Fact]
+    public void Station_EscapesAnIdSoItSurvivesThePath()
+    {
+        string route = RadioRoutes.Station("a b/c");
+
+        RadioRoutes.Parse(route).Value.Should().Be("a b/c");
+    }
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+```bash
+dotnet test -c Release --filter FullyQualifiedName~RadioRoutesTests
+```
+
+Expected: FAIL — `RadioRoutes` does not exist.
+
+- [ ] **Step 3: Write `RadioRoutes.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+namespace NoMercy.Plugin.InternetRadio;
+
+public enum RadioRouteKind
+{
+    Browse,
+    Genre,
+    AllStations,
+    Station,
+    Settings,
+
+    /// <summary>Anything else. Rendered as an empty state, never as an error.</summary>
+    Unknown,
+}
+
+/// <param name="Value">The genre slug or station id, empty for the fixed routes.</param>
+public sealed record RadioRoute(RadioRouteKind Kind, string Value);
+
+// The only place a route is parsed or built.
+//
+// State travels in the PATH and never in a query string. The web host computes the
+// route it asks for from its own `pathMatch` parameter and sends that alone, so a
+// query string never leaves the browser: "/station?id=x" arrives here as "/station"
+// with the id gone, and the page silently renders the wrong thing.
+public static class RadioRoutes
+{
+    public const string Browse = "/";
+    public const string AllStations = "/all";
+    public const string Settings = "/settings";
+
+    private const string GenrePrefix = "genre";
+    private const string StationPrefix = "station";
+
+    public static string Genre(string slug) => $"/{GenrePrefix}/{Uri.EscapeDataString(slug)}";
+
+    public static string Station(string id) => $"/{StationPrefix}/{Uri.EscapeDataString(id)}";
+
+    public static RadioRoute Parse(string? route)
+    {
+        string[] segments = (route ?? string.Empty)
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (segments.Length == 0)
+        {
+            return new RadioRoute(RadioRouteKind.Browse, string.Empty);
+        }
+
+        if (segments.Length == 1)
+        {
+            return segments[0].ToLowerInvariant() switch
+            {
+                "all" => new RadioRoute(RadioRouteKind.AllStations, string.Empty),
+                "settings" => new RadioRoute(RadioRouteKind.Settings, string.Empty),
+                _ => Unknown,
+            };
+        }
+
+        if (segments.Length == 2)
+        {
+            string value = Uri.UnescapeDataString(segments[1]);
+
+            return segments[0].ToLowerInvariant() switch
+            {
+                GenrePrefix => new RadioRoute(RadioRouteKind.Genre, value),
+                StationPrefix => new RadioRoute(RadioRouteKind.Station, value),
+                _ => Unknown,
+            };
+        }
+
+        return Unknown;
+    }
+
+    private static RadioRoute Unknown => new(RadioRouteKind.Unknown, string.Empty);
+}
+```
+
+- [ ] **Step 4: Run tests and commit**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+git add -A
+git commit -m "feat(views): add path-based routing"
+```
+
+Expected: all pass.
+
+---
+
+### Task 9: The browse and genre grids
+
+The two screens where a click starts playback. A card's action is `playMedia`, which the web client turns straight into `playTrack()` — no server round trip, so this works despite both inbound transports being broken.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Views/StationCards.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Views/EmptyCatalog.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Views/BrowseView.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Views/GenreView.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Views/BrowseViewTests.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Views/GenreViewTests.cs`
+
+**Interfaces:**
+- Consumes: `StationCatalog`, `RadioRoutes`, `GenreMap`.
+- Produces:
+  - `StationCards.Play(RadioStation) : PluginComponent`
+  - `EmptyCatalog.Build(StationCatalog) : PluginComponent`
+  - `StationCards.Subtitle(RadioStation) : string?`
+  - `StationCards.PopularCount : int`
+  - `BrowseView.Build(StationCatalog) : PluginView`
+  - `GenreView.Build(StationCatalog, string slug) : PluginView`
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Views/BrowseViewTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using NoMercy.Plugins.Abstractions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Views;
+
+public class BrowseViewTests
+{
+    private static RadioStation Station(string id, string genre = "Ambient", int popularity = 1) =>
+        new()
+        {
+            Id = id,
+            Name = $"Station {id}",
+            StreamUrl = $"https://example.com/{id}",
+            LogoUrl = "https://example.com/logo.png",
+            Genre = genre,
+            Country = "NL",
+            Popularity = popularity,
+        };
+
+    private static StationCatalog Catalog(params RadioStation[] stations) =>
+        StationCatalog.Create(stations, CatalogSource.Fetched, DateTimeOffset.UtcNow);
+
+    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
+    {
+        yield return node;
+        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
+        {
+            yield return child;
+        }
+    }
+
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
+        (view.Components ?? []).SelectMany(Flatten);
+
+    // The whole point of the plugin: one click and it is playing.
+    [Fact]
+    public void CardsPlayTheStationRatherThanNavigatingToIt()
+    {
+        PluginView view = BrowseView.Build(Catalog(Station("a")));
+
+        PluginComponent card = AllNodes(view)
+            .Should().ContainSingle(node => node.Component == PluginComponentType.Card).Subject;
+
+        card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
+        card.Action.Payload["streamUrl"].Should().Be("https://example.com/a");
+        card.Action.Payload["title"].Should().Be("Station a");
+        card.Action.Payload["cover"].Should().Be("https://example.com/logo.png");
+    }
+
+    [Fact]
+    public void GenreButtonsNavigateToTheirGenreRoute()
+    {
+        PluginView view = BrowseView.Build(Catalog(Station("a", "Ambient"), Station("b", "Rock")));
+
+        IEnumerable<PluginComponent> buttons = AllNodes(view)
+            .Where(node => node.Component == PluginComponentType.Button
+                && node.Action?.Type == PluginActionType.Navigate);
+
+        buttons.Select(button => button.Action!.Payload["route"])
+            .Should().Contain(RadioRoutes.Genre("ambient"))
+            .And.Contain(RadioRoutes.Genre("rock"))
+            .And.Contain(RadioRoutes.AllStations);
+    }
+
+    [Fact]
+    public void OffersNoChipForAGenreWithNoStations()
+    {
+        PluginView view = BrowseView.Build(Catalog(Station("a", "Ambient")));
+
+        AllNodes(view).Select(node => node.Action?.Payload.GetValueOrDefault("route"))
+            .Should().NotContain(RadioRoutes.Genre("jazz"));
+    }
+
+    [Fact]
+    public void ShowsTheMostPopularStationsFirst()
+    {
+        PluginView view = BrowseView.Build(
+            Catalog(Station("quiet", "Ambient", 1), Station("loud", "Rock", 99)));
+
+        AllNodes(view).Where(node => node.Component == PluginComponentType.Card)
+            .First().Action!.Payload["title"].Should().Be("Station loud");
+    }
+
+    // An empty catalogue has to explain itself. A blank grid reads as a broken plugin.
+    [Fact]
+    public void ExplainsItselfWhenThereAreNoStations()
+    {
+        PluginView view = BrowseView.Build(StationCatalog.Empty(lastFetchFailed: true));
+
+        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+    }
+
+    [Fact]
+    public void OffersARetryWhenThereAreNoStations()
+    {
+        PluginView view = BrowseView.Build(StationCatalog.Empty(lastFetchFailed: true));
+
+        AllNodes(view).Should().Contain(node =>
+            node.Action != null && node.Action.Type == PluginActionType.RefreshView);
+    }
+
+    // The renderer only knows title/subtitle/caption; anything else silently reads as
+    // body text, which is how the torrent plugin lost its section headings.
+    [Fact]
+    public void UsesOnlyTextVariantsTheRendererKnows()
+    {
+        PluginView view = BrowseView.Build(Catalog(Station("a")));
+
+        AllNodes(view)
+            .Where(node => node.Component == PluginComponentType.Text)
+            .Select(node => node.Props.GetValueOrDefault("variant") as string)
+            .Should().OnlyContain(variant =>
+                variant == null || variant == "title" || variant == "subtitle" || variant == "caption");
+    }
+
+    // Two nodes with the same id make the client's keyed render ambiguous.
+    [Fact]
+    public void EveryNodeHasAUniqueId()
+    {
+        PluginView view = BrowseView.Build(
+            Catalog(Station("a", "Ambient"), Station("b", "Rock"), Station("c", "Jazz")));
+
+        AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+    }
+
+    // Static content. A poll interval here is every open tab re-fetching for nothing.
+    [Fact]
+    public void DoesNotAskTheClientToPoll()
+    {
+        BrowseView.Build(Catalog(Station("a"))).RefreshInterval.Should().Be(0);
+    }
+}
+```
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Views/GenreViewTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using NoMercy.Plugins.Abstractions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Views;
+
+public class GenreViewTests
+{
+    private static RadioStation Station(string id, string genre) =>
+        new() { Id = id, Name = $"Station {id}", StreamUrl = $"https://example.com/{id}", Genre = genre };
+
+    private static StationCatalog Catalog(params RadioStation[] stations) =>
+        StationCatalog.Create(stations, CatalogSource.Fetched, DateTimeOffset.UtcNow);
+
+    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
+    {
+        yield return node;
+        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
+        {
+            yield return child;
+        }
+    }
+
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
+        (view.Components ?? []).SelectMany(Flatten);
+
+    [Fact]
+    public void ShowsOnlyThatGenresStations()
+    {
+        PluginView view = GenreView.Build(
+            Catalog(Station("a", "Ambient"), Station("b", "Rock")), "ambient");
+
+        AllNodes(view).Where(node => node.Component == PluginComponentType.Card)
+            .Should().ContainSingle()
+            .Which.Action!.Payload["title"].Should().Be("Station a");
+    }
+
+    [Fact]
+    public void CardsPlayImmediately()
+    {
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient");
+
+        AllNodes(view).Single(node => node.Component == PluginComponentType.Card)
+            .Action!.Type.Should().Be(PluginActionType.PlayMedia);
+    }
+
+    [Fact]
+    public void OffersAWayBack()
+    {
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient");
+
+        AllNodes(view).Should().Contain(node =>
+            node.Action != null
+            && node.Action.Type == PluginActionType.Navigate
+            && (string)node.Action.Payload["route"]! == RadioRoutes.Browse);
+    }
+
+    // A stale bookmark is not a failure worth reporting as one.
+    [Fact]
+    public void ShowsAnEmptyStateForAGenreThatDoesNotExist()
+    {
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "no-such-genre");
+
+        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+        AllNodes(view).Should().NotContain(node => node.Component == PluginComponentType.Card);
+    }
+
+    [Fact]
+    public void EveryNodeHasAUniqueId()
+    {
+        PluginView view = GenreView.Build(
+            Catalog(Station("a", "Ambient"), Station("b", "Ambient")), "ambient");
+
+        AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+    }
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+```bash
+dotnet test -c Release --filter "FullyQualifiedName~BrowseViewTests|FullyQualifiedName~GenreViewTests"
+```
+
+Expected: FAIL — the views do not exist.
+
+- [ ] **Step 3: Write `StationCards.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// One station as a card, shared by the browse and genre grids so the two screens
+// cannot drift into behaving differently for the same station.
+public static class StationCards
+{
+    /// <summary>How many stations the browse page's "Popular" grid shows.</summary>
+    public const int PopularCount = 18;
+
+    /// <summary>
+    /// A card whose action is playMedia. Not navigate: the client turns this straight
+    /// into playTrack(), so one click is listening — which is the entire job, and the
+    /// one path that works while both inbound plugin transports are broken.
+    /// </summary>
+    public static PluginComponent Play(RadioStation station) =>
+        PluginViews.Card(
+            $"station-card-{station.Id}",
+            station.Name,
+            Subtitle(station),
+            station.LogoUrl,
+            PluginActionIntent.PlayMedia(
+                station.StreamUrl,
+                station.Name,
+                // The player shows this where a track's artist would go; the genre is
+                // the most useful thing a live stream has to put there.
+                station.Genre,
+                station.LogoUrl
+            )
+        );
+
+    /// <summary>Genre and country, whichever of them is known. Null when neither is.</summary>
+    public static string? Subtitle(RadioStation station)
+    {
+        string[] parts =
+            [.. new[] { station.Genre, station.Country }.Where(part => !string.IsNullOrWhiteSpace(part))!];
+
+        return parts.Length > 0 ? string.Join(" · ", parts) : null;
+    }
+}
+```
+
+- [ ] **Step 4: Write `BrowseView.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// The landing screen: what genres exist, and the most popular stations ready to play.
+//
+// Deliberately NOT one grid per genre. That would put every station on one page and
+// make the genre routes redundant; this page answers "what is there and give me
+// something now", and the genre pages answer "show me all of one kind".
+public static class BrowseView
+{
+    public static PluginView Build(StationCatalog catalog)
+    {
+        if (catalog.IsEmpty)
+        {
+            return PluginViews.Declarative(EmptyCatalog.Build(catalog));
+        }
+
+        List<PluginComponent> children =
+        [
+            PluginViews.Text("browse-title", "Internet Radio", "title"),
+            PluginViews.Text(
+                "browse-summary",
+                $"{catalog.Count} stations across {catalog.Genres.Count} genres. Pick one and it plays.",
+                "caption"
+            ),
+            GenreChips(catalog),
+            PluginViews.Text("browse-popular-heading", "Popular", "subtitle"),
+            PluginViews.Grid(
+                "browse-popular-grid",
+                [.. catalog.Popular(StationCards.PopularCount).Select(StationCards.Play)]
+            ),
+        ];
+
+        return PluginViews.Declarative(PluginViews.Container("browse-root", [.. children]));
+    }
+
+    private static PluginComponent GenreChips(StationCatalog catalog)
+    {
+        List<PluginComponent> chips =
+        [
+            .. catalog.Genres.Select(genre =>
+                PluginViews.Button(
+                    $"browse-genre-{genre.Section.Slug}",
+                    $"{genre.Section.Label} ({genre.Count})",
+                    PluginActionIntent.Navigate(RadioRoutes.Genre(genre.Section.Slug))
+                )
+            ),
+            PluginViews.Button(
+                "browse-all",
+                "All stations",
+                PluginActionIntent.Navigate(RadioRoutes.AllStations),
+                icon: "gridMasonry"
+            ),
+        ];
+
+        return PluginViews.Row("browse-genres", [.. chips]);
+    }
+}
+```
+
+- [ ] **Step 5: Write `EmptyCatalog.cs`**
+
+Shared by browse and the genre page so an empty catalogue explains itself the same way everywhere.
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// What to show when there are no stations at all.
+//
+// A blank grid reads as a broken plugin, so this says which of the two things went
+// wrong - the catalogue has not been fetched yet, or fetching it failed - and offers
+// the retry. refreshView costs nothing: re-rendering re-runs the cache-first read,
+// which fetches when there is nothing cached.
+public static class EmptyCatalog
+{
+    public static PluginComponent Build(StationCatalog catalog)
+    {
+        string message = catalog.LastFetchFailed
+            ? "The station list could not be fetched from radio-browser.info. "
+              + "Check the server log for Internet Radio, and that the server can reach the internet."
+            : "The station list has not been downloaded yet. This happens on the first run "
+              + "and after the plugin's data folder is cleared.";
+
+        return PluginViews.Container(
+            "catalog-empty",
+            PluginViews.Badge(
+                "catalog-empty-badge",
+                catalog.LastFetchFailed ? "Unavailable" : "Not downloaded yet",
+                catalog.LastFetchFailed ? PluginBadgeVariant.Danger : PluginBadgeVariant.Info
+            ),
+            PluginViews.EmptyState("catalog-empty-state", "No stations", message),
+            PluginViews.Button(
+                "catalog-empty-retry",
+                "Try again",
+                PluginActionIntent.RefreshView()
+            )
+        );
+    }
+}
+```
+
+- [ ] **Step 6: Write `GenreView.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// One genre, every station in it, each ready to play.
+public static class GenreView
+{
+    public static PluginView Build(StationCatalog catalog, string slug)
+    {
+        IReadOnlyList<RadioStation> stations = catalog.ByGenreSlug(slug);
+
+        if (stations.Count == 0)
+        {
+            // A stale bookmark or a genre that emptied out between refreshes. Not an
+            // error - the way back is what is actually useful here.
+            return PluginViews.Declarative(
+                PluginViews.Container(
+                    "genre-root",
+                    BackToBrowse,
+                    PluginViews.EmptyState(
+                        "genre-empty",
+                        "No stations in this genre",
+                        "It may have been renamed or emptied since this page was last opened."
+                    )
+                )
+            );
+        }
+
+        string label = GenreMap.BySlug(slug)?.Label ?? stations[0].Genre ?? GenreMap.Other;
+
+        return PluginViews.Declarative(
+            PluginViews.Container(
+                "genre-root",
+                BackToBrowse,
+                PluginViews.Text("genre-title", label, "title"),
+                PluginViews.Text("genre-count", $"{stations.Count} stations", "caption"),
+                PluginViews.Grid("genre-grid", [.. stations.Select(StationCards.Play)])
+            )
+        );
+    }
+
+    private static PluginComponent BackToBrowse =>
+        PluginViews.Button(
+            "genre-back",
+            "All genres",
+            PluginActionIntent.Navigate(RadioRoutes.Browse),
+            icon: "arrowLeft"
+        );
+}
+```
+
+- [ ] **Step 7: Run tests and commit**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+git add -A
+git commit -m "feat(views): add the browse and genre grids"
+```
+
+Expected: all pass.
+
+---
+
+### Task 10: The all-stations table and the station detail page
+
+The two screens for inspecting rather than playing. The table's rows navigate; the detail page is where play, enqueue and the homepage live.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Views/AllStationsView.cs`
+- Create: `src/NoMercy.Plugin.InternetRadio/Views/StationView.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Views/AllStationsViewTests.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Views/StationViewTests.cs`
+
+**Interfaces:**
+- Consumes: `StationCatalog`, `RadioStation`, `RadioRoutes`, `EmptyCatalog`.
+- Produces:
+  - `AllStationsView.Build(StationCatalog) : PluginView`
+  - `StationView.Build(StationCatalog, string id) : PluginView`
+
+- [ ] **Step 1: Write the failing tests**
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Views/AllStationsViewTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using NoMercy.Plugins.Abstractions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Views;
+
+public class AllStationsViewTests
+{
+    private static RadioStation Station(string id, string name) =>
+        new()
+        {
+            Id = id,
+            Name = name,
+            StreamUrl = $"https://example.com/{id}",
+            Genre = "Ambient",
+            Country = "NL",
+            BitrateKbps = 128,
+            Codec = "MP3",
+        };
+
+    private static StationCatalog Catalog(params RadioStation[] stations) =>
+        StationCatalog.Create(stations, CatalogSource.Fetched, DateTimeOffset.UtcNow);
+
+    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
+    {
+        yield return node;
+        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
+        {
+            yield return child;
+        }
+    }
+
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
+        (view.Components ?? []).SelectMany(Flatten);
+
+    private static PluginComponent Table(PluginView view) =>
+        AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
+
+    // A row supplies its cells by column key, so a column the rows never fill renders
+    // as a blank stripe down the table.
+    [Fact]
+    public void EveryColumnIsFilledByEveryRow()
+    {
+        PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
+
+        PluginComponent table = Table(view);
+        List<PluginTableColumn> columns = (List<PluginTableColumn>)table.Props["columns"]!;
+
+        foreach (PluginComponent row in table.Items)
+        {
+            foreach (PluginTableColumn column in columns)
+            {
+                row.Props.Should().ContainKey(column.Key);
+            }
+        }
+    }
+
+    // This table is the browse-by-detail surface: the grids play, this one inspects.
+    [Fact]
+    public void RowsNavigateToTheStationDetailPage()
+    {
+        PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
+
+        PluginComponent row = Table(view).Items.Should().ContainSingle().Subject;
+
+        row.Action!.Type.Should().Be(PluginActionType.Navigate);
+        row.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
+    }
+
+    [Fact]
+    public void ListsEveryStationSortedByName()
+    {
+        PluginView view = AllStationsView.Build(
+            Catalog(Station("b", "Zulu FM"), Station("a", "Alpha FM")));
+
+        Table(view).Items.Select(row => row.Props["name"]).Should().Equal("Alpha FM", "Zulu FM");
+    }
+
+    // radio-browser reports 0 for "unknown", which the model stores as null. Rendering
+    // that as "0 kbps" would claim a silent stream.
+    [Fact]
+    public void ShowsAnUnknownBitrateAsAnEmDashRatherThanZero()
+    {
+        RadioStation unknown = Station("a", "Alpha FM") with { BitrateKbps = null };
+
+        PluginComponent row = Table(AllStationsView.Build(Catalog(unknown))).Items.Single();
+
+        row.Props["bitrate"].Should().Be("—");
+    }
+
+    [Fact]
+    public void OffersAWayBack()
+    {
+        PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
+
+        AllNodes(view).Should().Contain(node =>
+            node.Action != null
+            && node.Action.Type == PluginActionType.Navigate
+            && (string)node.Action.Payload["route"]! == RadioRoutes.Browse);
+    }
+
+    [Fact]
+    public void ExplainsItselfWhenThereAreNoStations()
+    {
+        PluginView view = AllStationsView.Build(StationCatalog.Empty());
+
+        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+    }
+
+    [Fact]
+    public void EveryNodeHasAUniqueId()
+    {
+        PluginView view = AllStationsView.Build(
+            Catalog(Station("a", "Alpha FM"), Station("b", "Bravo FM")));
+
+        AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+    }
+}
+```
+
+`tests/NoMercy.Plugin.InternetRadio.Tests/Views/StationViewTests.cs`:
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using NoMercy.Plugins.Abstractions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Views;
+
+public class StationViewTests
+{
+    private static RadioStation Full =>
+        new()
+        {
+            Id = "a",
+            Name = "Alpha FM",
+            StreamUrl = "https://example.com/a",
+            LogoUrl = "https://example.com/logo.png",
+            Homepage = "https://example.com",
+            Genre = "Ambient",
+            Country = "NL",
+            Language = "english",
+            BitrateKbps = 128,
+            Codec = "MP3",
+        };
+
+    private static StationCatalog Catalog(params RadioStation[] stations) =>
+        StationCatalog.Create(stations, CatalogSource.Fetched, DateTimeOffset.UtcNow);
+
+    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
+    {
+        yield return node;
+        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
+        {
+            yield return child;
+        }
+    }
+
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
+        (view.Components ?? []).SelectMany(Flatten);
+
+    private static PluginComponent? ActionOfType(PluginView view, string type) =>
+        AllNodes(view).FirstOrDefault(node => node.Action?.Type == type);
+
+    [Fact]
+    public void OffersPlayAndEnqueueForTheStream()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "a");
+
+        PluginComponent play = ActionOfType(view, PluginActionType.PlayMedia)!;
+        play.Action!.Payload["streamUrl"].Should().Be("https://example.com/a");
+        play.Action.Payload["title"].Should().Be("Alpha FM");
+
+        ActionOfType(view, PluginActionType.Enqueue).Should().NotBeNull();
+    }
+
+    [Fact]
+    public void OffersTheHomepageWhenThereIsOne()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "a");
+
+        ActionOfType(view, PluginActionType.OpenWebView)!
+            .Action!.Payload["entryUrl"].Should().Be("https://example.com");
+    }
+
+    // A button that opens nothing is worse than no button.
+    [Fact]
+    public void OmitsTheHomepageButtonWhenThereIsNoHomepage()
+    {
+        PluginView view = StationView.Build(Catalog(Full with { Homepage = null }), "a");
+
+        ActionOfType(view, PluginActionType.OpenWebView).Should().BeNull();
+    }
+
+    [Fact]
+    public void ShowsTheFullRecordIncludingTheStreamUrl()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "a");
+
+        PluginComponent table = AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
+        IEnumerable<object?> values = table.Items.Select(row => row.Props["value"]);
+
+        values.Should().Contain("Ambient").And.Contain("NL").And.Contain("https://example.com/a");
+    }
+
+    [Fact]
+    public void NamesTheProvenanceOfAFetchedStation()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "a");
+
+        AllNodes(view).SelectMany(node => node.Props.Values)
+            .Should().Contain(value => value != null && value.ToString()!.Contains("radio-browser"));
+    }
+
+    [Fact]
+    public void NamesTheProvenanceOfAUserSuppliedStation()
+    {
+        PluginView view = StationView.Build(Catalog(Full with { IsUserSupplied = true }), "a");
+
+        AllNodes(view).SelectMany(node => node.Props.Values)
+            .Should().Contain(value => value != null && value.ToString()!.Contains(StationOverrides.FileName));
+    }
+
+    // A station can vanish between a page being opened and a link being followed -
+    // the catalogue refreshes underneath it.
+    [Fact]
+    public void ShowsAnEmptyStateForAStationThatIsNoLongerThere()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "gone");
+
+        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+        ActionOfType(view, PluginActionType.PlayMedia).Should().BeNull();
+    }
+
+    [Fact]
+    public void RendersAStationMissingEveryOptionalField()
+    {
+        RadioStation bare = new() { Id = "b", Name = "Bare FM", StreamUrl = "https://example.com/b" };
+
+        PluginView view = StationView.Build(Catalog(bare), "b");
+
+        ActionOfType(view, PluginActionType.PlayMedia).Should().NotBeNull();
+        AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void EveryNodeHasAUniqueId()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "a");
+
+        AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+    }
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+```bash
+dotnet test -c Release --filter "FullyQualifiedName~AllStationsViewTests|FullyQualifiedName~StationViewTests"
+```
+
+Expected: FAIL — the views do not exist.
+
+- [ ] **Step 3: Write `AllStationsView.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// Every station with its metadata, as a table whose rows lead to the detail page.
+//
+// The split is deliberate: the grids play on click, this inspects on click. Putting
+// both affordances on one surface means every station needs two hit targets, and a
+// card is one.
+public static class AllStationsView
+{
+    /// <summary>Shown where a value is not known. Never "0", which would be a claim.</summary>
+    private const string Unknown = "—";
+
+    private static IReadOnlyList<PluginTableColumn> Columns { get; } =
+        [
+            new() { Key = "name", Label = "Station" },
+            new() { Key = "genre", Label = "Genre" },
+            new() { Key = "country", Label = "Country" },
+            new() { Key = "bitrate", Label = "Bitrate", Align = "right" },
+            new() { Key = "codec", Label = "Codec" },
+        ];
+
+    public static PluginView Build(StationCatalog catalog)
+    {
+        if (catalog.IsEmpty)
+        {
+            return PluginViews.Declarative(
+                PluginViews.Container("all-root", BackToBrowse, EmptyCatalog.Build(catalog))
+            );
+        }
+
+        IEnumerable<PluginComponent> rows = catalog
+            .Stations.OrderBy(station => station.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(Row);
+
+        return PluginViews.Declarative(
+            PluginViews.Container(
+                "all-root",
+                BackToBrowse,
+                PluginViews.Text("all-title", "All stations", "title"),
+                PluginViews.Text(
+                    "all-hint",
+                    "Select a station to see its details and play it.",
+                    "caption"
+                ),
+                PluginViews.Table("all-table", Columns, [.. rows], "No stations.")
+            )
+        );
+    }
+
+    private static PluginComponent Row(RadioStation station) =>
+        PluginViews.Row(
+            $"all-row-{station.Id}",
+            new Dictionary<string, object?>
+            {
+                ["name"] = station.Name,
+                ["genre"] = station.Genre ?? Unknown,
+                ["country"] = station.Country ?? Unknown,
+                // Formatted here rather than sent as a number with a Bytes/Rate cell
+                // type: neither of those means kbps, and both would be relabelled by
+                // the client into something this is not.
+                ["bitrate"] = station.BitrateKbps is { } kbps ? $"{kbps} kbps" : Unknown,
+                ["codec"] = station.Codec ?? Unknown,
+            },
+            PluginActionIntent.Navigate(RadioRoutes.Station(station.Id))
+        );
+
+    private static PluginComponent BackToBrowse =>
+        PluginViews.Button(
+            "all-back",
+            "Back",
+            PluginActionIntent.Navigate(RadioRoutes.Browse),
+            icon: "arrowLeft"
+        );
+}
+```
+
+- [ ] **Step 4: Write `StationView.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// One station: what it is, and the three things you can do with it.
+public static class StationView
+{
+    private static IReadOnlyList<PluginTableColumn> Columns { get; } =
+        [
+            new() { Key = "field", Label = "Field", Width = "12rem" },
+            new() { Key = "value", Label = "Value" },
+        ];
+
+    public static PluginView Build(StationCatalog catalog, string id)
+    {
+        RadioStation? station = catalog.ById(id);
+
+        if (station is null)
+        {
+            // The catalogue refreshes underneath an open page, so a link followed a
+            // minute later can point at a station that is no longer listed.
+            return PluginViews.Declarative(
+                PluginViews.Container(
+                    "station-root",
+                    BackToAll,
+                    PluginViews.EmptyState(
+                        "station-missing",
+                        "Station not found",
+                        "It may have been removed from the catalogue since this page was opened."
+                    )
+                )
+            );
+        }
+
+        return PluginViews.Declarative(
+            PluginViews.Container(
+                "station-root",
+                BackToAll,
+                PluginViews.Detail(
+                    $"station-detail-{station.Id}",
+                    station.Name,
+                    Description(station),
+                    station.LogoUrl,
+                    Actions(station),
+                    Facts(station)
+                )
+            )
+        );
+    }
+
+    /// <summary>
+    /// Composed only from what is known, so a sparse station reads as a short
+    /// sentence rather than one full of blanks.
+    /// </summary>
+    private static string? Description(RadioStation station)
+    {
+        List<string> sentences = [];
+
+        string where = station.Country is { } country ? $" from {country}" : string.Empty;
+        if (station.Genre is { } genre)
+        {
+            sentences.Add($"{genre}{where}.");
+        }
+        else if (station.Country is { } only)
+        {
+            sentences.Add($"Broadcasting from {only}.");
+        }
+
+        string quality = string.Join(
+            ' ',
+            new[]
+            {
+                station.BitrateKbps is { } kbps ? $"{kbps} kbps" : null,
+                station.Codec,
+            }.Where(part => !string.IsNullOrWhiteSpace(part))
+        );
+
+        if (!string.IsNullOrWhiteSpace(quality))
+        {
+            sentences.Add($"{quality}.");
+        }
+
+        return sentences.Count > 0 ? string.Join(' ', sentences) : null;
+    }
+
+    private static PluginComponent Actions(RadioStation station)
+    {
+        List<PluginComponent> buttons =
+        [
+            PluginViews.Button(
+                $"station-play-{station.Id}",
+                "Play",
+                PluginActionIntent.PlayMedia(
+                    station.StreamUrl, station.Name, station.Genre, station.LogoUrl),
+                icon: "play"
+            ),
+            PluginViews.Button(
+                $"station-enqueue-{station.Id}",
+                "Add to queue",
+                PluginActionIntent.Enqueue(
+                    station.StreamUrl, station.Name, station.Genre, station.LogoUrl),
+                icon: "playlistAdd"
+            ),
+        ];
+
+        // Only when there is somewhere to go. A button that opens nothing is worse
+        // than an absent one.
+        if (!string.IsNullOrWhiteSpace(station.Homepage))
+        {
+            buttons.Add(
+                PluginViews.Button(
+                    $"station-homepage-{station.Id}",
+                    "Open homepage",
+                    PluginActionIntent.OpenWebView(station.Homepage),
+                    icon: "globe"
+                )
+            );
+        }
+
+        return PluginViews.Row($"station-actions-{station.Id}", [.. buttons]);
+    }
+
+    private static PluginComponent Facts(RadioStation station)
+    {
+        List<(string Field, string? Value)> facts =
+        [
+            ("Genre", station.Genre),
+            ("Country", station.Country),
+            ("Language", station.Language),
+            ("Bitrate", station.BitrateKbps is { } kbps ? $"{kbps} kbps" : null),
+            ("Codec", station.Codec),
+            // Shown in full. It is the first thing worth having when a station will
+            // not play, and the table scrolls horizontally rather than truncating.
+            ("Stream", station.StreamUrl),
+            ("Source", Provenance(station)),
+        ];
+
+        IEnumerable<PluginComponent> rows = facts
+            .Where(fact => !string.IsNullOrWhiteSpace(fact.Value))
+            .Select(fact =>
+                PluginViews.Row(
+                    $"station-fact-{station.Id}-{StationGates.Slugify(fact.Field)}",
+                    new Dictionary<string, object?> { ["field"] = fact.Field, ["value"] = fact.Value }
+                )
+            );
+
+        return PluginViews.Table($"station-facts-{station.Id}", Columns, [.. rows]);
+    }
+
+    private static string Provenance(RadioStation station) =>
+        station.IsUserSupplied
+            ? $"Your own {StationOverrides.FileName}"
+            : $"radio-browser.info ({station.Id})";
+
+    private static PluginComponent BackToAll =>
+        PluginViews.Button(
+            "station-back",
+            "All stations",
+            PluginActionIntent.Navigate(RadioRoutes.AllStations),
+            icon: "arrowLeft"
+        );
+}
+```
+
+- [ ] **Step 5: Run tests and commit**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+git add -A
+git commit -m "feat(views): add the all-stations table and station detail page"
+```
+
+Expected: all pass.
+
+---
+
+### Task 11: The settings page
+
+Nothing here is editable, because there is no inbound transport to save through. So the page says what it is: where the stations came from, how old they are, and where to put your own list.
+
+**Files:**
+- Create: `src/NoMercy.Plugin.InternetRadio/Views/SettingsView.cs`
+- Create: `tests/NoMercy.Plugin.InternetRadio.Tests/Views/SettingsViewTests.cs`
+
+**Interfaces:**
+- Consumes: `StationCatalog`, `CatalogSource`, `StationOverrides`, `RadioRoutes`.
+- Produces: `SettingsView.Build(StationCatalog catalog, string dataFolderPath, DateTimeOffset now) : PluginView`
+
+`now` is a parameter, not `DateTimeOffset.UtcNow`, so the "3 hours ago" text is testable without freezing the clock.
+
+- [ ] **Step 1: Write the failing tests**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using NoMercy.Plugins.Abstractions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Views;
+
+public class SettingsViewTests
+{
+    private static readonly DateTimeOffset Now = new(2026, 7, 30, 12, 0, 0, TimeSpan.Zero);
+
+    private static RadioStation Station(string id, string genre = "Ambient") =>
+        new() { Id = id, Name = $"Station {id}", StreamUrl = $"https://example.com/{id}", Genre = genre };
+
+    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
+    {
+        yield return node;
+        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
+        {
+            yield return child;
+        }
+    }
+
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
+        (view.Components ?? []).SelectMany(Flatten);
+
+    private static string Text(PluginView view) =>
+        string.Join(" ", AllNodes(view).SelectMany(node => node.Props.Values)
+            .Where(value => value is string)
+            .Select(value => (string)value!));
+
+    private static PluginView Build(StationCatalog catalog) =>
+        SettingsView.Build(catalog, "/data/plugins/data/abc", Now);
+
+    [Theory]
+    [InlineData(CatalogSource.Fetched)]
+    [InlineData(CatalogSource.Cache)]
+    [InlineData(CatalogSource.UserOverride)]
+    [InlineData(CatalogSource.Unavailable)]
+    public void BadgesWhereTheStationsCameFrom(CatalogSource source)
+    {
+        StationCatalog catalog = source == CatalogSource.Unavailable
+            ? StationCatalog.Empty()
+            : StationCatalog.Create([Station("a")], source, Now);
+
+        AllNodes(Build(catalog))
+            .Should().Contain(node => node.Component == PluginComponentType.Badge);
+    }
+
+    // The first thing anyone wants when a station is missing.
+    [Fact]
+    public void SaysHowOldTheCatalogueIs()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a")], CatalogSource.Cache, Now - TimeSpan.FromHours(3));
+
+        Text(Build(catalog)).Should().Contain("3 hours ago");
+    }
+
+    [Fact]
+    public void SaysWhenTheCatalogueHasNeverBeenFetched()
+    {
+        Text(Build(StationCatalog.Empty())).Should().Contain("never");
+    }
+
+    [Fact]
+    public void OffersARefresh()
+    {
+        AllNodes(Build(StationCatalog.Create([Station("a")], CatalogSource.Cache, Now)))
+            .Should().Contain(node => node.Action != null
+                && node.Action.Type == PluginActionType.RefreshView);
+    }
+
+    // So nobody has to derive the dashless-GUID path from a README.
+    [Fact]
+    public void NamesTheDataFolderAndTheOverrideFile()
+    {
+        string text = Text(Build(StationCatalog.Create([Station("a")], CatalogSource.Fetched, Now)));
+
+        text.Should().Contain("/data/plugins/data/abc");
+        text.Should().Contain(StationOverrides.FileName);
+    }
+
+    [Fact]
+    public void CountsTheStationsInEachGenre()
+    {
+        StationCatalog catalog = StationCatalog.Create(
+            [Station("a", "Ambient"), Station("b", "Ambient"), Station("c", "Rock")],
+            CatalogSource.Fetched, Now);
+
+        PluginComponent table = AllNodes(Build(catalog))
+            .First(node => node.Component == PluginComponentType.Table);
+
+        table.Items.Should().HaveCount(2);
+        table.Items.Should().Contain(row =>
+            (string)row.Props["genre"]! == "Ambient" && (string)row.Props["stations"]! == "2");
+    }
+
+    // A stale catalogue has to explain itself, or it looks like the plugin simply
+    // stopped finding new stations.
+    [Fact]
+    public void SaysSoWhenTheLastRefreshFailed()
+    {
+        StationCatalog catalog = StationCatalog
+            .Create([Station("a")], CatalogSource.Cache, Now - TimeSpan.FromDays(4))
+            .WithFailedFetch();
+
+        Text(Build(catalog)).Should().Contain("could not be refreshed");
+    }
+
+    // The honest statement of why there is nothing to configure. Named so that when
+    // the server is fixed, a search for the issue number finds this page.
+    [Fact]
+    public void ExplainsWhyThereIsNothingToEdit()
+    {
+        Text(Build(StationCatalog.Create([Station("a")], CatalogSource.Fetched, Now)))
+            .Should().Contain("#26");
+    }
+
+    [Fact]
+    public void UsesOnlyTextVariantsTheRendererKnows()
+    {
+        PluginView view = Build(StationCatalog.Create([Station("a")], CatalogSource.Fetched, Now));
+
+        AllNodes(view)
+            .Where(node => node.Component == PluginComponentType.Text)
+            .Select(node => node.Props.GetValueOrDefault("variant") as string)
+            .Should().OnlyContain(variant =>
+                variant == null || variant == "title" || variant == "subtitle" || variant == "caption");
+    }
+
+    [Fact]
+    public void EveryNodeHasAUniqueId()
+    {
+        PluginView view = Build(StationCatalog.Create(
+            [Station("a", "Ambient"), Station("b", "Rock")], CatalogSource.Fetched, Now));
+
+        AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+    }
+}
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+```bash
+dotnet test -c Release --filter FullyQualifiedName~SettingsViewTests
+```
+
+Expected: FAIL — `SettingsView` does not exist.
+
+- [ ] **Step 3: Write `SettingsView.cs`**
+
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using NoMercy.Plugins.Abstractions;
+
+namespace NoMercy.Plugin.InternetRadio;
+
+// Status, not settings.
+//
+// There is nothing to edit because there is nowhere to save to: the server's plugin
+// REST routes are unversioned while the client posts to /api/v1 (issue #26), and the
+// hub is not the alternative it looks like - nothing ever registers a plugin's hub
+// handler, so IPluginHubHandler never receives anything. Rendering a form that
+// silently 404s would be the false promise this plugin is meant to stop making.
+//
+// So this page answers the questions someone actually arrives with: where did these
+// stations come from, how old are they, and how do I add my own.
+public static class SettingsView
+{
+    private static IReadOnlyList<PluginTableColumn> Columns { get; } =
+        [
+            new() { Key = "genre", Label = "Genre" },
+            new() { Key = "stations", Label = "Stations", Align = "right" },
+        ];
+
+    public static PluginView Build(StationCatalog catalog, string dataFolderPath, DateTimeOffset now)
+    {
+        List<PluginComponent> children =
+        [
+            PluginViews.Text("settings-title", "Internet Radio", "title"),
+            PluginViews.Row(
+                "settings-status",
+                SourceBadge(catalog),
+                PluginViews.Text("settings-age", Age(catalog, now), "caption")
+            ),
+            PluginViews.Button(
+                "settings-refresh",
+                "Refresh now",
+                PluginActionIntent.RefreshView(),
+                icon: "portableRadio"
+            ),
+        ];
+
+        if (catalog.LastFetchFailed)
+        {
+            children.Add(
+                PluginViews.Text(
+                    "settings-refresh-failed",
+                    "The catalogue could not be refreshed on the last attempt. "
+                        + "Anything shown is from the cache. Check the server log for Internet Radio.",
+                    "caption"
+                )
+            );
+        }
+
+        if (!catalog.IsEmpty)
+        {
+            children.Add(PluginViews.Text("settings-genres-heading", "Genres", "subtitle"));
+            children.Add(
+                PluginViews.Table(
+                    "settings-genres",
+                    Columns,
+                    [
+                        .. catalog.Genres.Select(genre =>
+                            PluginViews.Row(
+                                $"settings-genre-{genre.Section.Slug}",
+                                new Dictionary<string, object?>
+                                {
+                                    ["genre"] = genre.Section.Label,
+                                    ["stations"] = genre.Count.ToString(
+                                        System.Globalization.CultureInfo.InvariantCulture),
+                                }
+                            )
+                        ),
+                    ]
+                )
+            );
+        }
+
+        children.Add(PluginViews.Text("settings-own-heading", "Your own stations", "subtitle"));
+        children.Add(
+            PluginViews.Text(
+                "settings-own-body",
+                $"Drop a file named {StationOverrides.FileName} into {dataFolderPath} to replace the "
+                    + "fetched list entirely. It is a JSON array of stations, each needing at least a "
+                    + "name and a streamUrl. Your file is used as written and is not filtered, so it is "
+                    + "also the way to add a station radio-browser.info does not carry.",
+                "caption"
+            )
+        );
+
+        children.Add(PluginViews.Text("settings-editing-heading", "Why there is nothing to edit", "subtitle"));
+        children.Add(
+            PluginViews.Text(
+                "settings-editing-body",
+                "This page is read-only. A plugin cannot yet receive anything from its own UI on this "
+                    + "server: plugin REST routes are served unversioned while the dashboard posts to "
+                    + "/api/v1 (media-server issue #26), and the hub is not an alternative because "
+                    + "plugin hub handlers are never registered. Editable settings arrive when either "
+                    + "is fixed.",
+                "caption"
+            )
+        );
+
+        return PluginViews.Declarative(PluginViews.Container("settings-root", [.. children]));
+    }
+
+    private static PluginComponent SourceBadge(StationCatalog catalog)
+    {
+        (string Label, string Variant) badge = catalog.Source switch
+        {
+            CatalogSource.UserOverride => ("Your own station list", PluginBadgeVariant.Info),
+            CatalogSource.Fetched => ("Fetched from radio-browser.info", PluginBadgeVariant.Success),
+            CatalogSource.Cache when catalog.LastFetchFailed
+                => ("Cached — refresh failed", PluginBadgeVariant.Warning),
+            CatalogSource.Cache => ("Cached", PluginBadgeVariant.Neutral),
+            _ => ("No stations", PluginBadgeVariant.Danger),
+        };
+
+        return PluginViews.Badge("settings-source", badge.Label, badge.Variant);
+    }
+
+    private static string Age(StationCatalog catalog, DateTimeOffset now)
+    {
+        if (catalog.Source == CatalogSource.UserOverride)
+        {
+            return $"{catalog.Count} stations, read from your own {StationOverrides.FileName}.";
+        }
+
+        if (catalog.FetchedAt is not { } fetchedAt)
+        {
+            return "The station list has never been fetched.";
+        }
+
+        TimeSpan age = now - fetchedAt;
+
+        string ago = age switch
+        {
+            { TotalMinutes: < 2 } => "just now",
+            { TotalHours: < 1 } => $"{(int)age.TotalMinutes} minutes ago",
+            { TotalHours: < 2 } => "1 hour ago",
+            { TotalDays: < 1 } => $"{(int)age.TotalHours} hours ago",
+            { TotalDays: < 2 } => "1 day ago",
+            _ => $"{(int)age.TotalDays} days ago",
+        };
+
+        return $"{catalog.Count} stations, updated {ago}.";
+    }
+}
+```
+
+- [ ] **Step 4: Run tests and commit**
+
+```bash
+dotnet build -c Release -p:TreatWarningsAsErrors=true
+dotnet test -c Release --no-build
+git add -A
+git commit -m "feat(views): add the settings status page"
+```
+
+Expected: all pass.
+
+---
