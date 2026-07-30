@@ -71,6 +71,8 @@ def gate_failures(record: dict) -> list[str]:
     url = record.get("url_resolved") or record.get("url") or ""
     failures = []
 
+    if not str(record.get("name") or "").strip():
+        failures.append("no-name")
     if not url.startswith("https://"):
         failures.append("not-https")
     if record.get("hls"):
@@ -95,9 +97,25 @@ def stream_answers(url: str) -> tuple[bool, str]:
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             body = response.read(2048)
-            if response.status in (200, 206) and body:
-                return True, f"{response.status} {response.headers.get('Content-Type', '?')}"
-            return False, f"{response.status}, {len(body)} bytes"
+            content_type = response.headers.get("Content-Type", "?")
+            main_type = content_type.split(";", 1)[0].strip().lower()
+
+            if response.status not in (200, 206) or not body:
+                return False, f"{response.status}, {len(body)} bytes"
+
+            # A denylist, not an audio/* allowlist: real stations legitimately serve
+            # application/ogg, application/octet-stream, and other non-audio types
+            # that are still genuine streams, so requiring audio/* would false-fail
+            # a working station. What is worth rejecting is a response that is
+            # unambiguously NOT a stream - an HTML or plain-text body (a soft-404
+            # error page served with status 200) or a JSON API error envelope. This
+            # is the same failure mode as the historical Anthems case - a claim of
+            # health that isn't one - just arriving as a 200 instead of a
+            # radio-browser lastcheckok lie.
+            if main_type.startswith("text") or main_type == "application/json":
+                return False, f"{response.status} {content_type} (not audio)"
+
+            return True, f"{response.status} {content_type}"
     except urllib.error.HTTPError as error:
         return False, f"HTTP {error.code}"
     except Exception as error:                          # noqa: BLE001 - report, never raise
@@ -105,6 +123,17 @@ def stream_answers(url: str) -> tuple[bool, str]:
 
 
 def main() -> int:
+    # No options worth having, but any argument (most likely --help) should not
+    # silently trigger ten live fetches against third-party servers.
+    if len(sys.argv) > 1:
+        print(
+            "usage: python scripts/resolve-seeds.py\n\n"
+            "Checks every pinned seed UUID in SeedStations.cs against radio-browser\n"
+            "and its live stream. Requires network access. Exit code 0 means every\n"
+            "seed resolves, passes the plugin's admission gates, and answers."
+        )
+        return 0
+
     uuids = read_seed_uuids()
     print(f"checking {len(uuids)} seed stations\n")
 
