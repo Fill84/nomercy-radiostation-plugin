@@ -40,7 +40,7 @@ public static class RadioStations
         {
             Name = "Radio Paradise — Main Mix",
             StreamUrl = "https://stream.radioparadise.com/aac-320",
-            LogoUrl = "https://radioparadise.com/graphics/logos/rp_logo_pos.png",
+            LogoUrl = "https://www.radioparadise.com/apple-touch-icon.png",
             Homepage = "https://radioparadise.com/",
             Genre = "Eclectic / Rock",
             Country = "US",
@@ -52,7 +52,7 @@ public static class RadioStations
         {
             Name = "BBC Radio 1",
             StreamUrl = "http://stream.live.vc.bbcmedia.co.uk/bbc_radio_one",
-            LogoUrl = "https://sounds.files.bbci.co.uk/v2/networks/bbc_radio_one/colour_1024x576.png",
+            LogoUrl = "https://sounds.files.bbci.co.uk/3.7.0/networks/bbc_radio_one/colour_default.svg",
             Homepage = "https://www.bbc.co.uk/sounds/play/live:bbc_radio_one",
             Genre = "Pop",
             Country = "UK",
@@ -64,7 +64,7 @@ public static class RadioStations
         {
             Name = "BBC Radio 6 Music",
             StreamUrl = "http://stream.live.vc.bbcmedia.co.uk/bbc_6music",
-            LogoUrl = "https://sounds.files.bbci.co.uk/v2/networks/bbc_6music/colour_1024x576.png",
+            LogoUrl = "https://sounds.files.bbci.co.uk/3.7.0/networks/bbc_6music/colour_default.svg",
             Homepage = "https://www.bbc.co.uk/sounds/play/live:bbc_6music",
             Genre = "Alternative / Indie",
             Country = "UK",
@@ -76,7 +76,7 @@ public static class RadioStations
         {
             Name = "NTS Radio 1",
             StreamUrl = "https://stream-relay-geo.ntslive.net/stream",
-            LogoUrl = "https://media.ntslive.co.uk/static/img/logos/nts-logo-stack.png",
+            LogoUrl = "https://www.nts.live/favicon.ico",
             Homepage = "https://www.nts.live/",
             Genre = "Eclectic",
             Country = "UK",
@@ -88,7 +88,7 @@ public static class RadioStations
         {
             Name = "KEXP 90.3 FM Seattle",
             StreamUrl = "https://kexp.streamguys1.com/kexp160.aac",
-            LogoUrl = "https://www.kexp.org/static/assets/img/logo-kexp.svg",
+            LogoUrl = "https://www.kexp.org/static/assets/img/logo-header.svg",
             Homepage = "https://www.kexp.org/",
             Genre = "Alternative",
             Country = "US",
@@ -100,7 +100,7 @@ public static class RadioStations
         {
             Name = "FIP — Radio France",
             StreamUrl = "https://icecast.radiofrance.fr/fip-hifi.aac",
-            LogoUrl = "https://www.radiofrance.fr/client/immutable/assets/fip-logo.svg",
+            LogoUrl = "https://upload.wikimedia.org/wikipedia/commons/1/16/FIP_logo_2021.svg",
             Homepage = "https://www.radiofrance.fr/fip",
             Genre = "Eclectic / Jazz",
             Country = "FR",
