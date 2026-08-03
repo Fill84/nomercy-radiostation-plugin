@@ -1,13 +1,11 @@
 bin/
 obj/
-*.user
 .vs/
 .idea/
-.vscode/
-
-# CI-only artifacts (the workflow creates these at build time)
+*.user
+*.suo
+artifacts/
+TestResults/
+.claude/*
 _server/
 _nupkgs/
-_stage/
-NoMercy.Plugin.InternetRadio/nuget.config
-NoMercy.Plugin.InternetRadio-*.zip

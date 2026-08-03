@@ -1,14 +1,15 @@
 name: build
 
-# Builds the NoMercy Internet Radio plugin against the upstream
-# NoMercy.Plugins.Abstractions source (cloned at run-time, because the
-# abstractions package is not published to nuget.org yet).
+# Builds, tests and packages the Internet Radio plugin.
 #
-# On a `v*` tag push, a Forgejo release is created and the packaged plugin
-# zip is attached as an asset. Build + release run in a single job so we
-# don't need the artifact upload/download API (which the act_runner
-# routes through the internal `forgejo:3000` hostname that the per-workflow
-# Docker network can't resolve).
+# The plugin builds against NoMercy.Plugins.Abstractions, which is NOT published to
+# nuget.org. scripts/fetch-abstractions.sh clones the server and packs it into a
+# local feed that the committed nuget.config points at. The script is shared with
+# local development on purpose, so CI and a developer's machine cannot drift.
+#
+# Build, test and release run in one job so we don't need the artifact
+# upload/download API, which the act_runner routes through the internal
+# `forgejo:3000` hostname the per-workflow network can't resolve.
 
 on:
   push:
@@ -21,31 +22,47 @@ permissions:
   contents: write
 
 env:
-  PLUGIN_DIR: NoMercy.Plugin.InternetRadio
-  SERVER_REPO: https://github.com/NoMercy-Entertainment/nomercy-media-server.git
+  PLUGIN_NAME: NoMercy.Plugin.InternetRadio
+  PLUGIN_DIR: src/NoMercy.Plugin.InternetRadio
   SERVER_BRANCH: dev
   DOTNET_CHANNEL: "10.0"
   DOTNET_NOLOGO: "1"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-  # Public Forgejo URL — used to clone this repo and hit the release API
-  # from inside the workflow container, because the runner's default
-  # GITHUB_SERVER_URL (http://forgejo:3000) isn't resolvable on the
-  # per-workflow Docker network.
+  # Public URL — the runner's default GITHUB_SERVER_URL is an internal hostname
+  # (http://forgejo:3000) the workflow container can't resolve.
   PUBLIC_FORGEJO_URL: https://forgejo.phillippepelzer.me
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # Runs on a host runner, so root is not a given and the image may already
+      # carry these. Install only what is missing, and only if we can.
       - name: Install base tooling
         run: |
-          set -eux
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -y
-            apt-get install -y --no-install-recommends \
-              git curl ca-certificates zip unzip jq libicu-dev
-            rm -rf /var/lib/apt/lists/*
+          set -eu
+          missing=""
+          for tool in git curl zip unzip jq; do
+            command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
+          done
+
+          if [ -z "$missing" ]; then
+            echo "all required tools present"
+            exit 0
           fi
+
+          echo "missing:$missing"
+          if [ "$(id -u)" = "0" ]; then
+            SUDO=""
+          elif command -v sudo >/dev/null 2>&1; then
+            SUDO="sudo"
+          else
+            echo "cannot install$missing - not root and no sudo available" >&2
+            exit 1
+          fi
+
+          $SUDO apt-get update -y
+          $SUDO apt-get install -y --no-install-recommends ca-certificates libicu-dev $missing
 
       - name: Install .NET SDK ${{ env.DOTNET_CHANNEL }}
         run: |
@@ -57,136 +74,400 @@ jobs:
           echo "$HOME/.dotnet" >> "$GITHUB_PATH"
           "$HOME/.dotnet/dotnet" --info
 
-      # Manual checkout instead of actions/checkout@v4:
-      # the action clones from $GITHUB_SERVER_URL which the runner sets to
-      # an internal hostname (http://forgejo:3000) that the workflow
-      # container can't resolve. The public URL works for both private
-      # and public repos when the auto-generated GITHUB_TOKEN is passed
-      # via an HTTP basic-auth header.
+      # Manual checkout instead of actions/checkout: the action clones from
+      # $GITHUB_SERVER_URL, which the runner sets to an internal hostname.
       - name: Checkout plugin (via public URL)
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set -eux
+          # NO `set -x` IN THIS STEP. The auth header is base64 of the token, and the
+          # runner's secret masking only redacts the token's literal text - it cannot
+          # recognise an encoded form. With xtrace on, the token lands in the build
+          # log in full, which for a public repo is a publicly readable credential.
+          set -eu
           : "${TOKEN:?missing GITHUB_TOKEN}"
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           cd "$GITHUB_WORKSPACE"
-          # Wipe leftovers from any previous run.
           shopt -s dotglob nullglob
           rm -rf -- *
           git init -q .
           git remote add origin "${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}.git"
-          AUTH_B64=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
-          git -c "http.extraheader=Authorization: basic ${AUTH_B64}" \
-              fetch --depth=1 origin "$GITHUB_SHA"
+
+          # Written to a file rather than passed with `git -c`: an argument set via
+          # `git -c` sits in the process list for the entire `git fetch` invocation,
+          # which can run for seconds against a slow remote. `git config` below still
+          # takes the header as an argument too - argv exposure isn't eliminated - but
+          # that call completes in milliseconds, so the exposure window shrinks from
+          # "as long as the fetch takes" to "next to nothing". A predictable temp path
+          # is also a symlink target for a co-tenant process to plant ahead of time, so
+          # this uses mktemp rather than a fixed name.
+          umask 077
+          AUTH_FILE=$(mktemp)
+          trap 'git config --local --unset-all http.extraHeader 2>/dev/null || true; rm -f "$AUTH_FILE"' EXIT
+          printf 'Authorization: basic %s\n' \
+            "$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" > "$AUTH_FILE"
+          git config --local http.extraHeader "$(cat "$AUTH_FILE")"
+          rm -f "$AUTH_FILE"
+
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git config --local --unset-all http.extraHeader
           git checkout -q FETCH_HEAD
           git log --oneline -1
 
-      - name: Clone NoMercy MediaServer (for Plugins.Abstractions source)
+      # THE GATE. This repository shipped v1.0.1 from a commit whose manifest read
+      # 1.0.0: every server that installed it reported the wrong version and was told
+      # an update was available forever. Nothing checked, so nothing failed.
+      #
+      # Runs before the build, so a mismatched tag costs seconds rather than a full
+      # build and a published-then-deleted release.
+      - name: Assert the manifest version matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
-          set -eux
-          git clone --depth=1 --branch="$SERVER_BRANCH" "$SERVER_REPO" _server
+          set -eu
+          MANIFEST_VERSION=$(jq -r '.version' "$PLUGIN_DIR/plugin.json")
+          TAG="${GITHUB_REF_NAME}"
 
-      - name: Pack abstractions to local NuGet feed
+          if [ "v$MANIFEST_VERSION" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match plugin.json version $MANIFEST_VERSION" >&2
+            echo "the manifest and the tag must agree, or an installed server reports" >&2
+            echo "the wrong version and is offered an update it already has." >&2
+            echo "fix: set \"version\": \"${TAG#v}\" in $PLUGIN_DIR/plugin.json," >&2
+            echo "     <Version> in the csproj, and PluginIdentity.Version - then retag." >&2
+            exit 1
+          fi
+
+          echo "tag $TAG matches manifest version $MANIFEST_VERSION"
+
+      - name: Pack the plugin contract to a local feed
+        id: contract
         run: |
-          set -eux
-          mkdir -p "$PWD/_nupkgs"
-          # NoMercy.Plugins.Abstractions depends on NoMercy.Events.
-          # Pack both into a local file feed so the plugin's PackageReference
-          # (Version="*") resolves them without a private NuGet server.
-          dotnet pack _server/src/NoMercy.Events/NoMercy.Events.csproj \
-            -c Release -o "$PWD/_nupkgs"
-          dotnet pack _server/src/NoMercy.Plugins.Abstractions/NoMercy.Plugins.Abstractions.csproj \
-            -c Release -o "$PWD/_nupkgs"
-          ls -la "$PWD/_nupkgs"
+          set -eu
+          chmod +x scripts/fetch-abstractions.sh
 
-      - name: Write plugin nuget.config (local feed + nuget.org)
+          # fetch-abstractions.sh documents SERVER_REF as what CI sets to a SHA for
+          # a tag build, so the artifact is reproducible instead of "whatever dev
+          # happened to be" - that claim needs this to actually happen. Resolved
+          # here, not hardcoded: the SHA is not known ahead of time, only that a
+          # tag build must pin to one rather than floating on SERVER_BRANCH like a
+          # normal push build does.
+          case "$GITHUB_REF" in
+            refs/tags/v*)
+              SERVER_REF=$(git ls-remote https://github.com/NoMercy-Entertainment/nomercy-media-server.git \
+                             "refs/heads/$SERVER_BRANCH" | cut -f1)
+              if [ -z "$SERVER_REF" ]; then
+                echo "::error::could not resolve $SERVER_BRANCH to a commit for a reproducible tag build" >&2
+                exit 1
+              fi
+              export SERVER_REF
+              echo "tag build: pinning the contract to $SERVER_BRANCH@$SERVER_REF"
+              ;;
+          esac
+
+          ./scripts/fetch-abstractions.sh
+
+          # Recorded so a release names the exact contract it was built against.
+          # "built against @dev" says nothing a year later.
+          SERVER_SHA=$(git -C _server rev-parse HEAD)
+          echo "sha=$SERVER_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Restore
+        run: dotnet restore
+
+      # TreatWarningsAsErrors belongs on the step that compiles. Passing it to
+      # `dotnet test --no-build` does nothing: that command compiles nothing.
+      - name: Build (Release, warnings as errors)
+        run: dotnet build -c Release --no-restore -p:TreatWarningsAsErrors=true
+
+      # A plugin that fails its own tests must not produce a release artifact.
+      - name: Test (Release)
+        run: dotnet test -c Release --no-build --logger "console;verbosity=normal"
+
+      # The constraint that stops station data creeping back into the source tree.
+      # Only the radio-browser API base and documentation links may contain a URL.
+      - name: Assert no station data is hardcoded
         run: |
-          set -eux
-          cat > "$PLUGIN_DIR/nuget.config" <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <configuration>
-            <packageSources>
-              <clear />
-              <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
-              <add key="local"     value="../_nupkgs" />
-            </packageSources>
-          </configuration>
-          EOF
+          set -eu
+          if grep -rn --include='*.cs' --exclude-dir=obj --exclude-dir=bin -E 'https?://' "$PLUGIN_DIR" \
+             | grep -v 'radio-browser' \
+             | grep -v 'forgejo.phillippepelzer.me' \
+             | grep -v 'github.com'; then
+            echo "::error::a URL that is not the API base or a documentation link" >&2
+            echo "station data is fetched, never committed - see Catalog/SeedStations.cs" >&2
+            exit 1
+          fi
+          echo "no hardcoded station URLs"
 
-      - name: Restore + build plugin (Release)
-        run: |
-          set -eux
-          dotnet restore "$PLUGIN_DIR/$PLUGIN_DIR.csproj"
-          dotnet build   "$PLUGIN_DIR/$PLUGIN_DIR.csproj" -c Release --no-restore
-
-      - name: Stage release artifact
+      - name: Stage the plugin directory
         id: stage
         run: |
           set -eux
           BIN="$PLUGIN_DIR/bin/Release/net10.0"
-          STAGING="$PWD/_stage/$PLUGIN_DIR"
+          STAGING="$PWD/_stage/$PLUGIN_NAME"
           mkdir -p "$STAGING"
-          cp "$BIN/$PLUGIN_DIR.dll" "$STAGING/"
-          cp "$PLUGIN_DIR/plugin.json" "$STAGING/"
-          cp "$PLUGIN_DIR/README.md"   "$STAGING/"
 
-          # Derive a version: vX.Y.Z tag → X.Y.Z, otherwise dev-<short-sha>.
+          cp "$BIN/$PLUGIN_NAME.dll"      "$STAGING/"
+          cp "$BIN/$PLUGIN_NAME.deps.json" "$STAGING/"
+          cp "$PLUGIN_DIR/plugin.json"     "$STAGING/"
+          # The plugin's own README, not the repository's: what belongs beside an
+          # installed DLL is what the thing does, not how to build it.
+          cp "$PLUGIN_DIR/README.md"       "$STAGING/"
+          cp LICENSE                       "$STAGING/"
+
+          # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll and
+          # NoMercy.Events.dll. Both are the host's and live in its shared-assembly
+          # set. Shipping a copy gives the load context two incompatible identities of
+          # the same types, and the failure looks like an unrelated cast error far
+          # from its cause.
+          #
+          # Checked against $BIN, not $STAGING: staging holds exactly the five files
+          # copied above by name, so neither could ever appear there and the check
+          # could never fire.
+          if ls "$BIN" | grep -E '^NoMercy\.(Plugins\.Abstractions|Events)\.dll$'; then
+            echo "::error::a host-owned assembly was copied into the build output" >&2
+            echo "see the PackageReference comment in the plugin csproj" >&2
+            exit 1
+          fi
+
+          # This check only covers assemblies built from THIS repo: deps.json gives a
+          # project reference a bare filename key and a package a path key like
+          # lib/net10.0/Foo.dll, and the filter below (`grep -v '/'`) keeps the first
+          # group. For those, this is a real guarantee - if a project split off a
+          # second assembly and nobody added it to the copy list above, this fails
+          # instead of shipping a broken zip that would FileNotFoundException at load
+          # with CI green.
+          #
+          # It is NOT a guarantee for a future third-party <PackageReference>. A
+          # package-sourced assembly is invisible to this check (path-keyed, filtered
+          # out), so one missing from the zip would still load-fail silently. That
+          # cannot be automated: this check has no way to tell a package the host
+          # already provides (safe to omit, like today's NoMercy.Plugins.Abstractions)
+          # from one the plugin genuinely needs shipped. Adding a package reference
+          # needs a deliberate decision about whether it ships - this check verifies
+          # today's decision stays correct, it does not make tomorrow's for you.
+          command -v jq >/dev/null 2>&1 || { echo "jq is required" >&2; exit 1; }
+
+          PROJECT_ASSEMBLIES=$(jq -r '.targets[] | to_entries[] | .value.runtime // {} | keys[]' \
+                                "$STAGING/$PLUGIN_NAME.deps.json" | grep -v '/' | sort -u)
+          if [ -z "$PROJECT_ASSEMBLIES" ]; then
+            echo "::error::deps.json listed no project-built assemblies - its shape changed" >&2
+            exit 1
+          fi
+
+          MISSING=""
+          for dep in $PROJECT_ASSEMBLIES; do
+            [ -f "$STAGING/$dep" ] || MISSING="$MISSING $dep"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::deps.json names project-built assemblies missing from the artifact:$MISSING" >&2
+            exit 1
+          fi
+
           REF="${GITHUB_REF_NAME:-}"
           case "$REF" in
             v*) VERSION="${REF#v}" ;;
             *)  VERSION="dev-${GITHUB_SHA:0:8}" ;;
           esac
 
-          ZIP="$PLUGIN_DIR-$VERSION.zip"
-          (cd "$PWD/_stage" && zip -r "../$ZIP" "$PLUGIN_DIR")
-          ls -la "$ZIP"
+          ZIP="$PLUGIN_NAME-$VERSION.zip"
+          (cd "$PWD/_stage" && zip -r "../$ZIP" "$PLUGIN_NAME")
+
+          # A catalogue needs this to verify a download, and it is what makes a
+          # listing checkable rather than trusted.
+          SHA=$(sha256sum "$ZIP" | cut -d' ' -f1)
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "zip=$ZIP"         >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA"         >> "$GITHUB_OUTPUT"
+          echo "sha256 $SHA  $ZIP"
 
-      - name: Create Forgejo release & attach asset
+      # One URL a plugin catalogue can point at, instead of someone hand-writing the
+      # entry and hand-checking the version - which is exactly how the 1.0.0/1.0.1
+      # mismatch became somebody else's problem.
+      - name: Build repository.json
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -eu
+          MANIFEST="$PLUGIN_DIR/plugin.json"
+          ZIP="${{ steps.stage.outputs.zip }}"
+          DOWNLOAD="${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${ZIP}"
+
+          jq -n \
+            --slurpfile manifest "$MANIFEST" \
+            --arg version "${{ steps.stage.outputs.version }}" \
+            --arg download "$DOWNLOAD" \
+            --arg checksum "sha256:${{ steps.stage.outputs.sha }}" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              name: "NoMercy Internet Radio",
+              url: $download,
+              plugins: [{
+                id: $manifest[0].id,
+                name: $manifest[0].name,
+                description: $manifest[0].description,
+                author: $manifest[0].author,
+                projectUrl: $manifest[0].projectUrl,
+                versions: [{
+                  version: $version,
+                  targetAbi: $manifest[0].targetAbi,
+                  downloadUrl: $download,
+                  checksum: $checksum,
+                  timestamp: $timestamp
+                }]
+              }]
+            }' > repository.json
+
+          cat repository.json
+
+      - name: Create Forgejo release & attach assets
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONTRACT_SHA: ${{ steps.contract.outputs.sha }}
         run: |
           set -euo pipefail
           ZIP="${{ steps.stage.outputs.zip }}"
+          SHA="${{ steps.stage.outputs.sha }}"
           TAG="${GITHUB_REF_NAME}"
           REPO="${GITHUB_REPOSITORY}"
-          # Use the public API URL — same reason as the checkout step.
           API="${PUBLIC_FORGEJO_URL%/}/api/v1"
 
           BODY=$(cat <<EOF
-          ## NoMercy Internet Radio Provider — ${TAG}
+          ## Internet Radio — ${TAG}
 
-          Drop-in plugin for [NoMercy MediaServer](https://github.com/NoMercy-Entertainment/nomercy-media-server).
+          Browse and play internet radio stations in the NoMercy MediaServer's built-in player.
 
           ### Install
           1. Extract \`${ZIP}\` into \`<server>/plugins/\`.
           2. Restart the server.
+          3. **Enable the plugin in the dashboard.** It declares a network host, so the
+             server starts it disabled until you approve it.
 
-          Built automatically by Forgejo Actions against
-          \`NoMercy-Entertainment/nomercy-media-server@${SERVER_BRANCH:-dev}\`.
+          ### Verify
+          \`\`\`
+          sha256  ${SHA}
+          \`\`\`
+
+          Stations are fetched from radio-browser.info and refreshed daily; nothing is
+          bundled. HTTPS, non-HLS streams only — an http stream is blocked by the browser
+          as mixed content and cannot play.
+
+          Built and tested against \`NoMercy-Entertainment/nomercy-media-server@${CONTRACT_SHA}\`.
+          To rebuild this exact artifact: \`SERVER_REF=${CONTRACT_SHA} ./scripts/fetch-abstractions.sh\`
+          then \`dotnet build -c Release\`.
           EOF
           )
 
-          echo "Creating release $TAG in $REPO"
-          REL_JSON=$(curl -fsSL -X POST \
-            -H "Authorization: token $TOKEN" \
+          # The token goes in a config file, not on the command line: a curl argument
+          # is visible in the host's process list to any co-tenant process.
+          umask 077
+          CURL_CFG=$(mktemp)
+          trap 'rm -f "$CURL_CFG"' EXIT
+          printf 'header = "Authorization: token %s"\n' "$TOKEN" > "$CURL_CFG"
+
+          REL_JSON=$(curl -fsSL --config "$CURL_CFG" -X POST \
             -H "Content-Type: application/json" \
             "$API/repos/$REPO/releases" \
             -d "$(jq -n --arg tag "$TAG" --arg body "$BODY" \
                   '{tag_name:$tag, name:$tag, body:$body, draft:false, prerelease:false}')")
 
           REL_ID=$(echo "$REL_JSON" | jq -r '.id')
-          echo "release id = $REL_ID"
+          if [ -z "$REL_ID" ] || [ "$REL_ID" = "null" ]; then
+            echo "::error::release creation returned no id - refusing to upload an asset" >&2
+            exit 1
+          fi
 
-          echo "Uploading asset $ZIP"
-          curl -fsSL -X POST \
-            -H "Authorization: token $TOKEN" \
-            -H "Content-Type: application/octet-stream" \
-            --data-binary "@$ZIP" \
-            "$API/repos/$REPO/releases/$REL_ID/assets?name=$(basename "$ZIP")"
+          for asset in "$ZIP" repository.json; do
+            echo "uploading $asset"
+            curl -fsSL --config "$CURL_CFG" -X POST \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$asset" \
+              "$API/repos/$REPO/releases/$REL_ID/assets?name=$(basename "$asset")"
+          done
 
           echo "Release published: $TAG"
+
+      # Opens the next patch version so the default branch is never sitting on a
+      # version that has already shipped.
+      #
+      # This is convenience, not the guard: by the time it runs the artifact is
+      # published, so it cannot protect anything. The gate at the top of this job is
+      # what makes a mismatched release impossible.
+      - name: Open the next patch version
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The real default-branch value. GITHUB_EVENT_REPOSITORY_DEFAULT_BRANCH is
+          # not an Actions-provided environment variable - nothing sets it - so a
+          # reference to it always evaluates to the literal fallback. That fallback is
+          # correct for this repo today, but the workflow's own trigger also lists
+          # `master`, so a repo using that convention would fetch a branch that does
+          # not exist, after the release has already published.
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -eu
+          RELEASED="${GITHUB_REF_NAME#v}"
+          MAJOR=$(echo "$RELEASED" | cut -d. -f1)
+          MINOR=$(echo "$RELEASED" | cut -d. -f2)
+          PATCH=$(echo "$RELEASED" | cut -d. -f3)
+          NEXT="$MAJOR.$MINOR.$((PATCH + 1))"
+
+          echo "opening $NEXT for development"
+
+          # The tag build checked out a detached FETCH_HEAD, so the edits have to be
+          # made ON the default branch - editing here first and then checking out
+          # would simply discard them.
+          BRANCH="${DEFAULT_BRANCH:-main}"
+          git config user.name  "forgejo-actions"
+          git config user.email "actions@noreply.localhost"
+
+          # See the comment on the equivalent block in "Checkout plugin" for why this
+          # is a temp file rather than a `git -c` argument, why mktemp rather than a
+          # fixed name, and why the unset is unconditional.
+          umask 077
+          AUTH_FILE=$(mktemp)
+          trap 'git config --local --unset-all http.extraHeader 2>/dev/null || true; rm -f "$AUTH_FILE"' EXIT
+          printf 'Authorization: basic %s\n' \
+            "$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" > "$AUTH_FILE"
+          git config --local http.extraHeader "$(cat "$AUTH_FILE")"
+          rm -f "$AUTH_FILE"
+
+          git fetch --depth=1 origin "$BRANCH"
+          git checkout -q -B "$BRANCH" FETCH_HEAD
+          git config --local --unset-all http.extraHeader
+
+          # All three, or ManifestTests fails on the very next push.
+          jq --arg v "$NEXT" '.version = $v' "$PLUGIN_DIR/plugin.json" > /tmp/manifest.json
+          mv /tmp/manifest.json "$PLUGIN_DIR/plugin.json"
+
+          sed -i "s|<Version>$RELEASED</Version>|<Version>$NEXT</Version>|" \
+            "$PLUGIN_DIR/$PLUGIN_NAME.csproj"
+          # A `sed` that silently matches nothing (e.g. the csproj was reformatted to
+          # `<Version>$RELEASED </Version>` or similar) would leave plugin.json bumped
+          # and the csproj not, and the `git diff --cached --quiet` check below can't
+          # tell "nothing needed changing" from "the edit failed" - both stage a diff
+          # from plugin.json alone. So each `sed` is checked for effect: a bump that
+          # cannot edit a file fails loudly naming the file, rather than pushing a
+          # tree whose three versions disagree - the exact defect this task exists to
+          # prevent, just relocated to the bump instead of the tag.
+          grep -qF "<Version>$NEXT</Version>" "$PLUGIN_DIR/$PLUGIN_NAME.csproj" || {
+            echo "::error::sed found no <Version>$RELEASED</Version> to replace in $PLUGIN_DIR/$PLUGIN_NAME.csproj" >&2
+            exit 1
+          }
+
+          sed -i "s|new($MAJOR, $MINOR, $PATCH)|new($MAJOR, $MINOR, $((PATCH + 1)))|" \
+            "$PLUGIN_DIR/PluginIdentity.cs"
+          grep -qF "new($MAJOR, $MINOR, $((PATCH + 1)))" "$PLUGIN_DIR/PluginIdentity.cs" || {
+            echo "::error::sed found no new($MAJOR, $MINOR, $PATCH) to replace in $PLUGIN_DIR/PluginIdentity.cs" >&2
+            exit 1
+          }
+
+          git add "$PLUGIN_DIR/plugin.json" "$PLUGIN_DIR/$PLUGIN_NAME.csproj" \
+                  "$PLUGIN_DIR/PluginIdentity.cs"
+
+          if git diff --cached --quiet; then
+            echo "already at $NEXT - nothing to do"
+          else
+            # [skip ci] or this push retriggers the workflow for no reason.
+            git commit -m "chore(release): open $NEXT for development [skip ci]"
+            git push origin "HEAD:$BRANCH"
+          fi
