@@ -7,5 +7,29 @@
   "author": "NoMercy Community",
   "projectUrl": "https://github.com/NoMercy-Entertainment/nomercy-media-server",
   "assembly": "NoMercy.Plugin.InternetRadio.dll",
-  "autoEnabled": true
+  "autoEnabled": true,
+  "capabilities": {
+    "hooks": [
+      "ui"
+    ],
+    "ui": {
+      "mounts": [
+        {
+          "section": "music",
+          "label": "stations.title",
+          "icon": "radio",
+          "route": "/",
+          "kind": "music"
+        }
+      ]
+    }
+  },
+  "translations": {
+    "source": "en",
+    "locales": [
+      "en",
+      "nl"
+    ],
+    "path": "lang"
+  }
 }
