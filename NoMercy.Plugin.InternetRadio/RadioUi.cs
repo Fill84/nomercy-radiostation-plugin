@@ -40,9 +40,13 @@ public sealed class RadioUi : IPlugin, IUiPlugin
             Name = "station",
             Path = "/stations/:index",
             Label = "station.title",
-            // A desktop keeps the list beside the station so the viewer can move
-            // on without going back; a television gives it the whole screen.
-            Layout = PluginLayout.ListDetail,
+            // One station, at a readable measure. `list-detail` is what this
+            // page wants — the wall beside the station, so the viewer can move
+            // on without going back — and it is not used yet because the design
+            // system has no list-item component to build the list out of. A
+            // layout is a promise about what the payload contains, and this
+            // payload is one thing.
+            Layout = PluginLayout.Standard,
             LayoutBySurface = { [PluginSurface.Tv] = PluginLayout.Immersive }
         });
 
@@ -124,7 +128,7 @@ public sealed class RadioUi : IPlugin, IUiPlugin
 
         List<PluginComponent> parts =
         [
-            .. Tile("art", station),
+            .. Tile("art", station, "1/3"),
             .. Heading("heading", station.Name, station.Genre ?? station.Country),
             new()
             {
@@ -155,7 +159,7 @@ public sealed class RadioUi : IPlugin, IUiPlugin
         {
             Id = "back",
             Component = "NMButton",
-            Props = new() { ["variant"] = "ghost" },
+            Props = new() { ["variant"] = "tertiary" },
             Items = [Text("back-label", "back")],
             Action = Table.GoTo("stations")
         });
@@ -227,21 +231,33 @@ public sealed class RadioUi : IPlugin, IUiPlugin
     /// never resolves. The tile is text-only instead, which is honest and what
     /// the grid handles anyway.
     /// </summary>
-    private static IEnumerable<PluginComponent> Tile(string id, RadioStation station)
+    private static IEnumerable<PluginComponent> Tile(string id, RadioStation station, string? width = null)
     {
         if (station.LogoUrl is null)
             yield break;
+
+        Dictionary<string, object?> props = new()
+        {
+            ["src"] = station.LogoUrl,
+            ["alt"] = station.Name,
+            ["fit"] = "contain",
+            // A tile has to hold its shape before the logo arrives and keep it
+            // when the logo never does. Station logos rot — several in this
+            // catalogue answer 403 or 404 today — and without a shape to
+            // reserve, those cards collapsed to a grey sliver.
+            ["aspectRatio"] = "square"
+        };
+
+        // On its own page the logo is one element among several rather than the
+        // page itself, so it takes a share of the width instead of all of it.
+        if (width is not null)
+            props["box"] = new Dictionary<string, object?> { ["width"] = width };
 
         yield return new()
         {
             Id = id,
             Component = "NMImage",
-            Props = new()
-            {
-                ["src"] = station.LogoUrl,
-                ["alt"] = station.Name,
-                ["fit"] = "contain"
-            }
+            Props = props
         };
     }
 }
