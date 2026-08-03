@@ -66,12 +66,16 @@ carry. If it cannot be parsed, the plugin logs a warning and fetches as normal.
 
 ## There is nothing to configure
 
-The settings page is read-only, and not by choice. A plugin cannot currently
-receive anything from its own UI on this server: plugin REST routes are served
-unversioned while the dashboard posts to `/api/v1`
+The settings page is read-only, and not by choice. When this version was built, a
+plugin could not receive anything from its own UI on this server at all: plugin REST
+routes were mounted unversioned while the dashboard posts to `/api/v1`, and the hub
+was no alternative because plugin hub handlers are never registered.
+
+The REST half was fixed upstream on 2026-07-30
 ([media-server issue #26](https://github.com/NoMercy-Entertainment/nomercy-media-server/issues/26)),
-and the hub is not an alternative because plugin hub handlers are never registered.
-Favourites and station editing arrive when either is fixed.
+after this version was built. This release therefore ships no REST controller and
+declares `"rest": false`; favourites and station editing become possible in a later
+one. The hub half is still open.
 
 ## License
 

@@ -7,14 +7,21 @@ namespace NoMercy.Plugin.InternetRadio;
 
 // Status, not settings.
 //
-// There is nothing to edit because there is nowhere to save to: the server's plugin
-// REST routes are unversioned while the client posts to /api/v1 (issue #26), and the
-// hub is not the alternative it looks like - nothing ever registers a plugin's hub
-// handler, so IPluginHubHandler never receives anything. Rendering a form that
-// silently 404s would be the false promise this plugin is meant to stop making.
+// This version has nothing to edit because when it was built there was nowhere to
+// save to. Both inbound transports were dead: the server's plugin REST routes were
+// mounted unversioned while the client posts to /api/v1, and the hub is not the
+// alternative it looks like - nothing registers a plugin's hub handler, so
+// IPluginHubHandler never receives anything.
 //
-// So this page answers the questions someone actually arrives with: where did these
-// stations come from, how old are they, and how do I add my own.
+// The REST half was fixed upstream on 2026-07-30 (media-server issue #26, commit
+// 37e5e7c), after this version was built - so a REST controller is now the way an
+// editable page would carry its saves. This plugin does not ship one yet, and it
+// declares "rest": false accordingly. The hub half is still open.
+//
+// Rendering a form with no controller behind it would be the false promise this
+// plugin exists to stop making, so this page answers the questions someone actually
+// arrives with instead: where did these stations come from, how old are they, and
+// how do I add my own.
 public static class SettingsView
 {
     private static IReadOnlyList<PluginTableColumn> Columns { get; } =
@@ -105,11 +112,12 @@ public static class SettingsView
         children.Add(
             PluginViews.Text(
                 "settings-editing-body",
-                "This page is read-only. A plugin cannot yet receive anything from its own UI on this "
-                    + "server: plugin REST routes are served unversioned while the dashboard posts to "
-                    + "/api/v1 (media-server issue #26), and the hub is not an alternative because "
-                    + "plugin hub handlers are never registered. Editable settings arrive when either "
-                    + "is fixed.",
+                "This page is read-only. When this version was built a plugin could not receive "
+                    + "anything from its own UI on this server, so there was nowhere for a form to "
+                    + "save to. The REST route that would carry it was fixed upstream on 2026-07-30 "
+                    + "(media-server issue #26); this version predates that and ships no controller, "
+                    + "so editable settings are a later release. Plugin hub handlers are still never "
+                    + "registered, so that route remains unavailable.",
                 "caption"
             )
         );
