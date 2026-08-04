@@ -26,6 +26,17 @@ public class SettingsViewTests
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
+    // The design system moved a component's words out of a "label" prop: they are now
+    // either a "text" prop or a Text child, depending on the component. Collecting them
+    // wherever they sit keeps an assertion about what a node says from having to know
+    // which of the two a given component happens to use.
+    private static List<string> Texts(PluginComponent node) =>
+        Flatten(node)
+            .Select(child => child.Props.GetValueOrDefault("text") as string)
+            .Where(text => text is not null)
+            .Select(text => text!)
+            .ToList();
+
     private static string Text(PluginView view) =>
         string.Join(" ", AllNodes(view).SelectMany(node => node.Props.Values)
             .Where(value => value is string)
@@ -63,11 +74,14 @@ public class SettingsViewTests
             .Where(node => node.Component == PluginComponentType.Badge)
             .Should().ContainSingle().Which;
 
-        // NMBadge carries its words in `text`, and its meaning on the surface —
-        // the design system keeps semantic colour there, so a payload never
-        // names one.
         badge.Props["text"].Should().Be(expectedLabel);
-        Dictionary<string, object?> surface = (Dictionary<string, object?>)badge.Props["surface"]!;
+
+        // NMBadge's own "variant" is its shape, not its meaning - the helper always
+        // sets it to "solid". The semantic the arms of SourceBadge actually choose
+        // between travels on the surface, so that is what has to be pinned here; an
+        // assertion on "variant" would now pass for every arm alike.
+        Dictionary<string, object?> surface = badge.Props["surface"]
+            .Should().BeOfType<Dictionary<string, object?>>().Subject;
         surface["status"].Should().Be(expectedVariant);
     }
 
@@ -103,10 +117,12 @@ public class SettingsViewTests
                 && node.Action.Type == PluginActionType.RefreshView)
             .Which;
 
-        // A button reads its label from what is inside it; ariaLabel is the same
-        // words, announced.
+        // A button now carries its words twice: an "ariaLabel" prop for assistive
+        // technology and a Text child for the eye. Both are asserted - a label that
+        // said "Reload" to a screen reader and "Refresh now" on screen would be the
+        // same dishonesty this test exists to prevent.
         button.Props["ariaLabel"].Should().Be("Reload");
-        button.Props["ariaLabel"].Should().NotBe("Refresh now");
+        Texts(button).Should().Contain("Reload").And.NotContain("Refresh now");
     }
 
     // The spec asks for both how old the catalogue is and when it next refreshes -
@@ -138,9 +154,12 @@ public class SettingsViewTests
         PluginComponent table = PluginNodes.Tables(Build(catalog)).First();
 
         PluginNodes.Rows(table).Should().HaveCount(2);
-        PluginNodes.Rows(table).Should().Contain(row =>
+        PluginNodes.Rows(table).Should().ContainSingle(row =>
             PluginNodes.Value(table, row, "Genre") == "Ambient"
             && PluginNodes.Value(table, row, "Stations") == "2");
+        PluginNodes.Rows(table).Should().ContainSingle(row =>
+            PluginNodes.Value(table, row, "Genre") == "Rock"
+            && PluginNodes.Value(table, row, "Stations") == "1");
     }
 
     // A stale catalogue has to explain itself, or it looks like the plugin simply

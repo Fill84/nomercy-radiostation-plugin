@@ -42,6 +42,24 @@ public class StationViewTests
     private static PluginComponent? ActionOfType(PluginView view, string type) =>
         AllNodes(view).FirstOrDefault(node => node.Action?.Type == type);
 
+    // By id, not by component type. The design system collapsed Container, List, Row,
+    // Grid, Card, Detail, Form and Table onto the single NMCard component, so
+    // PluginComponentType.Table, .Detail and .Container are now the same string and a
+    // search by type matches every container on the page.
+    private static PluginComponent Node(PluginView view, string id) =>
+        AllNodes(view).Single(node => node.Id == id);
+
+    // A table renders a header row ahead of its body rows, and a body row turns each
+    // authored cell into a Cell holding a Text node at a derived id - the flat props
+    // the view handed in are not what the renderer keeps.
+    private static List<PluginComponent> Rows(PluginComponent table) =>
+        table.Items.Skip(1).ToList();
+
+    private static string CellText(PluginComponent row, string columnKey) =>
+        Flatten(row)
+            .Single(node => node.Id == $"{row.Id}-{columnKey}-value")
+            .Props.GetValueOrDefault("text") as string ?? string.Empty;
+
     [Fact]
     public void OffersPlayAndEnqueueForTheStream()
     {
@@ -169,13 +187,16 @@ public class StationViewTests
         // The sentence-builder must not fall back to an empty or whitespace-only
         // string when nothing is known - it has to be null, or the Detail component
         // renders a stray blank line where a description would go.
-        // The description is a helper line beside the heading now, not a prop, so
-        // "null rather than blank" is the line being absent rather than present
-        // and empty. A detail is an NMCard like a card is, so it is found by its
-        // own id rather than by tag.
-        AllNodes(view).Should().Contain(node => node.Id == "station-detail-b");
-        AllNodes(view).Should().NotContain(node =>
-            node.Id == "station-detail-b-secondary");
+        //
+        // Detail no longer carries the description as a prop to read back: it renders
+        // the line as its own Text node, and only when there is something to say. So
+        // the absence is asserted the way it now shows up - no blank text anywhere
+        // under the detail - which is the rendered outcome the prop only stood in for.
+        PluginComponent detail = Node(view, "station-detail-b");
+        Flatten(detail).Should().NotContain(node =>
+            node.Props.ContainsKey("text")
+            && string.IsNullOrWhiteSpace(node.Props["text"] as string));
+        Flatten(detail).Should().NotContain(node => node.Id == "station-detail-b-secondary");
 
         // Stream and Source are the only two facts that always survive - Stream
         // because it is required on RadioStation, Source because Provenance never

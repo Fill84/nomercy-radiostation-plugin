@@ -213,16 +213,22 @@ jobs:
           cp "$PLUGIN_DIR/README.md"       "$STAGING/"
           cp LICENSE                       "$STAGING/"
 
-          # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll and
-          # NoMercy.Events.dll. Both are the host's and live in its shared-assembly
-          # set. Shipping a copy gives the load context two incompatible identities of
-          # the same types, and the failure looks like an unrelated cast error far
-          # from its cause.
+          # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll,
+          # NoMercy.Events.dll, NoMercy.Design.dll and Newtonsoft.Json.dll. All four
+          # are the host's and live in its shared-assembly set. Shipping a copy gives
+          # the load context two incompatible identities of the same types, and the
+          # failure looks like an unrelated cast error far from its cause.
+          #
+          # Design and Newtonsoft joined that set when the abstractions took a
+          # ProjectReference on the design system so a plugin could name all fifty-six
+          # components. Newtonsoft is the one with the quietest failure: a plugin's
+          # [JsonProperty] has to resolve to the host's copy or the host's formatter
+          # ignores it, and nothing throws - the property is simply dropped on the wire.
           #
           # Checked against $BIN, not $STAGING: staging holds exactly the five files
           # copied above by name, so neither could ever appear there and the check
           # could never fire.
-          if ls "$BIN" | grep -E '^NoMercy\.(Plugins\.Abstractions|Events)\.dll$'; then
+          if ls "$BIN" | grep -E '^(NoMercy\.(Plugins\.Abstractions|Events|Design)|Newtonsoft\.Json)\.dll$'; then
             echo "::error::a host-owned assembly was copied into the build output" >&2
             echo "see the PackageReference comment in the plugin csproj" >&2
             exit 1
@@ -364,11 +370,20 @@ jobs:
           trap 'rm -f "$CURL_CFG"' EXIT
           printf 'header = "Authorization: token %s"\n' "$TOKEN" > "$CURL_CFG"
 
+          # Creation has to tolerate the tag already having a release, or the job
+          # cannot be re-run. That is not hypothetical: run 13 published v1.0.2 and
+          # then failed in the step below it, and the only way to drive the bump home
+          # was by hand, because a re-run would have been refused right here with a
+          # 409 that `curl -f` turns into a step failure. A tag build must be safe to
+          # repeat all the way to the end.
           REL_JSON=$(curl -fsSL --config "$CURL_CFG" -X POST \
             -H "Content-Type: application/json" \
             "$API/repos/$REPO/releases" \
             -d "$(jq -n --arg tag "$TAG" --arg body "$BODY" \
-                  '{tag_name:$tag, name:$tag, body:$body, draft:false, prerelease:false}')")
+                  '{tag_name:$tag, name:$tag, body:$body, draft:false, prerelease:false}')") || {
+            echo "creation refused - looking for an existing release on $TAG"
+            REL_JSON=$(curl -fsSL --config "$CURL_CFG" "$API/repos/$REPO/releases/tags/$TAG")
+          }
 
           REL_ID=$(echo "$REL_JSON" | jq -r '.id')
           if [ -z "$REL_ID" ] || [ "$REL_ID" = "null" ]; then
@@ -376,12 +391,25 @@ jobs:
             exit 1
           fi
 
+          # Uploading a name that already exists does not replace the old asset, it
+          # adds a second one carrying the same name - so a re-run would leave the
+          # release listing two zips, and a catalogue following the download URL would
+          # get whichever the API happens to return first. Delete, then upload.
+          EXISTING=$(curl -fsSL --config "$CURL_CFG" "$API/repos/$REPO/releases/$REL_ID/assets")
+
           for asset in "$ZIP" repository.json; do
-            echo "uploading $asset"
+            NAME=$(basename "$asset")
+            for stale in $(echo "$EXISTING" | jq -r --arg n "$NAME" '.[] | select(.name == $n) | .id'); do
+              echo "removing existing asset $NAME ($stale)"
+              curl -fsSL --config "$CURL_CFG" -X DELETE \
+                "$API/repos/$REPO/releases/$REL_ID/assets/$stale"
+            done
+
+            echo "uploading $NAME"
             curl -fsSL --config "$CURL_CFG" -X POST \
               -H "Content-Type: application/octet-stream" \
               --data-binary "@$asset" \
-              "$API/repos/$REPO/releases/$REL_ID/assets?name=$(basename "$asset")"
+              "$API/repos/$REPO/releases/$REL_ID/assets?name=$NAME"
           done
 
           echo "Release published: $TAG"
@@ -433,11 +461,27 @@ jobs:
 
           git fetch --depth=1 origin "$BRANCH"
           git checkout -q -B "$BRANCH" FETCH_HEAD
-          git config --local --unset-all http.extraHeader
+          # NOT unset here, unlike the checkout step. That step's last authenticated
+          # call is its fetch; this step's is the push at the bottom. Unsetting the
+          # header here left `git push` with no credentials, so git fell back to
+          # prompting for a username, found no tty, and killed the job with exit 128 -
+          # after the release had already published. The unset moved below the push.
 
           # All three, or ManifestTests fails on the very next push.
-          jq --arg v "$NEXT" '.version = $v' "$PLUGIN_DIR/plugin.json" > /tmp/manifest.json
-          mv /tmp/manifest.json "$PLUGIN_DIR/plugin.json"
+          #
+          # sed rather than jq, for two reasons. `jq '.version = $v'` re-prints the
+          # whole document in jq's own style, which flattens the manifest's aligned
+          # `hooks`, `network` and `mounts` blocks onto one line each - run 13 turned a
+          # three-line bump into "24 insertions(+), 7 deletions(-)". And it needs a
+          # separate write target, which was a fixed /tmp path: the predictable temp
+          # file this workflow deliberately avoids everywhere else. sed edits one line
+          # in place and needs no temp file at all.
+          sed -i "s|\"version\": \"$RELEASED\"|\"version\": \"$NEXT\"|" \
+            "$PLUGIN_DIR/plugin.json"
+          grep -qF "\"version\": \"$NEXT\"" "$PLUGIN_DIR/plugin.json" || {
+            echo "::error::sed found no \"version\": \"$RELEASED\" to replace in $PLUGIN_DIR/plugin.json" >&2
+            exit 1
+          }
 
           sed -i "s|<Version>$RELEASED</Version>|<Version>$NEXT</Version>|" \
             "$PLUGIN_DIR/$PLUGIN_NAME.csproj"
@@ -471,3 +515,8 @@ jobs:
             git commit -m "chore(release): open $NEXT for development [skip ci]"
             git push origin "HEAD:$BRANCH"
           fi
+
+          # Last authenticated call is done. The trap is the backstop for the failure
+          # paths; this keeps the "unset as soon as it is no longer needed" rule the
+          # checkout step follows, just at the point where that is actually true here.
+          git config --local --unset-all http.extraHeader

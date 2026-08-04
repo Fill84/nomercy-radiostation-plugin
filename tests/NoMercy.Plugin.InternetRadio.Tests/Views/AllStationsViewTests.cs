@@ -45,8 +45,13 @@ public class AllStationsViewTests
 
         PluginComponent table = PluginNodes.Table(view);
 
+        // A column no row fills still renders its cell, as empty text: that is exactly
+        // the blank stripe this test exists to catch, so an assertion that the cell
+        // merely exists would no longer catch anything.
         foreach (PluginComponent row in PluginNodes.Rows(table))
         {
+            row.Items.Should().HaveSameCount(PluginNodes.HeaderRow(table).Items);
+
             foreach (string column in PluginNodes.Columns(table))
             {
                 PluginNodes.Value(table, row, column).Should().NotBeEmpty();
