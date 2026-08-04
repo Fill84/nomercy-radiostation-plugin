@@ -13,7 +13,7 @@ namespace NoMercy.Plugin.InternetRadio;
 // is concerned.
 public static class PluginIdentity
 {
-    public static Guid Id { get; } = new("b3d4f1a2-7c5e-4d8a-9f10-1c2b3a4d5e6f");
+    public static Ulid Id { get; } = Ulid.Parse("5KTKRT4Z2Y9P59Y40W5CX4TQKF");
 
     public const string Name = "Internet Radio";
 

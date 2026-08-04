@@ -25,7 +25,7 @@
             identities of the same types. That surfaces as an unrelated-looking cast error
             far from its cause. The CI packaging step asserts neither assembly ships.
         -->
-        <PackageReference Include="NoMercy.Plugins.Abstractions" Version="10.0.111" />
+        <PackageReference Include="NoMercy.Plugins.Abstractions" Version="10.0.114" />
     </ItemGroup>
 
     <ItemGroup>

@@ -27,7 +27,7 @@ public class ManifestTests
     {
         PluginManifest manifest = LoadManifest();
 
-        manifest.Id.Should().NotBeEmpty();
+        manifest.Id.Should().NotBe(Ulid.Empty);
         manifest.Name.Should().NotBeNullOrWhiteSpace();
         manifest.Description.Should().NotBeNullOrWhiteSpace();
         manifest.Version.Should().NotBeNullOrWhiteSpace();

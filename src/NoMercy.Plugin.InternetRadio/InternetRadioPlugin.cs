@@ -63,7 +63,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     public string Name => PluginIdentity.Name;
     public string Description => PluginIdentity.Description;
-    public Guid Id => PluginIdentity.Id;
+    public Ulid Id => PluginIdentity.Id;
     public Version Version => PluginIdentity.Version;
 
     // Captures the context and nothing else. No I/O, no network, no config read: a
