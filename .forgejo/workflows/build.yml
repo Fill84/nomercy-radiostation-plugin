@@ -364,11 +364,20 @@ jobs:
           trap 'rm -f "$CURL_CFG"' EXIT
           printf 'header = "Authorization: token %s"\n' "$TOKEN" > "$CURL_CFG"
 
+          # Creation has to tolerate the tag already having a release, or the job
+          # cannot be re-run. That is not hypothetical: run 13 published v1.0.2 and
+          # then failed in the step below it, and the only way to drive the bump home
+          # was by hand, because a re-run would have been refused right here with a
+          # 409 that `curl -f` turns into a step failure. A tag build must be safe to
+          # repeat all the way to the end.
           REL_JSON=$(curl -fsSL --config "$CURL_CFG" -X POST \
             -H "Content-Type: application/json" \
             "$API/repos/$REPO/releases" \
             -d "$(jq -n --arg tag "$TAG" --arg body "$BODY" \
-                  '{tag_name:$tag, name:$tag, body:$body, draft:false, prerelease:false}')")
+                  '{tag_name:$tag, name:$tag, body:$body, draft:false, prerelease:false}')") || {
+            echo "creation refused - looking for an existing release on $TAG"
+            REL_JSON=$(curl -fsSL --config "$CURL_CFG" "$API/repos/$REPO/releases/tags/$TAG")
+          }
 
           REL_ID=$(echo "$REL_JSON" | jq -r '.id')
           if [ -z "$REL_ID" ] || [ "$REL_ID" = "null" ]; then
@@ -376,12 +385,25 @@ jobs:
             exit 1
           fi
 
+          # Uploading a name that already exists does not replace the old asset, it
+          # adds a second one carrying the same name - so a re-run would leave the
+          # release listing two zips, and a catalogue following the download URL would
+          # get whichever the API happens to return first. Delete, then upload.
+          EXISTING=$(curl -fsSL --config "$CURL_CFG" "$API/repos/$REPO/releases/$REL_ID/assets")
+
           for asset in "$ZIP" repository.json; do
-            echo "uploading $asset"
+            NAME=$(basename "$asset")
+            for stale in $(echo "$EXISTING" | jq -r --arg n "$NAME" '.[] | select(.name == $n) | .id'); do
+              echo "removing existing asset $NAME ($stale)"
+              curl -fsSL --config "$CURL_CFG" -X DELETE \
+                "$API/repos/$REPO/releases/$REL_ID/assets/$stale"
+            done
+
+            echo "uploading $NAME"
             curl -fsSL --config "$CURL_CFG" -X POST \
               -H "Content-Type: application/octet-stream" \
               --data-binary "@$asset" \
-              "$API/repos/$REPO/releases/$REL_ID/assets?name=$(basename "$asset")"
+              "$API/repos/$REPO/releases/$REL_ID/assets?name=$NAME"
           done
 
           echo "Release published: $TAG"
@@ -440,8 +462,20 @@ jobs:
           # after the release had already published. The unset moved below the push.
 
           # All three, or ManifestTests fails on the very next push.
-          jq --arg v "$NEXT" '.version = $v' "$PLUGIN_DIR/plugin.json" > /tmp/manifest.json
-          mv /tmp/manifest.json "$PLUGIN_DIR/plugin.json"
+          #
+          # sed rather than jq, for two reasons. `jq '.version = $v'` re-prints the
+          # whole document in jq's own style, which flattens the manifest's aligned
+          # `hooks`, `network` and `mounts` blocks onto one line each - run 13 turned a
+          # three-line bump into "24 insertions(+), 7 deletions(-)". And it needs a
+          # separate write target, which was a fixed /tmp path: the predictable temp
+          # file this workflow deliberately avoids everywhere else. sed edits one line
+          # in place and needs no temp file at all.
+          sed -i "s|\"version\": \"$RELEASED\"|\"version\": \"$NEXT\"|" \
+            "$PLUGIN_DIR/plugin.json"
+          grep -qF "\"version\": \"$NEXT\"" "$PLUGIN_DIR/plugin.json" || {
+            echo "::error::sed found no \"version\": \"$RELEASED\" to replace in $PLUGIN_DIR/plugin.json" >&2
+            exit 1
+          }
 
           sed -i "s|<Version>$RELEASED</Version>|<Version>$NEXT</Version>|" \
             "$PLUGIN_DIR/$PLUGIN_NAME.csproj"
