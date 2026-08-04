@@ -168,8 +168,13 @@ public class StationViewTests
         // The sentence-builder must not fall back to an empty or whitespace-only
         // string when nothing is known - it has to be null, or the Detail component
         // renders a stray blank line where a description would go.
-        PluginComponent detail = AllNodes(view).Single(node => node.Component == PluginComponentType.Detail);
-        detail.Props["description"].Should().BeNull();
+        // The description is a helper line beside the heading now, not a prop, so
+        // "null rather than blank" is the line being absent rather than present
+        // and empty. A detail is an NMCard like a card is, so it is found by its
+        // own id rather than by tag.
+        AllNodes(view).Should().Contain(node => node.Id == "station-detail-b");
+        AllNodes(view).Should().NotContain(node =>
+            node.Id == "station-detail-b-secondary");
 
         // Stream and Source are the only two facts that always survive - Stream
         // because it is required on RadioStation, Source because Provenance never

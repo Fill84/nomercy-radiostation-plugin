@@ -43,7 +43,7 @@ public class BrowseViewTests
         PluginView view = BrowseView.Build(Catalog(Station("a")));
 
         PluginComponent card = AllNodes(view)
-            .Should().ContainSingle(node => node.Component == PluginComponentType.Card).Subject;
+            .Should().ContainSingle(node => PluginNodes.IsCard(node)).Subject;
 
         card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
         card.Action.Payload["streamUrl"].Should().Be("https://example.com/a");
@@ -81,7 +81,7 @@ public class BrowseViewTests
         PluginView view = BrowseView.Build(
             Catalog(Station("quiet", "Ambient", 1), Station("loud", "Rock", 99)));
 
-        AllNodes(view).Where(node => node.Component == PluginComponentType.Card)
+        AllNodes(view).Where(node => PluginNodes.IsCard(node))
             .First().Action!.Payload["title"].Should().Be("Station loud");
     }
 

@@ -63,8 +63,12 @@ public class SettingsViewTests
             .Where(node => node.Component == PluginComponentType.Badge)
             .Should().ContainSingle().Which;
 
-        badge.Props["label"].Should().Be(expectedLabel);
-        badge.Props["variant"].Should().Be(expectedVariant);
+        // NMBadge carries its words in `text`, and its meaning on the surface —
+        // the design system keeps semantic colour there, so a payload never
+        // names one.
+        badge.Props["text"].Should().Be(expectedLabel);
+        Dictionary<string, object?> surface = (Dictionary<string, object?>)badge.Props["surface"]!;
+        surface["status"].Should().Be(expectedVariant);
     }
 
     // The first thing anyone wants when a station is missing.
@@ -99,8 +103,10 @@ public class SettingsViewTests
                 && node.Action.Type == PluginActionType.RefreshView)
             .Which;
 
-        button.Props["label"].Should().Be("Reload");
-        button.Props["label"].Should().NotBe("Refresh now");
+        // A button reads its label from what is inside it; ariaLabel is the same
+        // words, announced.
+        button.Props["ariaLabel"].Should().Be("Reload");
+        button.Props["ariaLabel"].Should().NotBe("Refresh now");
     }
 
     // The spec asks for both how old the catalogue is and when it next refreshes -
