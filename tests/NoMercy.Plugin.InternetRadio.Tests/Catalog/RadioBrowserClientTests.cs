@@ -125,14 +125,17 @@ public class RadioBrowserClientTests
     // on DefaultRequestHeaders: the HttpClient belongs to the host and is shared, so
     // mutating it would leak this plugin's identity onto another plugin's traffic.
     [Fact]
-    public async Task Requests_IdentifyThePlugin()
+    public async Task Requests_LeaveTheirIdentityToTheHost()
     {
+        // The host stamps the owner's configured user agent and this plugin's
+        // attribution on the way out. A plugin setting its own would be choosing
+        // what a third party sees the owner's server as.
         (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
         handler.Respond(OneStation);
 
         await client.SearchByTagAsync("ambient", 5, CancellationToken.None);
 
-        handler.Requests[0].Headers.UserAgent.ToString().Should().Contain("NoMercy.Plugin.InternetRadio");
+        handler.Requests[0].Headers.UserAgent.Should().BeEmpty();
     }
 
     [Theory]
