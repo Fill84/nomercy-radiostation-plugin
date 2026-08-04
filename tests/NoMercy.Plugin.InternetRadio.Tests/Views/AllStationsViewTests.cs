@@ -36,8 +36,25 @@ public class AllStationsViewTests
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
+    // By id, not by component type. The design system collapsed Container, List, Row,
+    // Grid, Card, Detail, Form and Table onto the single NMCard component, so
+    // PluginComponentType.Table now equals PluginComponentType.Container and a search
+    // by type matches every container on the page.
     private static PluginComponent Table(PluginView view) =>
-        AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
+        AllNodes(view).Single(node => node.Id == "all-table");
+
+    // The table renders a header row ahead of its body rows, so the stations start at
+    // index 1. Skipping it here keeps every assertion below about actual stations.
+    private static List<PluginComponent> Rows(PluginView view) =>
+        Table(view).Items.Skip(1).ToList();
+
+    // A body row no longer carries the authored cells as flat props: the table turns
+    // each one into a Cell holding a Text node at a derived id. This reads the value
+    // back out of the place the renderer actually puts it.
+    private static string CellText(PluginComponent row, string columnKey) =>
+        Flatten(row)
+            .Single(node => node.Id == $"{row.Id}-{columnKey}-value")
+            .Props.GetValueOrDefault("text") as string ?? string.Empty;
 
     // A row supplies its cells by column key, so a column the rows never fill renders
     // as a blank stripe down the table.
@@ -47,14 +64,20 @@ public class AllStationsViewTests
         PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
 
         PluginComponent table = Table(view);
-        List<PluginTableColumn> columns = (List<PluginTableColumn>)table.Props["columns"]!;
+        PluginComponent header = table.Items[0];
 
-        foreach (PluginComponent row in table.Items)
+        // The column list is no longer a prop to read back - the table spends it
+        // building the header. So the header is what says how many columns there are,
+        // and a row that fills every one of them has a cell for each with words in it.
+        // A column no row fills still renders its cell, as empty text: that is exactly
+        // the blank stripe this test exists to catch, so an assertion that the cell
+        // merely exists would no longer catch anything.
+        foreach (PluginComponent row in table.Items.Skip(1))
         {
-            foreach (PluginTableColumn column in columns)
-            {
-                row.Props.Should().ContainKey(column.Key);
-            }
+            row.Items.Should().HaveSameCount(header.Items);
+            row.Items.Should().OnlyContain(cell =>
+                Flatten(cell).Any(node =>
+                    !string.IsNullOrEmpty(node.Props.GetValueOrDefault("text") as string)));
         }
     }
 
@@ -64,7 +87,7 @@ public class AllStationsViewTests
     {
         PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
 
-        PluginComponent row = Table(view).Items.Should().ContainSingle().Subject;
+        PluginComponent row = Rows(view).Should().ContainSingle().Subject;
 
         row.Action!.Type.Should().Be(PluginActionType.Navigate);
         row.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
@@ -76,7 +99,7 @@ public class AllStationsViewTests
         PluginView view = AllStationsView.Build(
             Catalog(Station("b", "Zulu FM"), Station("a", "Alpha FM")));
 
-        Table(view).Items.Select(row => row.Props["name"]).Should().Equal("Alpha FM", "Zulu FM");
+        Rows(view).Select(row => CellText(row, "name")).Should().Equal("Alpha FM", "Zulu FM");
     }
 
     // radio-browser reports 0 for "unknown", which the model stores as null. Rendering
@@ -86,9 +109,9 @@ public class AllStationsViewTests
     {
         RadioStation unknown = Station("a", "Alpha FM") with { BitrateKbps = null };
 
-        PluginComponent row = Table(AllStationsView.Build(Catalog(unknown))).Items.Single();
+        PluginComponent row = Rows(AllStationsView.Build(Catalog(unknown))).Single();
 
-        row.Props["bitrate"].Should().Be("—");
+        CellText(row, "bitrate").Should().Be("—");
     }
 
     [Fact]

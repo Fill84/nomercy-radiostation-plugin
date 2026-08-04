@@ -213,16 +213,22 @@ jobs:
           cp "$PLUGIN_DIR/README.md"       "$STAGING/"
           cp LICENSE                       "$STAGING/"
 
-          # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll and
-          # NoMercy.Events.dll. Both are the host's and live in its shared-assembly
-          # set. Shipping a copy gives the load context two incompatible identities of
-          # the same types, and the failure looks like an unrelated cast error far
-          # from its cause.
+          # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll,
+          # NoMercy.Events.dll, NoMercy.Design.dll and Newtonsoft.Json.dll. All four
+          # are the host's and live in its shared-assembly set. Shipping a copy gives
+          # the load context two incompatible identities of the same types, and the
+          # failure looks like an unrelated cast error far from its cause.
+          #
+          # Design and Newtonsoft joined that set when the abstractions took a
+          # ProjectReference on the design system so a plugin could name all fifty-six
+          # components. Newtonsoft is the one with the quietest failure: a plugin's
+          # [JsonProperty] has to resolve to the host's copy or the host's formatter
+          # ignores it, and nothing throws - the property is simply dropped on the wire.
           #
           # Checked against $BIN, not $STAGING: staging holds exactly the five files
           # copied above by name, so neither could ever appear there and the check
           # could never fire.
-          if ls "$BIN" | grep -E '^NoMercy\.(Plugins\.Abstractions|Events)\.dll$'; then
+          if ls "$BIN" | grep -E '^(NoMercy\.(Plugins\.Abstractions|Events|Design)|Newtonsoft\.Json)\.dll$'; then
             echo "::error::a host-owned assembly was copied into the build output" >&2
             echo "see the PackageReference comment in the plugin csproj" >&2
             exit 1

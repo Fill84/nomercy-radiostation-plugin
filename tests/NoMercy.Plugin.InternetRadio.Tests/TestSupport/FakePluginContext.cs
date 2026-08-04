@@ -12,7 +12,7 @@ public sealed class FakePluginContext(string dataFolderPath, HttpClient httpClie
     public ILogger Logger { get; } = new RecordingLogger();
     public string DataFolderPath { get; } = dataFolderPath;
     public HttpClient HttpClient { get; } = httpClient;
-    public Guid PluginId => PluginIdentity.Id;
+    public Ulid PluginId => PluginIdentity.Id;
 
     public RecordingLogger Recorded => (RecordingLogger)Logger;
 

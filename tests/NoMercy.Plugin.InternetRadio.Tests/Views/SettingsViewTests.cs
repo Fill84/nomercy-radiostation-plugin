@@ -26,6 +26,17 @@ public class SettingsViewTests
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
+    // The design system moved a component's words out of a "label" prop: they are now
+    // either a "text" prop or a Text child, depending on the component. Collecting them
+    // wherever they sit keeps an assertion about what a node says from having to know
+    // which of the two a given component happens to use.
+    private static List<string> Texts(PluginComponent node) =>
+        Flatten(node)
+            .Select(child => child.Props.GetValueOrDefault("text") as string)
+            .Where(text => text is not null)
+            .Select(text => text!)
+            .ToList();
+
     private static string Text(PluginView view) =>
         string.Join(" ", AllNodes(view).SelectMany(node => node.Props.Values)
             .Where(value => value is string)
@@ -63,8 +74,15 @@ public class SettingsViewTests
             .Where(node => node.Component == PluginComponentType.Badge)
             .Should().ContainSingle().Which;
 
-        badge.Props["label"].Should().Be(expectedLabel);
-        badge.Props["variant"].Should().Be(expectedVariant);
+        badge.Props["text"].Should().Be(expectedLabel);
+
+        // NMBadge's own "variant" is its shape, not its meaning - the helper always
+        // sets it to "solid". The semantic the arms of SourceBadge actually choose
+        // between travels on the surface, so that is what has to be pinned here; an
+        // assertion on "variant" would now pass for every arm alike.
+        Dictionary<string, object?> surface = badge.Props["surface"]
+            .Should().BeOfType<Dictionary<string, object?>>().Subject;
+        surface["status"].Should().Be(expectedVariant);
     }
 
     // The first thing anyone wants when a station is missing.
@@ -99,8 +117,12 @@ public class SettingsViewTests
                 && node.Action.Type == PluginActionType.RefreshView)
             .Which;
 
-        button.Props["label"].Should().Be("Reload");
-        button.Props["label"].Should().NotBe("Refresh now");
+        // A button now carries its words twice: an "ariaLabel" prop for assistive
+        // technology and a Text child for the eye. Both are asserted - a label that
+        // said "Reload" to a screen reader and "Refresh now" on screen would be the
+        // same dishonesty this test exists to prevent.
+        button.Props["ariaLabel"].Should().Be("Reload");
+        Texts(button).Should().Contain("Reload").And.NotContain("Refresh now");
     }
 
     // The spec asks for both how old the catalogue is and when it next refreshes -
@@ -129,12 +151,25 @@ public class SettingsViewTests
             [Station("a", "Ambient"), Station("b", "Ambient"), Station("c", "Rock")],
             CatalogSource.Fetched, Now);
 
+        // By id, not by component type. The design system collapsed Container, List,
+        // Row, Grid, Card, Detail, Form and Table onto the single NMCard component, so
+        // PluginComponentType.Table now equals PluginComponentType.Container and a
+        // search by type finds the page root first. The id is what still identifies
+        // one particular node, which is what ids are for.
         PluginComponent table = AllNodes(Build(catalog))
-            .First(node => node.Component == PluginComponentType.Table);
+            .Single(node => node.Id == "settings-genres");
 
-        table.Items.Should().HaveCount(2);
-        table.Items.Should().Contain(row =>
-            (string)row.Props["genre"]! == "Ambient" && (string)row.Props["stations"]! == "2");
+        // The table renders a header row ahead of its body rows now, and a body row no
+        // longer carries the authored cells as flat props - each one becomes a Cell
+        // holding the value as text. So this reads the rendered words per row rather
+        // than the dictionary the view handed in, which the renderer no longer keeps.
+        List<string> rows = table.Items.Skip(1)
+            .Select(row => string.Join(" ", Texts(row)))
+            .ToList();
+
+        rows.Should().HaveCount(2);
+        rows.Should().ContainSingle(row => row.Contains("Ambient") && row.Contains("2"));
+        rows.Should().ContainSingle(row => row.Contains("Rock") && row.Contains("1"));
     }
 
     // A stale catalogue has to explain itself, or it looks like the plugin simply

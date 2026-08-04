@@ -42,6 +42,24 @@ public class StationViewTests
     private static PluginComponent? ActionOfType(PluginView view, string type) =>
         AllNodes(view).FirstOrDefault(node => node.Action?.Type == type);
 
+    // By id, not by component type. The design system collapsed Container, List, Row,
+    // Grid, Card, Detail, Form and Table onto the single NMCard component, so
+    // PluginComponentType.Table, .Detail and .Container are now the same string and a
+    // search by type matches every container on the page.
+    private static PluginComponent Node(PluginView view, string id) =>
+        AllNodes(view).Single(node => node.Id == id);
+
+    // A table renders a header row ahead of its body rows, and a body row turns each
+    // authored cell into a Cell holding a Text node at a derived id - the flat props
+    // the view handed in are not what the renderer keeps.
+    private static List<PluginComponent> Rows(PluginComponent table) =>
+        table.Items.Skip(1).ToList();
+
+    private static string CellText(PluginComponent row, string columnKey) =>
+        Flatten(row)
+            .Single(node => node.Id == $"{row.Id}-{columnKey}-value")
+            .Props.GetValueOrDefault("text") as string ?? string.Empty;
+
     [Fact]
     public void OffersPlayAndEnqueueForTheStream()
     {
@@ -120,8 +138,8 @@ public class StationViewTests
     {
         PluginView view = StationView.Build(Catalog(Full), "a");
 
-        PluginComponent table = AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
-        IEnumerable<object?> values = table.Items.Select(row => row.Props["value"]);
+        IEnumerable<string> values = Rows(Node(view, "station-facts-a"))
+            .Select(row => CellText(row, "value"));
 
         values.Should().Contain("Ambient").And.Contain("NL").And.Contain("https://example.com/a");
     }
@@ -168,18 +186,25 @@ public class StationViewTests
         // The sentence-builder must not fall back to an empty or whitespace-only
         // string when nothing is known - it has to be null, or the Detail component
         // renders a stray blank line where a description would go.
-        PluginComponent detail = AllNodes(view).Single(node => node.Component == PluginComponentType.Detail);
-        detail.Props["description"].Should().BeNull();
+        //
+        // Detail no longer carries the description as a prop to read back: it renders
+        // the line as its own Text node, and only when there is something to say. So
+        // the absence is asserted the way it now shows up - no blank text anywhere
+        // under the detail - which is the rendered outcome the prop only stood in for.
+        PluginComponent detail = Node(view, "station-detail-b");
+        Flatten(detail).Should().NotContain(node =>
+            node.Props.ContainsKey("text")
+            && string.IsNullOrWhiteSpace(node.Props["text"] as string));
 
         // Stream and Source are the only two facts that always survive - Stream
         // because it is required on RadioStation, Source because Provenance never
         // returns null. Every other fact is optional and absent here, and a filtered
         // fact must never leave a blank or null cell behind.
-        PluginComponent facts = AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
-        facts.Items.Should().HaveCount(2);
-        facts.Items.Select(row => row.Props["field"]).Should().Equal("Stream", "Source");
-        facts.Items.Select(row => row.Props["value"]).Should()
-            .OnlyContain(value => value != null && !string.IsNullOrWhiteSpace(value.ToString()));
+        List<PluginComponent> facts = Rows(Node(view, "station-facts-b"));
+        facts.Should().HaveCount(2);
+        facts.Select(row => CellText(row, "field")).Should().Equal("Stream", "Source");
+        facts.Select(row => CellText(row, "value")).Should()
+            .OnlyContain(value => !string.IsNullOrWhiteSpace(value));
     }
 
     [Fact]
