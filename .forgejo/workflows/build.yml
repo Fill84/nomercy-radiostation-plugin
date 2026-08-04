@@ -433,7 +433,11 @@ jobs:
 
           git fetch --depth=1 origin "$BRANCH"
           git checkout -q -B "$BRANCH" FETCH_HEAD
-          git config --local --unset-all http.extraHeader
+          # NOT unset here, unlike the checkout step. That step's last authenticated
+          # call is its fetch; this step's is the push at the bottom. Unsetting the
+          # header here left `git push` with no credentials, so git fell back to
+          # prompting for a username, found no tty, and killed the job with exit 128 -
+          # after the release had already published. The unset moved below the push.
 
           # All three, or ManifestTests fails on the very next push.
           jq --arg v "$NEXT" '.version = $v' "$PLUGIN_DIR/plugin.json" > /tmp/manifest.json
@@ -471,3 +475,8 @@ jobs:
             git commit -m "chore(release): open $NEXT for development [skip ci]"
             git push origin "HEAD:$BRANCH"
           fi
+
+          # Last authenticated call is done. The trap is the backstop for the failure
+          # paths; this keeps the "unset as soon as it is no longer needed" rule the
+          # checkout step follows, just at the point where that is actually true here.
+          git config --local --unset-all http.extraHeader
