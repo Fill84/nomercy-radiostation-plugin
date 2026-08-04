@@ -36,9 +36,6 @@ public class AllStationsViewTests
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
-    private static PluginComponent Table(PluginView view) =>
-        AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
-
     // A row supplies its cells by column key, so a column the rows never fill renders
     // as a blank stripe down the table.
     [Fact]
@@ -46,14 +43,13 @@ public class AllStationsViewTests
     {
         PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
 
-        PluginComponent table = Table(view);
-        List<PluginTableColumn> columns = (List<PluginTableColumn>)table.Props["columns"]!;
+        PluginComponent table = PluginNodes.Table(view);
 
-        foreach (PluginComponent row in table.Items)
+        foreach (PluginComponent row in PluginNodes.Rows(table))
         {
-            foreach (PluginTableColumn column in columns)
+            foreach (string column in PluginNodes.Columns(table))
             {
-                row.Props.Should().ContainKey(column.Key);
+                PluginNodes.Value(table, row, column).Should().NotBeEmpty();
             }
         }
     }
@@ -64,7 +60,8 @@ public class AllStationsViewTests
     {
         PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
 
-        PluginComponent row = Table(view).Items.Should().ContainSingle().Subject;
+        PluginComponent row = PluginNodes.Rows(PluginNodes.Table(view))
+            .Should().ContainSingle().Subject;
 
         row.Action!.Type.Should().Be(PluginActionType.Navigate);
         row.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
@@ -76,7 +73,11 @@ public class AllStationsViewTests
         PluginView view = AllStationsView.Build(
             Catalog(Station("b", "Zulu FM"), Station("a", "Alpha FM")));
 
-        Table(view).Items.Select(row => row.Props["name"]).Should().Equal("Alpha FM", "Zulu FM");
+        PluginComponent table = PluginNodes.Table(view);
+
+        PluginNodes.Rows(table)
+            .Select(row => PluginNodes.Value(table, row, "Station"))
+            .Should().Equal("Alpha FM", "Zulu FM");
     }
 
     // radio-browser reports 0 for "unknown", which the model stores as null. Rendering
@@ -86,9 +87,9 @@ public class AllStationsViewTests
     {
         RadioStation unknown = Station("a", "Alpha FM") with { BitrateKbps = null };
 
-        PluginComponent row = Table(AllStationsView.Build(Catalog(unknown))).Items.Single();
+        PluginComponent table = PluginNodes.Table(AllStationsView.Build(Catalog(unknown)));
 
-        row.Props["bitrate"].Should().Be("—");
+        PluginNodes.Value(table, PluginNodes.Rows(table).Single(), "Bitrate").Should().Be("—");
     }
 
     [Fact]

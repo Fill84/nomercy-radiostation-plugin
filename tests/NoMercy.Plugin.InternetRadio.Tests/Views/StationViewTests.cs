@@ -120,8 +120,9 @@ public class StationViewTests
     {
         PluginView view = StationView.Build(Catalog(Full), "a");
 
-        PluginComponent table = AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
-        IEnumerable<object?> values = table.Items.Select(row => row.Props["value"]);
+        PluginComponent table = PluginNodes.Table(view);
+        IEnumerable<string> values = PluginNodes.Rows(table)
+            .Select(row => PluginNodes.Value(table, row, "Value"));
 
         values.Should().Contain("Ambient").And.Contain("NL").And.Contain("https://example.com/a");
     }
@@ -180,11 +181,13 @@ public class StationViewTests
         // because it is required on RadioStation, Source because Provenance never
         // returns null. Every other fact is optional and absent here, and a filtered
         // fact must never leave a blank or null cell behind.
-        PluginComponent facts = AllNodes(view).Single(node => node.Component == PluginComponentType.Table);
-        facts.Items.Should().HaveCount(2);
-        facts.Items.Select(row => row.Props["field"]).Should().Equal("Stream", "Source");
-        facts.Items.Select(row => row.Props["value"]).Should()
-            .OnlyContain(value => value != null && !string.IsNullOrWhiteSpace(value.ToString()));
+        PluginComponent facts = PluginNodes.Table(view);
+        IReadOnlyList<PluginComponent> rows = PluginNodes.Rows(facts);
+
+        rows.Should().HaveCount(2);
+        rows.Select(row => PluginNodes.Value(facts, row, "Field")).Should().Equal("Stream", "Source");
+        rows.Select(row => PluginNodes.Value(facts, row, "Value")).Should()
+            .OnlyContain(value => !string.IsNullOrWhiteSpace(value));
     }
 
     [Fact]

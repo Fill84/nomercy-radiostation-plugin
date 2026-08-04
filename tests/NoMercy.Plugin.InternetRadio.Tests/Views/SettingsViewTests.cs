@@ -135,12 +135,12 @@ public class SettingsViewTests
             [Station("a", "Ambient"), Station("b", "Ambient"), Station("c", "Rock")],
             CatalogSource.Fetched, Now);
 
-        PluginComponent table = AllNodes(Build(catalog))
-            .First(node => node.Component == PluginComponentType.Table);
+        PluginComponent table = PluginNodes.Tables(Build(catalog)).First();
 
-        table.Items.Should().HaveCount(2);
-        table.Items.Should().Contain(row =>
-            (string)row.Props["genre"]! == "Ambient" && (string)row.Props["stations"]! == "2");
+        PluginNodes.Rows(table).Should().HaveCount(2);
+        PluginNodes.Rows(table).Should().Contain(row =>
+            PluginNodes.Value(table, row, "Genre") == "Ambient"
+            && PluginNodes.Value(table, row, "Stations") == "2");
     }
 
     // A stale catalogue has to explain itself, or it looks like the plugin simply
