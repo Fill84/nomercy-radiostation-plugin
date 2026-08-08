@@ -25,6 +25,12 @@ env:
   PLUGIN_NAME: NoMercy.Plugin.InternetRadio
   PLUGIN_DIR: src/NoMercy.Plugin.InternetRadio
   SERVER_BRANCH: dev
+  # fetch-abstractions.sh defaults the contract checkout to a sibling of this repo,
+  # which is where a developer keeps one and lets every plugin in the workspace share
+  # it. A runner has no siblings worth keeping, so the clone stays inside the workspace
+  # it is thrown away with - and stays covered by the existing .gitignore entry, which
+  # the release step below relies on when it reads the packed SHA out of _server.
+  SERVER_DIR: _server
   DOTNET_CHANNEL: "10.0"
   DOTNET_NOLOGO: "1"
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
