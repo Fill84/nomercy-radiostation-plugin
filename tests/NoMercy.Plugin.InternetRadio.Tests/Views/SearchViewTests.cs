@@ -135,4 +135,18 @@ public class SearchViewTests
         Ids(BrowseView.Build(Catalog(), Searching("x"), [Station("found")]))
             .Should().Contain("station-favourite-search-found");
     }
+
+    // An empty string, never null. The submitted body came back as "{}" with a null
+    // initial value - no fields at all - and a null most likely never enters the client's
+    // form model, so the submit has nothing to collect. Every field in the torrent
+    // plugin's working form carries a string and is Required.
+    [Fact]
+    public void TheFieldIsNeverNullValuedAndIsRequired()
+    {
+        PluginComponent input = PluginNodes.All(BrowseView.Build(Catalog(), UserState.Empty))
+            .Single(node => node.Id == "search-form-query");
+
+        input.Props["value"].Should().Be(string.Empty);
+        input.Props["required"].Should().Be(true);
+    }
 }

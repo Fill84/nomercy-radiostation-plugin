@@ -34,7 +34,15 @@ public static class SearchView
                 Name = FieldName,
                 Label = "Station name",
                 Type = PluginFormFieldType.Text,
-                Value = term,
+                // An empty string rather than null, and Required, because the submitted
+                // body arrived as "{}" - no fields at all - while the input on screen
+                // plainly held the term. Those are the two differences from the torrent
+                // plugin's settings form, where the same PluginViews.Form does deliver its
+                // values in production: every field there is Required and every Value is a
+                // string. A null initial value most likely never enters the client's form
+                // model, so there is nothing for the submit to collect.
+                Value = term ?? string.Empty,
+                Required = true,
                 Placeholder = "Search every station on radio-browser",
             }
         );
