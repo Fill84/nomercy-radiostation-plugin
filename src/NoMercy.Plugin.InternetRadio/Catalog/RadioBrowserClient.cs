@@ -129,6 +129,33 @@ public sealed class RadioBrowserClient(HttpClient http)
         return await SendAsync(request, ct);
     }
 
+    /// <summary>
+    /// The whole database, on any of the axes radio-browser indexes.
+    ///
+    /// One method rather than one per field: the endpoint takes every one of these
+    /// as a query parameter and combines them, so a per-field method could never
+    /// express "ambient, from Japan, in stereo" and every new axis meant another
+    /// near-identical method beside the last.
+    ///
+    /// <c>hidebroken</c> and <c>is_https</c> pre-filter server-side to keep the
+    /// response small; they do not decide admission. <see cref="StationGates"/>
+    /// still runs over everything that comes back, because radio-browser has been
+    /// observed reporting a 404 stream as healthy.
+    /// </summary>
+    public async Task<IReadOnlyList<RadioBrowserStation>> SearchAsync(
+        StationQuery query,
+        int limit,
+        CancellationToken ct
+    )
+    {
+        using HttpRequestMessage request = Request(
+            HttpMethod.Get,
+            $"/json/stations/search?{query.ToQueryString(limit)}"
+        );
+
+        return await SendAsync(request, ct);
+    }
+
     private static HttpRequestMessage Request(HttpMethod method, string path)
     {
         HttpRequestMessage request = new(method, $"{BaseAddress}{path}");
