@@ -144,11 +144,24 @@ public class StationCardsTests
         props.Box!.Width.Should().Be(StationCards.TileWidth);
     }
 
-    // One click is listening, and the whole tile is that click.
+    // Play is its own control. With the action on the tile, the favourite button sat
+    // inside the thing that starts playback, so keeping a station also played it.
     [Fact]
-    public void WithFavourite_PlaysWhenTheTileItselfIsClicked()
+    public void WithFavourite_PutsPlayOnItsOwnControlRatherThanTheTile()
     {
-        StationCards.WithFavourite(Station(), isFavourite: false)
+        PluginComponent tile = StationCards.WithFavourite(Station(), isFavourite: false);
+
+        tile.Action.Should().BeNull("keeping a station must not also play it");
+        Nodes(tile).Single(node => node.Id == "station-play-a")
             .Action!.Type.Should().Be(PluginActionType.PlayMedia);
+    }
+
+    // The player builds an artist link, a route and a DOM id from this. A live stream has
+    // no artist, and a genre there made the app route to nothing and then build a selector
+    // out of a url - both of which surfaced as component-error toasts.
+    [Fact]
+    public void Play_SendsNoArtist()
+    {
+        StationCards.Play(Station()).Payload["artist"].Should().BeNull();
     }
 }

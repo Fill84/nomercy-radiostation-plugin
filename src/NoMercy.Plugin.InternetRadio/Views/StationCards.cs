@@ -67,6 +67,16 @@ public static class StationCards
             children.Add(PluginViews.Text($"station-card-{id}-meta", subtitle, "caption"));
         }
 
+        // Play is its own control rather than the tile's action. With the action on the
+        // tile, the favourite button sits inside the thing that starts playback, so
+        // keeping a station also played it - one click doing two things, one of them
+        // unasked for.
+        children.Add(PluginViews.Button(
+            $"station-play-{id}",
+            "Play",
+            Play(station),
+            icon: "play"));
+
         children.Add(PluginViews.Button(
             $"station-favourite-{id}",
             isFavourite ? RemoveFavouriteLabel : AddFavouriteLabel,
@@ -89,7 +99,6 @@ public static class StationCards
                 },
             },
             Items = children,
-            Action = Play(station),
         };
     }
 
@@ -104,9 +113,15 @@ public static class StationCards
             // url is a fallback that plays nothing - kept only so a view still renders.
             MediaProxy.Stream(station.Id) ?? station.StreamUrl,
             station.Name,
-            // The player shows this where a track's artist would go; the genre is the most
-            // useful thing a live stream has to put there.
-            station.Genre,
+            // No artist. The player does not merely print this - it builds an artist LINK
+            // from it, resolves a route for it, and derives a DOM id from the track id to
+            // anchor it. A live stream has no artist, and putting the genre there made the
+            // app try to route to a genre that does not exist ("Cannot read properties of
+            // undefined (reading 'path')") and then build the selector
+            // "#trackLink-artists-plugin:<id>:https://…/stream/…" - invalid, because a url
+            // has colons and slashes in it. Those two were every "Something went wrong"
+            // toast on the page.
+            null,
             // The full-size cover, not a tile-sized one: this goes to the now-playing
             // panel, which wants a real image.
             CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id) ?? CoverUrl(station)

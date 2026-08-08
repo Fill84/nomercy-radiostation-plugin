@@ -32,7 +32,7 @@ public class GenreViewTests
     {
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient"), Station("b", "Rock")), "ambient", UserState.Empty);
 
-        AllNodes(view).Where(node => PluginNodes.IsCard(node))
+        AllNodes(view).Where(node => node.Id == "station-play-a")
             .Should().ContainSingle()
             .Which.Action!.Payload["title"].Should().Be("Station a");
     }
@@ -42,7 +42,7 @@ public class GenreViewTests
     {
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient", UserState.Empty);
 
-        AllNodes(view).Single(node => PluginNodes.IsCard(node))
+        AllNodes(view).Single(node => node.Id == "station-play-a")
             .Action!.Type.Should().Be(PluginActionType.PlayMedia);
     }
 
@@ -64,7 +64,7 @@ public class GenreViewTests
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "no-such-genre", UserState.Empty);
 
         AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
-        AllNodes(view).Should().NotContain(node => PluginNodes.IsCard(node));
+        AllNodes(view).Should().NotContain(node => node.Id.StartsWith("station-play-", StringComparison.Ordinal));
     }
 
     // A catalogue-level id collision (a real possibility - see StationCatalog) has

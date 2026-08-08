@@ -42,10 +42,10 @@ public class BrowseViewTests
     {
         PluginView view = BrowseView.Build(Catalog(Station("a")), UserState.Empty);
 
-        // By id, not "the only card on the page": the search field is a form, and a form
-        // draws as NMCard too, so IsCard alone now matches it as well.
+        // The play control, not the tile: play moved off the tile so that keeping a
+        // station no longer also plays it.
         PluginComponent card = AllNodes(view)
-            .Should().ContainSingle(node => node.Id == "station-card-popular-a").Subject;
+            .Should().ContainSingle(node => node.Id == "station-play-popular-a").Subject;
 
         card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
         card.Action.Payload["streamUrl"].Should().Be("https://example.com/a");
@@ -83,7 +83,7 @@ public class BrowseViewTests
         PluginView view = BrowseView.Build(
             Catalog(Station("quiet", "Ambient", 1), Station("loud", "Rock", 99)), UserState.Empty);
 
-        AllNodes(view).Where(node => node.Id.StartsWith("station-card-", StringComparison.Ordinal))
+        AllNodes(view).Where(node => node.Action?.Type == PluginActionType.PlayMedia)
             .First().Action!.Payload["title"].Should().Be("Station loud");
     }
 
