@@ -41,17 +41,7 @@ public class StationCardsTests
             .Should().Contain("station-card-a").And.Contain("station-favourite-a");
     }
 
-    // The toggle is a sibling of the card, never a child: PluginViews.Card takes one
-    // action and the card's is already playMedia. One click has to stay "listen to this".
-    [Fact]
-    public void WithFavourite_LeavesTheCardsOwnActionAlone()
-    {
-        PluginComponent row = StationCards.WithFavourite(Station(), isFavourite: false);
 
-        PluginComponent card = Nodes(row).Single(node => node.Id == "station-card-a");
-
-        card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
-    }
 
     [Fact]
     public void WithFavourite_TogglesThroughTheControllersOwnRoute()
@@ -127,7 +117,7 @@ public class StationCardsTests
 
         props.AspectRatio.Should().Be("square");
         props.Fit.Should().Be("cover");
-        props.Box!.MaxWidth.Should().Be(StationCards.CoverMaxWidth);
+        props.Box!.Width.Should().Be("full", "the cover fills its tile, and the tile is what is capped");
     }
 
     // A rejected logo must not reach the player either, or the now-playing panel shows
@@ -135,8 +125,27 @@ public class StationCardsTests
     [Fact]
     public void Play_DoesNotHandARejectedCoverToThePlayer()
     {
-        PluginComponent card = StationCards.Play(Station("http://cdn.example.com/logo.png"));
+        StationCards.Play(Station("http://cdn.example.com/logo.png"))
+            .Payload["cover"].Should().BeNull();
+    }
 
-        card.Action!.Payload["cover"].Should().BeNull();
+    // The tile carries its own width. Without one it takes the whole wrapping row, which
+    // is how eighteen stations became eighteen full-width blocks a screen apart.
+    [Fact]
+    public void WithFavourite_GivesTheTileAWidthOfItsOwn()
+    {
+        PluginComponent tile = StationCards.WithFavourite(Station(), isFavourite: false);
+
+        NMCardProps props = tile.Design.Should().BeOfType<NMCardProps>().Subject;
+
+        props.Box!.Width.Should().Be(StationCards.TileWidth);
+    }
+
+    // One click is listening, and the whole tile is that click.
+    [Fact]
+    public void WithFavourite_PlaysWhenTheTileItselfIsClicked()
+    {
+        StationCards.WithFavourite(Station(), isFavourite: false)
+            .Action!.Type.Should().Be(PluginActionType.PlayMedia);
     }
 }
