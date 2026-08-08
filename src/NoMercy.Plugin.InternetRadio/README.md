@@ -12,30 +12,25 @@ page under plugin settings.
   — the most voted stations in each of seventeen genres. Nothing is pinned or
   curated: no station name, stream URL or logo exists anywhere in this plugin.
 - **Search** every station radio-browser carries, not just the ones the genre sweep
-  brought back. That is how you reach anything outside those seventeen tags. You spell
-  the name with on-screen keys rather than typing it into a box — see below for why —
-  and the term lives in the address, so a search can be bookmarked and shared.
+  brought back. That is how you reach anything outside those seventeen tags.
 - **Favourites**, per user. Your list is yours; another viewer on the same server
   has their own. A favourite keeps the whole station record, so one you found by
   searching still works after the catalogue refreshes without it.
 - Browse by genre, or scan every station in one table with bitrate and codec.
-- Selecting a station plays it immediately in the built-in player. A station's own
-  page also offers **Add to queue** and a link to its homepage.
+- Every station is drawn with the components the app draws its own libraries with, so a
+  shelf of stations is the same shelf Films, Series and Music use — the same grid, the
+  same card, the same behaviour on every screen size.
+- Selecting a station opens its page, which plays it in the built-in player and offers
+  **Add to queue**, a favourite toggle and a link to its homepage. That is how a card
+  behaves everywhere else in the app.
 
-## Searching, and why it looks like that
+## Searching
 
-There is no text box. A plugin cannot be handed what you type: a plugin form posts an
-empty body, and so does the design system's search field, and giving that field a route
-to follow makes it ignore the route and leave the page. Three mechanisms, three
-different failures, all of them in the client — written up in `docs/upstream/`.
+A box on the landing page, and the results appear under it. The term is also a route, so
+`/search/tomorrowland` renders the same page — a search can be shared, bookmarked, or
+typed straight into the address bar.
 
-What does work is the address. So the search page offers A–Z and 0–9 as keys, and each
-one takes you to the same page with one more character in it. Two characters is usually
-enough: `to` already finds Tomorrowland. If you would rather type, put the name straight
-in the address bar after `/search/` — it is the same page.
-
-On a TV this is the better control anyway. On a desktop it is a workaround, and it will
-be replaced with a field the moment a client can hand a plugin what was typed.
+Two characters is usually enough: `to` already finds Tomorrowland.
 
 ## What it declares
 
