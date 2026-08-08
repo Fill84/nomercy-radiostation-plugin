@@ -89,6 +89,9 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private UserStateStore StateStore => _userState ??= new UserStateStore(Context.DataFolderPath);
 
+    /// <summary>What each station is playing right now, as it last announced.</summary>
+    public NowPlaying NowPlaying { get; } = new();
+
     // === Actions the controller calls ======================================
 
     /// <summary>
@@ -244,14 +247,15 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     {
         if (catalog.ById(id) is { } known)
         {
-            return StationView.Build(known, state);
+            return StationView.Build(known, state, NowPlaying.Get(id));
         }
 
         try
         {
             FavouriteResolver resolver = new(catalog, new RadioBrowserClient(Context.HttpClient));
 
-            return StationView.Build(await resolver.ResolveAsync(id, ct), state);
+            return StationView.Build(
+                await resolver.ResolveAsync(id, ct), state, NowPlaying.Get(id));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -343,6 +347,16 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         }
 
         HttpRequestMessage request = new(HttpMethod.Get, url);
+
+        // What makes a station announce its current track at all. Without it the body
+        // is audio only and the player has nothing to show but the station's name -
+        // which is what every real web radio does show, and what a listener means by
+        // "what is this song". The interleaved blocks it turns on are stripped back
+        // out before the browser sees them; see IcyMetadataStream.
+        if (!cover)
+        {
+            request.Headers.TryAddWithoutValidation("Icy-MetaData", "1");
+        }
 
         // Forwarded verbatim so seeking and buffering keep working: a player asks for a
         // byte range and expects a 206 back. Swallowing the header would turn every

@@ -60,6 +60,42 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public Task<IActionResult> Stream(string stationId, CancellationToken ct) =>
         RelayAsync(stationId, cover: false, ct);
 
+    public const string NowPlayingRouteTemplate = "nowplaying/{stationId}";
+    public const string NowPlayingMethod = "nowplaying";
+
+    /// <summary>
+    /// What the station is playing right now, as it last announced over ICY.
+    ///
+    /// Null title rather than a 404 when nothing has been announced: a station that
+    /// sends no metadata, and a station whose next block has not arrived yet, are the
+    /// same thing to a listener, and neither is an error to draw.
+    /// </summary>
+    [HttpGet(NowPlayingRouteTemplate)]
+    public IActionResult NowPlaying(string stationId)
+    {
+        if (pluginManager.GetPluginInstance(PluginId) is not InternetRadioPlugin plugin)
+        {
+            return NotFound();
+        }
+
+        return Status<object>(new { title = plugin.NowPlaying.Get(stationId) });
+    }
+
+    /// <summary>
+    /// The station's own <c>icy-metaint</c>, when it agreed to send metadata.
+    /// </summary>
+    private static int? MetaInterval(HttpResponseMessage upstream)
+    {
+        if (!upstream.Headers.TryGetValues("icy-metaint", out IEnumerable<string>? values))
+        {
+            return null;
+        }
+
+        return int.TryParse(values.FirstOrDefault(), out int interval) && interval > 0
+            ? interval
+            : null;
+    }
+
     /// <summary>The station's logo, relayed for the same reason.</summary>
     [HttpGet(CoverRouteTemplate)]
     public Task<IActionResult> Cover(string stationId, CancellationToken ct) =>
@@ -104,8 +140,28 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
             upstream.Content.Headers.ContentType?.ToString()
             ?? (cover ? "application/octet-stream" : "audio/mpeg");
 
-        await using Stream body = await upstream.Content.ReadAsStreamAsync(ct);
-        await body.CopyToAsync(Response.Body, ct);
+        await using Stream upstreamBody = await upstream.Content.ReadAsStreamAsync(ct);
+
+        // A station that answered our Icy-MetaData ask splices its current track into
+        // the audio every icy-metaint bytes. The browser must never see those bytes -
+        // they are not audio - so they come out here, and the title they carry is
+        // remembered for whoever asks what is playing.
+        Stream body = MetaInterval(upstream) is { } interval
+            ? new IcyMetadataStream(
+                upstreamBody, interval, title => plugin.NowPlaying.Set(stationId, title))
+            : upstreamBody;
+
+        try
+        {
+            await body.CopyToAsync(Response.Body, ct);
+        }
+        finally
+        {
+            if (!cover)
+            {
+                plugin.NowPlaying.Clear(stationId);
+            }
+        }
 
         return new EmptyResult();
     }
