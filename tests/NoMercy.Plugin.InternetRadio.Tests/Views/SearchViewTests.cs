@@ -159,49 +159,43 @@ public class SearchViewTests
         Ids(View(term, failed: failed)).Should().Contain("search-key-a");
     }
 
-    // The keys are the right control for a remote and the wrong one for a machine with a
-    // keyboard attached. `hidden_on` also takes them out of D-pad traversal, which a purely
-    // visual hide would not.
-    [Fact]
-    public void TheKeysAreDrawnOnTheTenFootSurfaceAndNowhereElse()
+    // Everywhere, not only on tv. A version of this hid the keys off tv and offered the
+    // field instead; the field could not search, so that left web and mobile with nothing.
+    [Theory]
+    [InlineData("")]
+    [InlineData("tom")]
+    public void TheKeysAndTheFieldAreBothDrawnOnEverySurface(string term)
     {
-        IEnumerable<PluginComponent> rows = PluginNodes.All(View("tom"))
-            .Where(node => node.Id.StartsWith("search-keys-", StringComparison.Ordinal)
-                || node.Id == "search-controls");
+        PluginView view = View(term);
 
-        rows.Should().NotBeEmpty();
+        Ids(view).Should().Contain("search-key-a").And.Contain("search-input");
 
-        foreach (PluginComponent row in rows)
-        {
-            NmBox box = (row.Design as NMCardProps)!.Box!;
-
-            box.HiddenOn.Should().BeEquivalentTo([NmSurfaceKind.Web, NmSurfaceKind.Mobile]);
-            // The box still lays the row out. A Design record replaces the whole box the
-            // factory wrote into the loose bag, so naming only hidden_on would silently
-            // drop the direction and the wrap.
-            box.Direction.Should().Be("row");
-            box.Wrap.Should().Be("wrap");
-        }
+        PluginNodes.All(view)
+            .Select(node => (node.Design as NMCardProps)?.Box ?? (node.Design as NMSearchInputProps)?.Box)
+            .Where(box => box is not null)
+            .Should().OnlyContain(box => box!.HiddenOn.Count == 0);
     }
 
+    // Searching is a GET of /search/<term>, so the field navigates. It used to post to an
+    // endpoint and the body arrived as "{}" - the same answer a PluginFormField gives -
+    // because there was never anything to post: the term belongs in the address.
     [Fact]
-    public void TypingIsOfferedWhereTheKeysAreNotAndTheOtherWayAround()
+    public void TheFieldNavigatesRatherThanPostingAnything()
     {
         PluginComponent input = Node(View("tom"), "search-input");
 
         input.Component.Should().Be(NmComponents.SearchInput);
-        (input.Design as NMSearchInputProps)!.Box!.HiddenOn
-            .Should().BeEquivalentTo([NmSurfaceKind.Tv]);
+        input.Action!.Type.Should().Be(PluginActionType.Navigate);
+        input.Action.Payload["route"].Should().Be(RadioRoutes.SearchRoot);
     }
 
-    // Inert on purpose: it records what the client sent and changes nothing. Wiring a
-    // search to it before knowing whether the value arrives is the mistake that was already
-    // made four times.
+    // The field carries the term back, so arriving on a search does not look like one that
+    // was thrown away.
     [Fact]
-    public void TheTypedFieldPostsToTheProbeAndNotToAnythingThatActs()
+    public void TheFieldHoldsWhateverIsBeingSearchedFor()
     {
-        Node(View("tom"), "search-input").Action!.Payload["method"]
-            .Should().Be(InternetRadioController.SubmitMethod);
+        (Node(View("tomorrowland"), "search-input").Design as NMSearchInputProps)!
+            .Value.Should().Be("tomorrowland");
     }
 
     [Fact]

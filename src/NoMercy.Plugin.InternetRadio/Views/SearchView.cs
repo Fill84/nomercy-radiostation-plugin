@@ -24,19 +24,19 @@ public static class SearchView
     /// <summary>How many keys are drawn per row before it wraps.</summary>
     private const int KeysPerRow = 13;
 
-    /// <summary>
-    /// Where the keyboard is drawn: the ten-foot surface, and only there.
-    ///
-    /// It is the right control for a remote and the wrong one for a machine with a keyboard
-    /// attached. `hidden_on` is not merely visual - a component hidden on a surface is not
-    /// focusable there either - so this keeps thirty-six keys out of D-pad traversal on the
-    /// surfaces that do not want them.
-    /// </summary>
-    private static readonly List<string> KeyboardHiddenOn =
-        [NmSurfaceKind.Web, NmSurfaceKind.Mobile];
-
-    /// <summary>The mirror of <see cref="KeyboardHiddenOn"/>, for what replaces it.</summary>
-    private static readonly List<string> TypingHiddenOn = [NmSurfaceKind.Tv];
+    // The keys are drawn on every surface, not only on tv.
+    //
+    // They belong on tv, and there was a version of this that said so with
+    // hidden_on: [web, mobile] and offered an NMSearchInput everywhere else. It was
+    // reverted for one reason: the field does not work. NMSearchInput submits an empty
+    // body exactly as a PluginFormField does - two different components, two independent
+    // confirmations that this client has no channel for an input value - so hiding the
+    // keys off tv would leave web and mobile with no way to search at all.
+    //
+    // (hidden_on is also not currently honoured on web: the keys stayed on screen with it
+    // set. Both findings are in docs/upstream/.)
+    //
+    // The day a typed value arrives, this becomes a one-line change back.
 
     public static PluginView Build(
         string term,
@@ -53,9 +53,9 @@ public static class SearchView
                 icon: "arrowLeft"),
 
             Spelled(term),
+            Typing(term),
         ];
 
-        children.Add(Typing(term));
         children.AddRange(Keyboard(term));
         children.Add(Controls(term));
         children.AddRange(Results(term, results, queryFailed, state));
@@ -79,30 +79,29 @@ public static class SearchView
             "subtitle");
 
     /// <summary>
-    /// What a machine with a real keyboard gets instead of the on-screen one.
+    /// A field to type into, whose action is a navigation rather than a call.
     ///
-    /// Hidden on tv, where the keys are the better control. NMSearchInput is the design
-    /// system's own field rather than a PluginFormField, because a plugin form is an NMCard
-    /// and submits nothing at all - see the note at the top of this file.
+    /// The previous version posted to an endpoint and the body came back "{}" - the same
+    /// answer a PluginFormField gives. That was the wrong thing to ask for. There is
+    /// nothing to POST: the term belongs in the address, and every search this plugin
+    /// serves is already a plain GET of /search/&lt;term&gt;. So the action says navigate,
+    /// and the route it names is the search root for the client to complete with whatever
+    /// was typed - the same shape the keys use, one letter at a time.
     ///
-    /// Whether THIS one submits anything is the open question, and the action below is how
-    /// it gets answered rather than guessed at: it posts to an endpoint that does nothing
-    /// but write the body it received to the log. If the typed value is in there, typing
-    /// can be wired up properly; if the body is empty again, that is the second independent
-    /// confirmation that this client has no channel for input values, and the keys come
-    /// back on every surface.
+    /// If the client cannot complete it, this lands on the bare keyboard rather than
+    /// anywhere broken, and the keys below still work.
     /// </summary>
     private static PluginComponent Typing(string term) =>
         new()
         {
             Id = "search-input",
             Component = NmComponents.SearchInput,
-            Action = PluginActionIntent.CallPlugin(InternetRadioController.SubmitMethod),
+            Action = PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
             Design = new NMSearchInputProps
             {
                 Placeholder = "Type a station name",
                 Value = term,
-                Box = new NmBox { Width = "full", HiddenOn = TypingHiddenOn },
+                Box = new NmBox { Width = "full" },
             },
         };
 
@@ -121,10 +120,9 @@ public static class SearchView
     /// <summary>
     /// A row of keys.
     ///
-    /// Built here rather than with PluginViews.Row because the box has to carry
-    /// <see cref="KeyboardHiddenOn"/> as well as the layout, and a Design record replaces
-    /// the whole box the factory put in the loose bag rather than merging with it - so
-    /// naming one field there would silently drop the direction and the wrap.
+    /// Built here rather than with PluginViews.Row so the box is this file's to set: a
+    /// Design record replaces the whole box the factory put in the loose bag rather than
+    /// merging with it, so naming one field there silently drops the direction and the wrap.
     /// </summary>
     private static PluginComponent KeyRow(string id, List<PluginComponent> keys) =>
         new()
@@ -139,7 +137,6 @@ public static class SearchView
                     Direction = "row",
                     Wrap = "wrap",
                     Gap = new NmGap { All = "2" },
-                    HiddenOn = KeyboardHiddenOn,
                 },
             },
             Items = keys,

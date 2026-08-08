@@ -128,22 +128,6 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     }
 
     /// <summary>
-    /// Writes down what an NMSearchInput submitted, and changes nothing.
-    ///
-    /// The whole point is the log line. See InternetRadioController.Submit for why this
-    /// exists and what is decided by what turns up in it.
-    /// </summary>
-    public Task<PluginActionOutcome> RecordSearchSubmissionAsync(string? body, CancellationToken ct)
-    {
-        _context?.Logger.LogInformation(
-            "Internet Radio received a search input submission. Body: {Body}",
-            string.IsNullOrWhiteSpace(body) ? "(empty)" : body);
-
-        return Task.FromResult(PluginActionOutcome.Ok(
-            "Typing is not wired up yet - spell the name with the keys, or put it in the address bar."));
-    }
-
-    /// <summary>
     /// The search page for whatever has been spelled so far.
     ///
     /// The query runs here rather than in the view: views are pure Build methods, which is

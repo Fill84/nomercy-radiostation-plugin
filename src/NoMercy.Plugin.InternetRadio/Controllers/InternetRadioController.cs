@@ -31,36 +31,10 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public Task<IActionResult> ToggleFavourite(string stationId, CancellationToken ct) =>
         RespondAsync(plugin => plugin.ToggleFavouriteAsync(CurrentUserId(), stationId, ct));
 
-    /// <summary>The NMSearchInput probe. See <see cref="Submit"/>.</summary>
-    public const string SubmitMethod = "search/submit";
-
-    // Searching itself is a navigation, not a call: the term is spelled into the route a
-    // character at a time, because a submitted form posts an empty body in this client -
-    // PluginComponentType.Form maps to NMCard, so there is no form to collect. See
-    // docs/upstream/2026-08-08-plugin-form-submits-empty-body.md.
-
-    /// <summary>
-    /// What an NMSearchInput sends, written to the log and nothing else.
-    ///
-    /// Deliberately inert. A PluginFormField demonstrably delivers nothing, and the design
-    /// system's own field is the remaining candidate for typing on a surface that has a
-    /// keyboard - but whether the client has any channel at all for an input value is
-    /// exactly what is not known, and four rounds of guessing at that already cost more
-    /// than they were worth. So this answers the question with evidence instead: it logs
-    /// the body verbatim, once per submit, and changes no state.
-    ///
-    /// If the value turns up here, typing gets wired up for real. If the body is empty
-    /// again, that is independent confirmation of the upstream gap and the on-screen keys
-    /// go back on every surface rather than only on tv.
-    /// </summary>
-    [HttpPost(SubmitMethod)]
-    public async Task<IActionResult> Submit(CancellationToken ct)
-    {
-        using StreamReader reader = new(Request.Body);
-        string body = await reader.ReadToEndAsync(ct);
-
-        return await RespondAsync(plugin => plugin.RecordSearchSubmissionAsync(body, ct));
-    }
+    // No search endpoint at all. Searching is a GET of /search/<term>: the keys navigate
+    // one character at a time and the field navigates with what was typed. Nothing about a
+    // search is a POST, which is also why the two attempts to make it one both came back
+    // with an empty body - there was never anything to send.
 
     /// <summary>
     /// The station's audio, relayed. See FetchStationMediaAsync for why the browser must
