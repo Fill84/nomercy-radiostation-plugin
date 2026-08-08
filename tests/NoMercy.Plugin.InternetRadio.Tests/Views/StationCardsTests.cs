@@ -120,7 +120,10 @@ public class StationCardsTests
         props.Src.Should().Be("https://cdn.example.com/l.png");
         props.AspectRatio.Should().Be("square");
         props.Fit.Should().Be("cover");
-        props.Box!.Width.Should().Be("full", "the cover fills its tile, and the tile is what is capped");
+        // Fixed on the image, not left to fill the tile: "full" let each logo take its
+        // natural size, so every tile ended up a different size.
+        props.Box!.Width.Should().Be(StationCards.CoverSize);
+        props.Box.Height.Should().Be(StationCards.CoverSize);
     }
 
     // A rejected logo must not reach the player either, or the now-playing panel shows

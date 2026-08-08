@@ -28,6 +28,17 @@ public static class StationCards
     /// </summary>
     public const string TileWidth = "13rem";
 
+    /// <summary>
+    /// How large every cover is drawn, width and height both.
+    ///
+    /// Fixed on the image itself rather than left to fill its parent. `width: full` let
+    /// each logo take its own natural size, so a tile with a 1000px cover grew to 1000px
+    /// and one with no cover stayed at TileWidth - a grid where every tile was a different
+    /// size. Cropped to this box, they are all the same and a wide logo and a tall one
+    /// occupy the same square.
+    /// </summary>
+    public const string CoverSize = "11rem";
+
     /// <summary>Shown on the toggle when the station is not a favourite yet.</summary>
     public const string AddFavouriteLabel = "Add to favourites";
 
@@ -159,7 +170,7 @@ public static class StationCards
                 Rounded = "lg",
                 Border = false,
                 Shadow = "none",
-                Box = new NmBox { Width = "full" },
+                Box = new NmBox { Width = CoverSize, Height = CoverSize },
             },
         };
     }

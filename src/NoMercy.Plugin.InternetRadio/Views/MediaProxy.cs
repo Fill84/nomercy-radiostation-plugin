@@ -34,10 +34,27 @@ public static class MediaProxy
     }
 
     /// <summary>Null when nothing has told us where this server lives yet.</summary>
-    public static string? Stream(string stationId) => Url(InternetRadioController.StreamMethod, stationId);
+    /// <summary>
+    /// The audio, WITHOUT a token.
+    ///
+    /// The player appends its own access_token to whatever url it is given - it has to,
+    /// since an audio element cannot send a header. Adding ours as well produced two
+    /// access_token parameters, which ASP.NET joins with a comma, and the server then
+    /// failed to decode the result as a JWT: "IDX14309: Unable to decode the
+    /// initialization vector". The stream arrived and was refused for having a token that
+    /// was two tokens.
+    /// </summary>
+    public static string? Stream(string stationId) =>
+        Url(InternetRadioController.StreamMethod, stationId, withToken: false);
 
-    /// <inheritdoc cref="Stream" />
-    public static string? Cover(string stationId) => Url(InternetRadioController.CoverMethod, stationId);
+    /// <summary>
+    /// The cover, WITH a token.
+    ///
+    /// An img element gets no such treatment - the app appended only width and type to
+    /// ours and no credential, and the request came back 401. So this one has to carry it.
+    /// </summary>
+    public static string? Cover(string stationId) =>
+        Url(InternetRadioController.CoverMethod, stationId, withToken: true);
 
     // The token travels in the query string, because it has to.
     //
@@ -49,7 +66,7 @@ public static class MediaProxy
     //
     // It is the calling viewer's own token, read from the request this view is being
     // rendered for, so a url is never valid for anyone the viewer is not.
-    private static string? Url(string method, string stationId)
+    private static string? Url(string method, string stationId, bool withToken)
     {
         if (_base is null)
         {
@@ -59,6 +76,8 @@ public static class MediaProxy
         string url =
             $"{_base}/api/v1/plugins/{PluginIdentity.Id}/{method}/{Uri.EscapeDataString(stationId)}";
 
-        return _token is null ? url : $"{url}?access_token={Uri.EscapeDataString(_token)}";
+        return !withToken || _token is null
+            ? url
+            : $"{url}?access_token={Uri.EscapeDataString(_token)}";
     }
 }
