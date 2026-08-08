@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
+using NoMercy.Design;
 using NoMercy.Plugins.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio;
@@ -23,6 +24,20 @@ public static class SearchView
     /// <summary>How many keys are drawn per row before it wraps.</summary>
     private const int KeysPerRow = 13;
 
+    /// <summary>
+    /// Where the keyboard is drawn: the ten-foot surface, and only there.
+    ///
+    /// It is the right control for a remote and the wrong one for a machine with a keyboard
+    /// attached. `hidden_on` is not merely visual - a component hidden on a surface is not
+    /// focusable there either - so this keeps thirty-six keys out of D-pad traversal on the
+    /// surfaces that do not want them.
+    /// </summary>
+    private static readonly List<string> KeyboardHiddenOn =
+        [NmSurfaceKind.Web, NmSurfaceKind.Mobile];
+
+    /// <summary>The mirror of <see cref="KeyboardHiddenOn"/>, for what replaces it.</summary>
+    private static readonly List<string> TypingHiddenOn = [NmSurfaceKind.Tv];
+
     public static PluginView Build(
         string term,
         IReadOnlyList<RadioStation> results,
@@ -40,6 +55,7 @@ public static class SearchView
             Spelled(term),
         ];
 
+        children.Add(Typing(term));
         children.AddRange(Keyboard(term));
         children.Add(Controls(term));
         children.AddRange(Results(term, results, queryFailed, state));
@@ -62,6 +78,34 @@ public static class SearchView
                 : $"Searching for “{term}”",
             "subtitle");
 
+    /// <summary>
+    /// What a machine with a real keyboard gets instead of the on-screen one.
+    ///
+    /// Hidden on tv, where the keys are the better control. NMSearchInput is the design
+    /// system's own field rather than a PluginFormField, because a plugin form is an NMCard
+    /// and submits nothing at all - see the note at the top of this file.
+    ///
+    /// Whether THIS one submits anything is the open question, and the action below is how
+    /// it gets answered rather than guessed at: it posts to an endpoint that does nothing
+    /// but write the body it received to the log. If the typed value is in there, typing
+    /// can be wired up properly; if the body is empty again, that is the second independent
+    /// confirmation that this client has no channel for input values, and the keys come
+    /// back on every surface.
+    /// </summary>
+    private static PluginComponent Typing(string term) =>
+        new()
+        {
+            Id = "search-input",
+            Component = NmComponents.SearchInput,
+            Action = PluginActionIntent.CallPlugin(InternetRadioController.SubmitMethod),
+            Design = new NMSearchInputProps
+            {
+                Placeholder = "Type a station name",
+                Value = term,
+                Box = new NmBox { Width = "full", HiddenOn = TypingHiddenOn },
+            },
+        };
+
     private static IEnumerable<PluginComponent> Keyboard(string term)
     {
         // Full at MaxLength: the keys stay on screen but stop adding, because a row of
@@ -70,11 +114,36 @@ public static class SearchView
 
         foreach ((char[] keys, int index) in Rows())
         {
-            yield return PluginViews.Row(
-                $"search-keys-{index}",
-                [.. keys.Select(key => Key(term, key, full))]);
+            yield return KeyRow($"search-keys-{index}", [.. keys.Select(key => Key(term, key, full))]);
         }
     }
+
+    /// <summary>
+    /// A row of keys.
+    ///
+    /// Built here rather than with PluginViews.Row because the box has to carry
+    /// <see cref="KeyboardHiddenOn"/> as well as the layout, and a Design record replaces
+    /// the whole box the factory put in the loose bag rather than merging with it - so
+    /// naming one field there would silently drop the direction and the wrap.
+    /// </summary>
+    private static PluginComponent KeyRow(string id, List<PluginComponent> keys) =>
+        new()
+        {
+            Id = id,
+            Component = PluginComponentType.Row,
+            Design = new NMCardProps
+            {
+                Box = new NmBox
+                {
+                    Width = "full",
+                    Direction = "row",
+                    Wrap = "wrap",
+                    Gap = new NmGap { All = "2" },
+                    HiddenOn = KeyboardHiddenOn,
+                },
+            },
+            Items = keys,
+        };
 
     private static IEnumerable<(char[] Keys, int Index)> Rows()
     {
@@ -130,7 +199,10 @@ public static class SearchView
                 variant: "secondary"));
         }
 
-        return PluginViews.Row("search-controls", [.. controls]);
+        // Space and backspace belong to the keys, so they go where the keys go. Clear is
+        // useful on every surface, but it is only ever drawn beside them, so it travels
+        // with the row rather than being singled out.
+        return KeyRow("search-controls", controls);
     }
 
     /// <summary>

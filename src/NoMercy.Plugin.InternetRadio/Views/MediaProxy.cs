@@ -76,8 +76,19 @@ public static class MediaProxy
         string url =
             $"{_base}/api/v1/plugins/{PluginIdentity.Id}/{method}/{Uri.EscapeDataString(stationId)}";
 
+        // The trailing parameter is not decoration. The now-playing panel appends its own
+        // sizing to whatever url it is given without checking whether there is already a
+        // query string on it, so ours came back as
+        //
+        //     ?access_token=<jwt>?width=500&type=avif
+        //
+        // and the token was then the jwt with "?width=500" glued to the end of it - a token
+        // that is not a token, answered with 401, which is why the cover in the player was
+        // blank while the same cover in the grid was fine. A last parameter with an empty
+        // value absorbs the append: `size` becomes "?width=500" and access_token stays
+        // exactly what it was.
         return !withToken || _token is null
             ? url
-            : $"{url}?access_token={Uri.EscapeDataString(_token)}";
+            : $"{url}?access_token={Uri.EscapeDataString(_token)}&size=";
     }
 }

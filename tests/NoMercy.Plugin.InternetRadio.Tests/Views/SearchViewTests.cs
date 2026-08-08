@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
+using NoMercy.Design;
 using NoMercy.Plugins.Abstractions;
 using Xunit;
 
@@ -156,6 +157,51 @@ public class SearchViewTests
     public void TheKeyboardSurvivesEveryState(string term, bool failed)
     {
         Ids(View(term, failed: failed)).Should().Contain("search-key-a");
+    }
+
+    // The keys are the right control for a remote and the wrong one for a machine with a
+    // keyboard attached. `hidden_on` also takes them out of D-pad traversal, which a purely
+    // visual hide would not.
+    [Fact]
+    public void TheKeysAreDrawnOnTheTenFootSurfaceAndNowhereElse()
+    {
+        IEnumerable<PluginComponent> rows = PluginNodes.All(View("tom"))
+            .Where(node => node.Id.StartsWith("search-keys-", StringComparison.Ordinal)
+                || node.Id == "search-controls");
+
+        rows.Should().NotBeEmpty();
+
+        foreach (PluginComponent row in rows)
+        {
+            NmBox box = (row.Design as NMCardProps)!.Box!;
+
+            box.HiddenOn.Should().BeEquivalentTo([NmSurfaceKind.Web, NmSurfaceKind.Mobile]);
+            // The box still lays the row out. A Design record replaces the whole box the
+            // factory wrote into the loose bag, so naming only hidden_on would silently
+            // drop the direction and the wrap.
+            box.Direction.Should().Be("row");
+            box.Wrap.Should().Be("wrap");
+        }
+    }
+
+    [Fact]
+    public void TypingIsOfferedWhereTheKeysAreNotAndTheOtherWayAround()
+    {
+        PluginComponent input = Node(View("tom"), "search-input");
+
+        input.Component.Should().Be(NmComponents.SearchInput);
+        (input.Design as NMSearchInputProps)!.Box!.HiddenOn
+            .Should().BeEquivalentTo([NmSurfaceKind.Tv]);
+    }
+
+    // Inert on purpose: it records what the client sent and changes nothing. Wiring a
+    // search to it before knowing whether the value arrives is the mistake that was already
+    // made four times.
+    [Fact]
+    public void TheTypedFieldPostsToTheProbeAndNotToAnythingThatActs()
+    {
+        Node(View("tom"), "search-input").Action!.Payload["method"]
+            .Should().Be(InternetRadioController.SubmitMethod);
     }
 
     [Fact]
