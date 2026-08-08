@@ -45,7 +45,7 @@ public class SettingsViewTests
     private static readonly DateTimeOffset NextRefresh = Now.AddHours(4);
 
     private static PluginView Build(StationCatalog catalog) =>
-        SettingsView.Build(catalog, "/data/plugins/data/abc", Now, NextRefresh);
+        SettingsView.Build(catalog, "/data/plugins/data/abc", Now, NextRefresh, UserState.Empty);
 
     // The default arm of SourceBadge's switch emits a badge for anything, so merely
     // asserting a badge exists cannot catch two arms being swapped or mislabelled.

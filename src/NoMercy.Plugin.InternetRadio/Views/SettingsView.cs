@@ -31,7 +31,11 @@ public static class SettingsView
         ];
 
     public static PluginView Build(
-        StationCatalog catalog, string dataFolderPath, DateTimeOffset now, DateTimeOffset nextRefreshUtc)
+        StationCatalog catalog,
+        string dataFolderPath,
+        DateTimeOffset now,
+        DateTimeOffset nextRefreshUtc,
+        UserState state)
     {
         List<PluginComponent> children =
         [
@@ -95,6 +99,16 @@ public static class SettingsView
                 )
             );
         }
+
+        // The one place an owner can see that favourites are being stored at all. The
+        // singular is spelled out rather than pluralised with an "s": "1 favourite
+        // stations" reads as a bug to whoever has exactly one.
+        children.Add(PluginViews.Text(
+            "settings-favourites-count",
+            state.Favourites.Count == 1
+                ? "1 favourite station."
+                : $"{state.Favourites.Count} favourite stations.",
+            "caption"));
 
         children.Add(PluginViews.Text("settings-own-heading", "Your own stations", "subtitle"));
         children.Add(

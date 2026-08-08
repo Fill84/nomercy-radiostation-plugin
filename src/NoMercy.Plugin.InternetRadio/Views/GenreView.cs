@@ -8,7 +8,7 @@ namespace NoMercy.Plugin.InternetRadio;
 // One genre, every station in it, each ready to play.
 public static class GenreView
 {
-    public static PluginView Build(StationCatalog catalog, string slug)
+    public static PluginView Build(StationCatalog catalog, string slug, UserState state)
     {
         IReadOnlyList<RadioStation> stations = catalog.ByGenreSlug(slug);
 
@@ -37,7 +37,9 @@ public static class GenreView
                 BackToBrowse,
                 PluginViews.Text("genre-title", label, "title"),
                 PluginViews.Text("genre-count", $"{stations.Count} stations", "caption"),
-                PluginViews.Grid("genre-grid", [.. stations.Select(StationCards.Play)])
+                PluginViews.Grid("genre-grid", [.. stations
+                    .Select(station => StationCards.WithFavourite(
+                        station, state.Favourites.Any(favourite => favourite.Id == station.Id)))])
             )
         );
     }

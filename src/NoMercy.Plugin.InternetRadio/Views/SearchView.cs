@@ -14,14 +14,15 @@ public static class SearchView
 {
     public const string FieldName = "query";
 
-    public static PluginView Build(string? term, IReadOnlyList<RadioStation> results, bool queryFailed) =>
+    public static PluginView Build(
+        string? term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState? state = null) =>
         PluginViews.Declarative(
             PluginViews.Container(
                 "search-root",
                 BackToBrowse,
                 PluginViews.Text("search-title", "Search stations", "title"),
                 Field(term),
-                Body(term, results, queryFailed)
+                Body(term, results, queryFailed, state ?? UserState.Empty)
             )
         );
 
@@ -48,7 +49,7 @@ public static class SearchView
     // radio-browser" and "there is no such station" ask the user to do different things,
     // and a single "nothing found" would have them retrying the wrong one.
     private static PluginComponent Body(
-        string? term, IReadOnlyList<RadioStation> results, bool queryFailed)
+        string? term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState state)
     {
         if (queryFailed)
         {
@@ -77,7 +78,9 @@ public static class SearchView
             );
         }
 
-        return PluginViews.Grid("search-grid", [.. results.Select(StationCards.Play)]);
+        return PluginViews.Grid("search-grid", [.. results
+            .Select(station => StationCards.WithFavourite(
+                station, state.Favourites.Any(favourite => favourite.Id == station.Id)))]);
     }
 
     private static PluginComponent BackToBrowse =>

@@ -63,7 +63,7 @@ public class StationViewTests
     [Fact]
     public void OffersPlayAndEnqueueForTheStream()
     {
-        PluginView view = StationView.Build(Catalog(Full), "a");
+        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
         PluginComponent play = ActionOfType(view, PluginActionType.PlayMedia)!;
         play.Action!.Payload["streamUrl"].Should().Be("https://example.com/a");
@@ -75,7 +75,7 @@ public class StationViewTests
     [Fact]
     public void OffersTheHomepageWhenThereIsOne()
     {
-        PluginView view = StationView.Build(Catalog(Full), "a");
+        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
         ActionOfType(view, PluginActionType.OpenWebView)!
             .Action!.Payload["entryUrl"].Should().Be("https://example.com");
@@ -85,7 +85,7 @@ public class StationViewTests
     [Fact]
     public void OmitsTheHomepageButtonWhenThereIsNoHomepage()
     {
-        PluginView view = StationView.Build(Catalog(Full with { Homepage = null }), "a");
+        PluginView view = StationView.Build(Catalog(Full with { Homepage = null }), "a", UserState.Empty);
 
         ActionOfType(view, PluginActionType.OpenWebView).Should().BeNull();
     }
@@ -97,7 +97,7 @@ public class StationViewTests
     [Fact]
     public void OmitsTheHomepageButtonWhenTheHomepageIsNotAnHttpUrl()
     {
-        PluginView view = StationView.Build(Catalog(Full with { Homepage = "javascript:alert(1)" }), "a");
+        PluginView view = StationView.Build(Catalog(Full with { Homepage = "javascript:alert(1)" }), "a", UserState.Empty);
 
         ActionOfType(view, PluginActionType.OpenWebView).Should().BeNull();
     }
@@ -107,7 +107,7 @@ public class StationViewTests
     [Fact]
     public void OffersWaysBackToAllStationsAndToBrowse()
     {
-        PluginView view = StationView.Build(Catalog(Full), "a");
+        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
         AllNodes(view).Should().Contain(node =>
             node.Action != null
@@ -125,7 +125,7 @@ public class StationViewTests
     [Fact]
     public void OffersWaysBackEvenWhenTheStationIsMissing()
     {
-        PluginView view = StationView.Build(Catalog(Full), "gone");
+        PluginView view = StationView.Build(Catalog(Full), "gone", UserState.Empty);
 
         AllNodes(view).Should().Contain(node =>
             node.Action != null
@@ -136,7 +136,7 @@ public class StationViewTests
     [Fact]
     public void ShowsTheFullRecordIncludingTheStreamUrl()
     {
-        PluginView view = StationView.Build(Catalog(Full), "a");
+        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
         PluginComponent table = PluginNodes.Table(view);
         IEnumerable<string> values = PluginNodes.Rows(table)
@@ -148,7 +148,7 @@ public class StationViewTests
     [Fact]
     public void NamesTheProvenanceOfAFetchedStation()
     {
-        PluginView view = StationView.Build(Catalog(Full), "a");
+        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
         AllNodes(view).SelectMany(node => node.Props.Values)
             .Should().Contain(value => value != null && value.ToString()!.Contains("radio-browser"));
@@ -157,7 +157,7 @@ public class StationViewTests
     [Fact]
     public void NamesTheProvenanceOfAUserSuppliedStation()
     {
-        PluginView view = StationView.Build(Catalog(Full with { IsUserSupplied = true }), "a");
+        PluginView view = StationView.Build(Catalog(Full with { IsUserSupplied = true }), "a", UserState.Empty);
 
         AllNodes(view).SelectMany(node => node.Props.Values)
             .Should().Contain(value => value != null && value.ToString()!.Contains(StationOverrides.FileName));
@@ -168,7 +168,7 @@ public class StationViewTests
     [Fact]
     public void ShowsAnEmptyStateForAStationThatIsNoLongerThere()
     {
-        PluginView view = StationView.Build(Catalog(Full), "gone");
+        PluginView view = StationView.Build(Catalog(Full), "gone", UserState.Empty);
 
         AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
         ActionOfType(view, PluginActionType.PlayMedia).Should().BeNull();
@@ -179,7 +179,7 @@ public class StationViewTests
     {
         RadioStation bare = new() { Id = "b", Name = "Bare FM", StreamUrl = "https://example.com/b" };
 
-        PluginView view = StationView.Build(Catalog(bare), "b");
+        PluginView view = StationView.Build(Catalog(bare), "b", UserState.Empty);
 
         ActionOfType(view, PluginActionType.PlayMedia).Should().NotBeNull();
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
@@ -214,7 +214,7 @@ public class StationViewTests
     [Fact]
     public void EveryNodeHasAUniqueId()
     {
-        PluginView view = StationView.Build(Catalog(Full), "a");
+        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
     }

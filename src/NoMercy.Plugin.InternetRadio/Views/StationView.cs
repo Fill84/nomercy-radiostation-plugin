@@ -14,7 +14,7 @@ public static class StationView
             new() { Key = "value", Label = "Value" },
         ];
 
-    public static PluginView Build(StationCatalog catalog, string id)
+    public static PluginView Build(StationCatalog catalog, string id, UserState state)
     {
         RadioStation? station = catalog.ById(id);
 

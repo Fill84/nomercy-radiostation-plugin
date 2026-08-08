@@ -30,8 +30,7 @@ public class GenreViewTests
     [Fact]
     public void ShowsOnlyThatGenresStations()
     {
-        PluginView view = GenreView.Build(
-            Catalog(Station("a", "Ambient"), Station("b", "Rock")), "ambient");
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient"), Station("b", "Rock")), "ambient", UserState.Empty);
 
         AllNodes(view).Where(node => PluginNodes.IsCard(node))
             .Should().ContainSingle()
@@ -41,7 +40,7 @@ public class GenreViewTests
     [Fact]
     public void CardsPlayImmediately()
     {
-        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient");
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient", UserState.Empty);
 
         AllNodes(view).Single(node => PluginNodes.IsCard(node))
             .Action!.Type.Should().Be(PluginActionType.PlayMedia);
@@ -50,7 +49,7 @@ public class GenreViewTests
     [Fact]
     public void OffersAWayBack()
     {
-        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient");
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient", UserState.Empty);
 
         AllNodes(view).Should().Contain(node =>
             node.Action != null
@@ -62,7 +61,7 @@ public class GenreViewTests
     [Fact]
     public void ShowsAnEmptyStateForAGenreThatDoesNotExist()
     {
-        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "no-such-genre");
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "no-such-genre", UserState.Empty);
 
         AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
         AllNodes(view).Should().NotContain(node => PluginNodes.IsCard(node));
@@ -82,8 +81,7 @@ public class GenreViewTests
             Genre = "Ambient",
         };
 
-        PluginView view = GenreView.Build(
-            Catalog(Station("a", "Ambient"), Station("b", "Ambient"), duplicate), "ambient");
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient"), Station("b", "Ambient"), duplicate), "ambient", UserState.Empty);
 
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
     }

@@ -86,7 +86,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             Context.Logger
         );
 
-    private UserStateStore UserState => _userState ??= new UserStateStore(Context.DataFolderPath);
+    private UserStateStore StateStore => _userState ??= new UserStateStore(Context.DataFolderPath);
 
     // === Actions the controller calls ======================================
 
@@ -105,7 +105,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             return PluginActionOutcome.Failed("Sign in to keep favourites.");
         }
 
-        if (await UserState.RemoveFavouriteAsync(userId, stationId, ct))
+        if (await StateStore.RemoveFavouriteAsync(userId, stationId, ct))
         {
             return PluginActionOutcome.Ok("Removed from favourites.");
         }
@@ -121,7 +121,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             return PluginActionOutcome.Failed("That station could not be found.");
         }
 
-        await UserState.AddFavouriteAsync(userId, station, ct);
+        await StateStore.AddFavouriteAsync(userId, station, ct);
 
         return PluginActionOutcome.Ok("Added to favourites.");
     }
@@ -140,7 +140,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         }
 
         string? term = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
-        await UserState.SetLastSearchAsync(userId, term, ct);
+        await StateStore.SetLastSearchAsync(userId, term, ct);
 
         return PluginActionOutcome.Ok(term is null ? "Search cleared." : $"Searching for {term}.");
     }
@@ -156,15 +156,14 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// do different things, and reporting an outage as an empty result set has them
     /// retrying a search that was never the problem.
     /// </summary>
-    private async Task<PluginView> BuildSearchAsync(string? userId, CancellationToken ct)
+    private async Task<PluginView> BuildSearchAsync(
+        string? userId, UserState state, CancellationToken ct)
     {
-        string? term = userId is null
-            ? null
-            : (await UserState.GetAsync(userId, ct)).LastSearch;
+        string? term = state.LastSearch;
 
         if (string.IsNullOrWhiteSpace(term))
         {
-            return SearchView.Build(null, [], queryFailed: false);
+            return SearchView.Build(null, [], queryFailed: false, state);
         }
 
         try
@@ -173,7 +172,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             IReadOnlyList<RadioBrowserStation> wire =
                 await client.SearchByNameAsync(term, RadioBrowserClient.SearchLimit, ct);
 
-            return SearchView.Build(term, [.. StationGates.Admitted(wire)], queryFailed: false);
+            return SearchView.Build(term, [.. StationGates.Admitted(wire)], queryFailed: false, state);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -183,7 +182,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         {
             _context?.Logger.LogWarning(exception, "Internet Radio could not search for {Term}.", term);
 
-            return SearchView.Build(term, [], queryFailed: true);
+            return SearchView.Build(term, [], queryFailed: true, state);
         }
     }
 
@@ -294,15 +293,22 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             RadioRoute route = RadioRoutes.Parse(request.Route);
             StationCatalog catalog = await Provider.GetAsync(ct);
 
+            // Read once per request, not once per card. Every view that shows a station
+            // needs to know whether this viewer kept it, and a per-card read would open
+            // the file eighteen times to answer the same question.
+            UserState state = request.UserId is null
+                ? UserState.Empty
+                : await StateStore.GetAsync(request.UserId, ct);
+
             return route.Kind switch
             {
-                RadioRouteKind.Browse => BrowseView.Build(catalog),
-                RadioRouteKind.Genre => GenreView.Build(catalog, route.Value),
+                RadioRouteKind.Browse => BrowseView.Build(catalog, state),
+                RadioRouteKind.Genre => GenreView.Build(catalog, route.Value, state),
                 RadioRouteKind.AllStations => AllStationsView.Build(catalog),
-                RadioRouteKind.Station => StationView.Build(catalog, route.Value),
-                RadioRouteKind.Search => await BuildSearchAsync(request.UserId, ct),
+                RadioRouteKind.Station => StationView.Build(catalog, route.Value, state),
+                RadioRouteKind.Search => await BuildSearchAsync(request.UserId, state, ct),
                 RadioRouteKind.Settings => SettingsView.Build(
-                    catalog, context.DataFolderPath, DateTimeOffset.UtcNow, NextRefreshUtc(DateTimeOffset.UtcNow)),
+                    catalog, context.DataFolderPath, DateTimeOffset.UtcNow, NextRefreshUtc(DateTimeOffset.UtcNow), state),
                 _ => PluginViews.Declarative(
                     PluginViews.EmptyState(
                         "unknown-route",

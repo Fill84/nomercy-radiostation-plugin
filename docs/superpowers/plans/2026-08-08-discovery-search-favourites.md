@@ -22,7 +22,7 @@
 - **No station name, stream URL, logo, genre or country may appear in the source tree.** After Task 1 the only permitted data is the genre tags in `GenreMap`.
 - **`PluginText` variants are `title`, `subtitle`, `caption` only.** Any other string silently renders as body text.
 - **Routes carry state in the path, never the query string.** The web host sends only `route`.
-- **Icons must exist in the Moooom set.** Verified present and used here: `portableRadio`, `play`, `playlistAdd`, `globe`, `arrowLeft`, `gridMasonry`, `settings`, `search`, `heart`. An unknown name silently renders as `plugged`.
+- **Icons must exist in the Moooom set.** Verified present and used here: `portableRadio`, `play`, `playlistAdd`, `globe`, `arrowLeft`, `gridMasonry`, `settings`. An unknown name silently renders as `plugged`, so a guessed icon is a plug on every card that nothing in this repo can see. `heart` and `search` were listed here earlier and are NOT verified - do not use them.
 - **Every file gets the SPDX header:**
   ```csharp
   // SPDX-License-Identifier: MIT

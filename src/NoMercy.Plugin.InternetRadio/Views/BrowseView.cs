@@ -12,12 +12,16 @@ namespace NoMercy.Plugin.InternetRadio;
 // something now", and the genre pages answer "show me all of one kind".
 public static class BrowseView
 {
-    public static PluginView Build(StationCatalog catalog)
+    public static PluginView Build(StationCatalog catalog, UserState state)
     {
         if (catalog.IsEmpty)
         {
             return PluginViews.Declarative(EmptyCatalog.Build(catalog));
         }
+
+        // A set, not a scan per card. A grid is eighteen cards and a favourites list is
+        // unbounded, so the naive form is quadratic in the two things most likely to grow.
+        HashSet<string> favourites = [.. state.Favourites.Select(station => station.Id)];
 
         List<PluginComponent> children =
         [
@@ -27,13 +31,33 @@ public static class BrowseView
                 $"{catalog.Count} stations across {catalog.Genres.Count} genres. Pick one and it plays.",
                 "caption"
             ),
-            GenreChips(catalog),
-            PluginViews.Text("browse-popular-heading", "Popular", "subtitle"),
-            PluginViews.Grid(
-                "browse-popular-grid",
-                [.. catalog.Popular(StationCards.PopularCount).Select(StationCards.Play)]
-            ),
+
+            // Above everything else it could be below. Searching is how a station outside
+            // the seventeen-tag sweep is reached at all, which since the curated list went
+            // is most of the database - so it belongs on the screen you land on rather
+            // than behind a click.
+            SearchView.Field(state.LastSearch),
         ];
+
+        // Absent, not empty. A heading over nothing reads as a screen that failed to
+        // load, and everyone's first visit here has no favourites at all.
+        if (state.Favourites.Count > 0)
+        {
+            children.Add(PluginViews.Text("browse-favourites-heading", "Favourites", "subtitle"));
+            children.Add(PluginViews.Grid(
+                "browse-favourites",
+                [.. state.Favourites.Select(station => StationCards.WithFavourite(station, true, "fav"))]
+            ));
+        }
+
+        children.Add(GenreChips(catalog));
+        children.Add(PluginViews.Text("browse-popular-heading", "Popular", "subtitle"));
+        children.Add(PluginViews.Grid(
+            "browse-popular-grid",
+            [.. catalog.Popular(StationCards.PopularCount)
+                .Select(station => StationCards.WithFavourite(
+                    station, favourites.Contains(station.Id), "popular"))]
+        ));
 
         return PluginViews.Declarative(PluginViews.Container("browse-root", [.. children]));
     }

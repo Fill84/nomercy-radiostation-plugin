@@ -65,11 +65,20 @@ public class EmitPayloadsForRendering
 
         Dictionary<string, PluginView> screens = new()
         {
-            ["radio-browse"] = BrowseView.Build(catalog),
-            ["radio-genre"] = GenreView.Build(catalog, "ambient"),
+            ["radio-browse"] = BrowseView.Build(catalog, UserState.Empty),
+            // A second browse screen with favourites filled in: the section only exists
+            // when there are some, so the empty one above cannot show what it looks like.
+            ["radio-browse-favourites"] = BrowseView.Build(
+                catalog,
+                new UserState
+                {
+                    Favourites = [Station("groove", "Ambient"), Station("jazz", "Jazz")],
+                    LastSearch = "groove",
+                }),
+            ["radio-genre"] = GenreView.Build(catalog, "ambient", UserState.Empty),
             ["radio-all"] = AllStationsView.Build(catalog),
-            ["radio-station"] = StationView.Build(catalog, "groove"),
-            ["radio-settings"] = SettingsView.Build(catalog, "/data", now, now.AddDays(1)),
+            ["radio-station"] = StationView.Build(catalog, "groove", UserState.Empty),
+            ["radio-settings"] = SettingsView.Build(catalog, "/data", now, now.AddDays(1), UserState.Empty),
             ["radio-search"] = SearchView.Build(
                 "groove", [Station("groove", "Ambient"), Station("jazz", "Jazz")], queryFailed: false),
             // Emitted too, because the three empty states are the ones a structural test
@@ -86,6 +95,6 @@ public class EmitPayloadsForRendering
             File.WriteAllText(Path.Combine(OutputDirectory, $"{name}.json"), json);
         }
 
-        Assert.Equal(8, Directory.GetFiles(OutputDirectory, "radio-*.json").Length);
+        Assert.Equal(9, Directory.GetFiles(OutputDirectory, "radio-*.json").Length);
     }
 }
