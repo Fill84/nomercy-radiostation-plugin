@@ -12,7 +12,11 @@ namespace NoMercy.Plugin.InternetRadio;
 // something now", and the genre pages answer "show me all of one kind".
 public static class BrowseView
 {
-    public static PluginView Build(StationCatalog catalog, UserState state)
+    public static PluginView Build(
+        StationCatalog catalog,
+        UserState state,
+        IReadOnlyList<RadioStation>? searchResults = null,
+        bool searchFailed = false)
     {
         if (catalog.IsEmpty)
         {
@@ -29,15 +33,22 @@ public static class BrowseView
                 "caption"
             ),
 
-            // High on the page, because searching is how a station outside the
-            // seventeen-tag sweep is reached at all - which, since the curated list went,
-            // is all but a handful of the fifty thousand in radio-browser.
-            Ui.Button(
-                "browse-search",
-                "Search stations",
-                PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
-                icon: "magnifyingGlass"),
+            // The box itself, not a button leading to one. Searching is how a station
+            // outside the seventeen-tag sweep is reached at all - which, since the curated
+            // list went, is all but a handful of the fifty thousand in radio-browser - so
+            // it belongs on the screen you land on rather than behind a click.
+            //
+            // The results appear here too, and they have to: a plugin endpoint answers
+            // with data and cannot navigate, so after a submit the client refreshes the
+            // route it is already on. Answering on a different route would mean submitting
+            // here and the answer appearing on a page nothing takes you to.
+            SearchView.Field(state.LastSearch ?? string.Empty),
         ];
+
+        bool searching = searchFailed || !string.IsNullOrWhiteSpace(state.LastSearch);
+
+        children.AddRange(
+            SearchView.Results(state.LastSearch ?? string.Empty, searchResults ?? [], searchFailed, state));
 
         // Absent, not empty. A heading over nothing reads as a screen that failed to
         // load, and everyone's first visit here has no favourites at all.
@@ -49,12 +60,17 @@ public static class BrowseView
 
         children.Add(GenreChips(catalog));
 
-        children.Add(Ui.Text("browse-popular-heading", "Popular", "subtitle"));
-        children.Add(StationCards.Grid(
-            "browse-popular-grid",
-            catalog.Popular(StationCards.PopularCount),
-            state,
-            "popular"));
+        // Popular steps aside while a search is on screen. Two grids of unrelated stations
+        // under one box is a page where it is not clear which one answered you.
+        if (!searching)
+        {
+            children.Add(Ui.Text("browse-popular-heading", "Popular", "subtitle"));
+            children.Add(StationCards.Grid(
+                "browse-popular-grid",
+                catalog.Popular(StationCards.PopularCount),
+                state,
+                "popular"));
+        }
 
         return PluginViews.Declarative(Ui.Container("browse-root", [.. children]));
     }

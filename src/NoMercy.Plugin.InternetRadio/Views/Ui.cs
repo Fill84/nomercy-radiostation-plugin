@@ -185,6 +185,15 @@ public static class Ui
             Action = action,
         };
 
+    /// <summary>An embedded page. The client renders it as a sandboxed iframe.</summary>
+    public static PluginComponent WebView(string id, string entryUrl) =>
+        new()
+        {
+            Id = id,
+            Component = "PluginWebView",
+            Props = new() { ["entryUrl"] = entryUrl },
+        };
+
     public static PluginComponent Badge(string id, string label, string variant) =>
         new()
         {

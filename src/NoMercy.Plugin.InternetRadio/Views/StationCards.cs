@@ -156,7 +156,11 @@ public static class StationCards
         {
             Id = $"station-card-{id}",
             Component = PluginComponentType.Card,
-            Action = Play(station),
+            // Opens the station, which is where the player is. It used to raise PlayMedia
+            // here, and that is what this should go back to the day the dashboard's player
+            // can play plugin media - it cannot today, and a click that only ever produced
+            // an error toast is not one click to listening. See PlayerPage.
+            Action = PluginActionIntent.Navigate(RadioRoutes.Station(station.Id)),
             Design = new NMCardProps
             {
                 Padding = "3",

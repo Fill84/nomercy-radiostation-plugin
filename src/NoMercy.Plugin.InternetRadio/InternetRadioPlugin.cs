@@ -149,6 +149,46 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     }
 
     /// <summary>
+    /// The landing page, with the box's own results under it when there are any.
+    ///
+    /// The query runs here rather than in the view: views are pure Build methods, which is
+    /// what makes them cheap to test exhaustively and keeps this class the only thing that
+    /// touches the wire.
+    /// </summary>
+    private async Task<PluginView> BuildBrowseAsync(
+        StationCatalog catalog, UserState state, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(state.LastSearch))
+        {
+            return BrowseView.Build(catalog, state);
+        }
+
+        try
+        {
+            return BrowseView.Build(catalog, state, await SearchAsync(state.LastSearch, ct));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _context?.Logger.LogWarning(
+                exception, "Internet Radio could not search for {Term}.", state.LastSearch);
+
+            return BrowseView.Build(catalog, state, [], searchFailed: true);
+        }
+    }
+
+    private async Task<IReadOnlyList<RadioStation>> SearchAsync(string term, CancellationToken ct)
+    {
+        RadioBrowserClient client = new(Context.HttpClient);
+
+        return [.. StationGates.Admitted(
+            await client.SearchByNameAsync(term, RadioBrowserClient.SearchLimit, ct))];
+    }
+
+    /// <summary>
     /// The search page for whatever was asked for.
     ///
     /// The query runs here rather than in the view: views are pure Build methods, which is
@@ -249,6 +289,26 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
                 "This version of Internet Radio has no page at that address."
             )
         );
+    }
+
+    /// <summary>
+    /// One station by id, from the catalogue or from radio-browser.
+    ///
+    /// Public because the player page needs it too, and a search result is by definition
+    /// not in the catalogue.
+    /// </summary>
+    public async Task<RadioStation?> ResolveStationAsync(string stationId, CancellationToken ct)
+    {
+        StationCatalog catalog = await Provider.GetAsync(ct);
+
+        if (catalog.ById(stationId) is { } known)
+        {
+            return known;
+        }
+
+        FavouriteResolver resolver = new(catalog, new RadioBrowserClient(Context.HttpClient));
+
+        return await resolver.ResolveAsync(stationId, ct);
     }
 
     /// <summary>
@@ -503,7 +563,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
             return route.Kind switch
             {
-                RadioRouteKind.Browse => BrowseView.Build(catalog, state),
+                RadioRouteKind.Browse => await BuildBrowseAsync(catalog, state, ct),
                 RadioRouteKind.Search => await BuildSearchAsync(route.Value, state, ct),
                 RadioRouteKind.Genre => GenreView.Build(catalog, route.Value, state),
                 RadioRouteKind.AllStations => AllStationsView.Build(catalog, state),

@@ -25,6 +25,8 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public const string StreamMethod = "stream";
     public const string CoverRouteTemplate = "cover/{stationId}";
     public const string CoverMethod = "cover";
+    public const string PlayerRouteTemplate = "player/{stationId}";
+    public const string PlayerMethod = "player";
 
 
     [HttpPost(ToggleFavouriteRouteTemplate)]
@@ -64,6 +66,41 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     [HttpGet(CoverRouteTemplate)]
     public Task<IActionResult> Cover(string stationId, CancellationToken ct) =>
         RelayAsync(stationId, cover: true, ct);
+
+    /// <summary>
+    /// A page with an audio element on it, for the station page to embed.
+    ///
+    /// This exists because the dashboard's own player cannot play plugin media at all. It
+    /// builds a track id as `plugin:{pluginId}:{streamUrl}` and then puts that id into a
+    /// CSS selector; a url contains colons and slashes, so the selector is invalid and the
+    /// component throws before any audio is requested - the server never sees a single
+    /// /stream/ call. Nothing a plugin puts in the payload avoids it: even an empty
+    /// streamUrl leaves `plugin:{pluginId}:`, and the colons alone are enough. See
+    /// docs/upstream/2026-08-08-plugin-media-cannot-play.md.
+    ///
+    /// So this plugin serves its own player and the station page embeds it. It is a
+    /// browser's built-in audio element and nothing more - no queue, no cast, no
+    /// now-playing - and it goes away the day the dashboard's player works.
+    /// </summary>
+    [HttpGet(PlayerRouteTemplate)]
+    public async Task<IActionResult> Player(string stationId, CancellationToken ct)
+    {
+        if (pluginManager.GetPluginInstance(PluginId) is not InternetRadioPlugin plugin)
+        {
+            return NotFound();
+        }
+
+        RadioStation? station = await plugin.ResolveStationAsync(stationId, ct);
+
+        if (station is null)
+        {
+            return NotFound();
+        }
+
+        Response.ContentType = "text/html; charset=utf-8";
+
+        return Content(PlayerPage.Html(station), "text/html");
+    }
 
     private async Task<IActionResult> RelayAsync(string stationId, bool cover, CancellationToken ct)
     {

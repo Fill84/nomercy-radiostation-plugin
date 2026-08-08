@@ -69,7 +69,7 @@ public static class SearchView
     /// unreachable, and nothing matched. Reporting an outage as an empty result set has the
     /// viewer retyping a search that was never the problem.
     /// </summary>
-    private static IEnumerable<PluginComponent> Results(
+    public static IEnumerable<PluginComponent> Results(
         string term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState state)
     {
         if (term.Length == 0)

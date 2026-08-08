@@ -114,12 +114,16 @@ public class StationCardsTests
     }
 
     [Fact]
-    public void OneClickOnTheCardPlaysTheStation()
+    public void OneClickOnTheCardOpensTheStation()
     {
         PluginComponent card = StationCards.Tile(Station(), false).Items[0];
 
-        card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
-        card.Action.Payload["title"].Should().Be("Example FM");
+        // It raised PlayMedia until the dashboard's player turned out unable to play plugin
+        // media at all - it throws on a selector built from the stream url before
+        // requesting a byte - so a click here only ever produced an error toast. The
+        // station page is where sound comes out. See PlayerPage and app-web issue #15.
+        card.Action!.Type.Should().Be(PluginActionType.Navigate);
+        card.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
     }
 
     // Readable without colour. A toggle whose only difference is a tint is unreadable to a

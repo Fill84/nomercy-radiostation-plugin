@@ -38,12 +38,12 @@ public class GenreViewTests
     }
 
     [Fact]
-    public void CardsPlayImmediately()
+    public void CardsOpenTheStation()
     {
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient", UserState.Empty);
 
         AllNodes(view).Single(node => node.Id == "station-card-genre-a")
-            .Action!.Type.Should().Be(PluginActionType.PlayMedia);
+            .Action!.Type.Should().Be(PluginActionType.Navigate);
     }
 
     [Fact]

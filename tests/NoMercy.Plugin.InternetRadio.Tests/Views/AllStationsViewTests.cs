@@ -59,12 +59,12 @@ public class AllStationsViewTests
     }
 
     [Fact]
-    public void OneClickPlays()
+    public void OneClickOpensTheStation()
     {
         PluginComponent card = Grid(Build(Station("a", "Alpha FM"))).Items.Single().Items[0];
 
-        card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
-        card.Action.Payload["title"].Should().Be("Alpha FM");
+        card.Action!.Type.Should().Be(PluginActionType.Navigate);
+        card.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
     }
 
     [Fact]

@@ -38,17 +38,17 @@ public class BrowseViewTests
 
     // The whole point of the plugin: one click and it is playing.
     [Fact]
-    public void CardsPlayTheStationRatherThanNavigatingToIt()
+    public void CardsOpenTheStationWhereThePlayerIs()
     {
         PluginView view = BrowseView.Build(Catalog(Station("a")), UserState.Empty);
 
         // The card, not the tile around it: the tile also holds the favourite toggle, and
-        // a toggle inside the thing carrying play is a toggle that also plays.
+        // a toggle inside the thing carrying the action is a toggle that also fires it.
         PluginComponent card = AllNodes(view)
             .Should().ContainSingle(node => node.Id == "station-card-popular-a").Subject;
 
-        card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
-        card.Action.Payload["title"].Should().Be("Station a");
+        card.Action!.Type.Should().Be(PluginActionType.Navigate);
+        card.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
     }
 
     [Fact]
@@ -155,13 +155,13 @@ public class BrowseViewTests
     // High on the page. Since the curated list went, search is how all but a handful of
     // the fifty thousand stations in radio-browser are reachable at all.
     [Fact]
-    public void PutsSearchAboveTheGenreChips()
+    public void PutsTheSearchBoxAboveTheGenreChips()
     {
         List<string> ids = [.. AllNodes(BrowseView.Build(Catalog(Station("a")), UserState.Empty))
             .Select(node => node.Id)];
 
-        ids.Should().Contain("browse-search");
-        ids.IndexOf("browse-search").Should().BeLessThan(ids.IndexOf("browse-genres"));
+        ids.Should().Contain("search-form");
+        ids.IndexOf("search-form").Should().BeLessThan(ids.IndexOf("browse-genres"));
     }
 
     [Fact]
@@ -213,12 +213,23 @@ public class BrowseViewTests
     // Searching is a navigation, not a form: the term is spelled into the route, because
     // a submitted form posts an empty body in this client.
     [Fact]
-    public void OffersSearchAsAWayIntoTheRestOfTheDatabase()
+    // The box itself, on the page you land on - not a button leading to one. And the
+    // answer appears here, because after a submit the client refreshes the route it is
+    // already on: answering elsewhere would put the results on a page nothing takes you to.
+    public void OffersTheSearchBoxItselfAndAnswersOnTheSamePage()
     {
-        PluginComponent search = AllNodes(BrowseView.Build(Catalog(Station("a")), UserState.Empty))
-            .Single(node => node.Id == "browse-search");
+        PluginComponent form = AllNodes(BrowseView.Build(Catalog(Station("a")), UserState.Empty))
+            .Single(node => node.Id == "search-form");
 
-        search.Action!.Type.Should().Be(PluginActionType.Navigate);
-        search.Action.Payload["route"].Should().Be(RadioRoutes.SearchRoot);
+        form.Component.Should().Be(Ui.FormComponent);
+        form.Action!.Payload["method"].Should().Be(InternetRadioController.SearchMethod);
+
+        PluginView answered = BrowseView.Build(
+            Catalog(Station("a")),
+            new UserState { LastSearch = "groove" },
+            [Station("found")]);
+
+        AllNodes(answered).Select(node => node.Id)
+            .Should().Contain("search-grid").And.Contain("station-tile-search-found");
     }
 }
