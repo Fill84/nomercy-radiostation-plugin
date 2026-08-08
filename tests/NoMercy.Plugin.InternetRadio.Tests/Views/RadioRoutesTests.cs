@@ -106,4 +106,38 @@ public class RadioRoutesTests
         RadioRoutes.Parse(RadioRoutes.Station("")).Kind.Should().Be(RadioRouteKind.Unknown);
         RadioRoutes.Parse(RadioRoutes.Genre("")).Kind.Should().Be(RadioRouteKind.Unknown);
     }
+
+    // The shape a route actually arrives in, which is not the shape this plugin builds.
+    // The client sends the segments as a repeated `route` query parameter and ASP.NET
+    // binds those into one comma-joined string, so every two-segment page was a dead end.
+    // These pin the received form; the ones above pin the built form, and the gap between
+    // them is exactly what a full test suite failed to notice.
+    [Theory]
+    [InlineData("/genre,ambient", "ambient")]
+    [InlineData("genre,ambient", "ambient")]
+    [InlineData("/genre,drum-bass", "drum-bass")]
+    public void Parse_ReadsAGenreRouteJoinedWithACommaByTheClient(string route, string expected)
+    {
+        RadioRoute parsed = RadioRoutes.Parse(route);
+
+        parsed.Kind.Should().Be(RadioRouteKind.Genre);
+        parsed.Value.Should().Be(expected);
+    }
+
+    [Fact]
+    public void Parse_ReadsAStationRouteJoinedWithACommaByTheClient()
+    {
+        RadioRoute parsed = RadioRoutes.Parse("/station,960cf833-0601-11e8-ae97-52543be04c81");
+
+        parsed.Kind.Should().Be(RadioRouteKind.Station);
+        parsed.Value.Should().Be("960cf833-0601-11e8-ae97-52543be04c81");
+    }
+
+    // Both forms have to keep working: the built one is what this plugin puts in its own
+    // links, and the received one is what comes back.
+    [Fact]
+    public void Parse_StillReadsTheSlashFormThisPluginBuilds()
+    {
+        RadioRoutes.Parse(RadioRoutes.Genre("drum-bass")).Value.Should().Be("drum-bass");
+    }
 }

@@ -72,8 +72,20 @@ public static class RadioRoutes
 
     public static RadioRoute Parse(string? route)
     {
+        // Comma is a separator here, not a character in a value.
+        //
+        // A multi-segment route arrives as "/genre,ambient" rather than "/genre/ambient":
+        // the client sends the segments as a repeated `route` query parameter, and ASP.NET
+        // binds a repeated parameter into one comma-joined string. Every two-segment page
+        // this plugin serves - every genre chip and every station - was a dead end because
+        // of it, and it took reading a log line to see, because the tests hand Parse the
+        // string this plugin BUILDS rather than the one it RECEIVES.
+        //
+        // Safe to treat as a separator: a comma cannot occur in a value we route on.
+        // Slugify keeps only ASCII letters and digits, and a radio-browser id is a uuid.
+        // Reported upstream - see docs/upstream/2026-08-08-route-comma-join.md.
         string[] segments = (route ?? string.Empty)
-            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            .Split(['/', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         if (segments.Length == 0)
         {
