@@ -479,13 +479,116 @@ A button carries nothing but its path, so `POST favourites/toggle/{id}` arrives 
 
 - [ ] **Step 1: Write the failing resolver tests**
 
-Cover, each as its own `[Fact]`, using a fake `HttpMessageHandler` for the client:
+`tests/NoMercy.Plugin.InternetRadio.Tests/State/FavouriteResolverTests.cs`:
 
-1. `ResolveAsync` returns the catalogue's record when the id is in the catalogue, and makes **no** HTTP call.
-2. An id absent from the catalogue but a valid UUID resolves through `GetByUuidsAsync`.
-3. A resolved-by-UUID station that fails `StationGates.Admits` returns `null` — a favourite that cannot play is not worth storing.
-4. An id that is neither in the catalogue nor a well-formed UUID returns `null` without any HTTP call. This is the user-override slug case, and a slug would never resolve upstream.
-5. An HTTP failure during resolution returns `null` rather than throwing.
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using System.Net;
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.State;
+
+public class FavouriteResolverTests
+{
+    private const string KnownUuid = "960cf833-0601-11e8-ae97-52543be04c81";
+
+    private static RadioStation Station(string id) =>
+        new() { Id = id, Name = $"Station {id}", StreamUrl = $"https://example.com/{id}" };
+
+    // Counts calls so a test can prove no request was made, which is the actual claim in
+    // the catalogue-hit and slug cases - not merely that the right answer came back.
+    private sealed class CountingHandler(HttpStatusCode status, string body) : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken ct)
+        {
+            Calls++;
+            return Task.FromResult(new HttpResponseMessage(status)
+            {
+                Content = new StringContent(body),
+            });
+        }
+    }
+
+    private static (FavouriteResolver Resolver, CountingHandler Handler) Build(
+        StationCatalog catalog, HttpStatusCode status = HttpStatusCode.OK, string body = "[]")
+    {
+        CountingHandler handler = new(status, body);
+        HttpClient http = new(handler) { BaseAddress = new(RadioBrowserClient.BaseAddress) };
+        return (new FavouriteResolver(catalog, new RadioBrowserClient(http)), handler);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ReturnsTheCatalogueRecordWithoutAskingUpstream()
+    {
+        StationCatalog catalog = StationCatalog.From([Station("a")], CatalogSource.Cache);
+        (FavouriteResolver resolver, CountingHandler handler) = Build(catalog);
+
+        (await resolver.ResolveAsync("a", default))!.Id.Should().Be("a");
+        handler.Calls.Should().Be(0);
+    }
+
+    // The search case: the station was never in the sweep, so the catalogue cannot answer
+    // and radio-browser has to.
+    [Fact]
+    public async Task ResolveAsync_FallsBackToUuidLookupForAStationTheCatalogueNeverSaw()
+    {
+        string body = $$"""
+            [{"stationuuid":"{{KnownUuid}}","name":"Found","url":"https://example.com/s",
+              "url_resolved":"https://example.com/s","hls":0,"lastcheckok":1}]
+            """;
+        (FavouriteResolver resolver, CountingHandler handler) =
+            Build(StationCatalog.Empty, body: body);
+
+        RadioStation? resolved = await resolver.ResolveAsync(KnownUuid, default);
+
+        resolved.Should().NotBeNull();
+        resolved!.Name.Should().Be("Found");
+        handler.Calls.Should().Be(1);
+    }
+
+    // A favourite that cannot play is not worth storing, and the gates are the one place
+    // that judgement lives.
+    [Fact]
+    public async Task ResolveAsync_RefusesAStationThatFailsTheGates()
+    {
+        string body = $$"""
+            [{"stationuuid":"{{KnownUuid}}","name":"Insecure","url":"http://example.com/s",
+              "url_resolved":"http://example.com/s","hls":0,"lastcheckok":1}]
+            """;
+        (FavouriteResolver resolver, _) = Build(StationCatalog.Empty, body: body);
+
+        (await resolver.ResolveAsync(KnownUuid, default)).Should().BeNull();
+    }
+
+    // A user-supplied station has a slug id, never a UUID. Asking radio-browser about a
+    // slug is a request that cannot succeed, so it must never be made.
+    [Fact]
+    public async Task ResolveAsync_NeverAsksUpstreamAboutASlug()
+    {
+        (FavouriteResolver resolver, CountingHandler handler) = Build(StationCatalog.Empty);
+
+        (await resolver.ResolveAsync("somafm-groove-salad", default)).Should().BeNull();
+        handler.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ReturnsNullWhenUpstreamFails()
+    {
+        (FavouriteResolver resolver, _) =
+            Build(StationCatalog.Empty, HttpStatusCode.ServiceUnavailable, "");
+
+        (await resolver.ResolveAsync(KnownUuid, default)).Should().BeNull();
+    }
+}
+```
+
+If `StationCatalog.From` / `StationCatalog.Empty` are not the actual factory names, read `Catalog/StationCatalog.cs` and use what is there — do not add a factory to make this test compile.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -570,7 +673,52 @@ git commit -m "feat(favourites): resolve a station id and toggle it for the call
 
 - [ ] **Step 1: Write the failing client test**
 
-Assert that `SearchByNameAsync("groove salad", 50, ct)` issues a GET whose path is `/json/stations/search` and whose query contains `name=groove%20salad`, `limit=50`, `order=votes`, `reverse=true` and `hidebroken=true`; that a non-success status yields an empty list rather than throwing; and that a malformed row does not lose the whole response.
+Add to `tests/NoMercy.Plugin.InternetRadio.Tests/Catalog/RadioBrowserClientTests.cs`, following the fake-handler pattern already in that file:
+
+```csharp
+    [Fact]
+    public async Task SearchByNameAsync_AsksForTheMostVotedPlayableMatches()
+    {
+        RecordingHandler handler = new("[]");
+        RadioBrowserClient client = ClientFor(handler);
+
+        await client.SearchByNameAsync("groove salad", 50, default);
+
+        Uri asked = handler.LastRequest!.RequestUri!;
+        asked.AbsolutePath.Should().Be("/json/stations/search");
+        asked.Query.Should().Contain("name=groove%20salad")
+            .And.Contain("limit=50")
+            .And.Contain("order=votes")
+            .And.Contain("reverse=true")
+            .And.Contain("hidebroken=true");
+    }
+
+    // radio-browser having a bad minute is not this plugin throwing. The view has a
+    // failed state; an exception escaping here would take the whole screen instead.
+    [Fact]
+    public async Task SearchByNameAsync_ReturnsEmptyOnAFailedResponse()
+    {
+        RadioBrowserClient client = ClientFor(new RecordingHandler("", HttpStatusCode.BadGateway));
+
+        (await client.SearchByNameAsync("anything", 50, default)).Should().BeEmpty();
+    }
+
+    // One malformed row must not lose the other forty-nine.
+    [Fact]
+    public async Task SearchByNameAsync_KeepsTheRowsItCanRead()
+    {
+        RecordingHandler handler = new("""
+            [{"stationuuid":"11111111-2222-3333-4444-555555555555","name":"Good",
+              "url":"https://example.com/a","hls":0,"lastcheckok":1},
+             {"name":null}]
+            """);
+
+        (await ClientFor(handler).SearchByNameAsync("x", 50, default))
+            .Should().ContainSingle(station => station.Name == "Good");
+    }
+```
+
+If the existing file names its fake handler or its factory differently, use those names — do not add a second helper alongside one that already works.
 
 - [ ] **Step 2: Write the failing route test**
 
@@ -619,7 +767,7 @@ The three states, which must not look alike:
 - no term — `PluginViews.EmptyState("search-idle", "Search for a station", "Type a name to find stations anywhere in the radio-browser database.")`
 - a term with no results — `PluginViews.EmptyState("search-empty", "Nothing found", $"No playable station matches \"{term}\".")`
 
-Results render as a grid of `StationCards.WithFavourite(...)` from Task 6.
+Results render as a grid of `StationCards.Play(station)`. Task 6 swaps this for `WithFavourite` once the toggle exists — this task must end green, so it cannot call something that has not been written yet.
 
 - [ ] **Step 6: Route `/search` in the plugin**
 
@@ -627,7 +775,67 @@ In `GetViewAsync`, add `RadioRouteKind.Search`. The plugin reads the stored term
 
 - [ ] **Step 7: Write `SearchViewTests.cs`**
 
-One test per state above, plus: the field renders the stored term as its value so a submitted query is still visible; and a result card carries a `playMedia` action.
+```csharp
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
+
+using FluentAssertions;
+using Xunit;
+
+namespace NoMercy.Plugin.InternetRadio.Tests.Views;
+
+public class SearchViewTests
+{
+    private static RadioStation Station(string id) =>
+        new() { Id = id, Name = $"Station {id}", StreamUrl = $"https://example.com/{id}" };
+
+    private static IEnumerable<string> Ids(PluginView view) =>
+        PluginNodes.Descendants(view).Select(node => node.Id);
+
+    // The three states must be distinguishable, or "we could not reach radio-browser"
+    // and "there is no such station" look identical and the user retries the wrong thing.
+    [Fact]
+    public void Build_WithNoTerm_InvitesASearch()
+    {
+        Ids(SearchView.Build(null, [], queryFailed: false)).Should().Contain("search-idle");
+    }
+
+    [Fact]
+    public void Build_WithATermAndNoResults_SaysNothingMatched()
+    {
+        Ids(SearchView.Build("nothing", [], queryFailed: false)).Should().Contain("search-empty");
+    }
+
+    [Fact]
+    public void Build_WhenTheQueryFailed_SaysSoInsteadOfClaimingNoResults()
+    {
+        IEnumerable<string> ids = Ids(SearchView.Build("anything", [], queryFailed: true));
+
+        ids.Should().Contain("search-failed").And.NotContain("search-empty");
+    }
+
+    // A submitted query that vanishes from the field looks like the search was lost.
+    [Fact]
+    public void Build_KeepsTheTermInTheField()
+    {
+        PluginComponent form = PluginNodes.Descendants(SearchView.Build("groove", [], false))
+            .Single(node => node.Id == "search-form");
+
+        form.ToString().Should().Contain("groove");
+    }
+
+    [Fact]
+    public void Build_RendersEachResultAsAPlayableCard()
+    {
+        PluginView view = SearchView.Build("x", [Station("a"), Station("b")], false);
+
+        Ids(view).Should().Contain("station-card-a").And.Contain("station-card-b");
+    }
+
+}
+```
+
+Results render with `StationCards.Play(station)` for now. Task 6 introduces `WithFavourite`, swaps it in here, and adds the test that every result carries a toggle — that assertion belongs to the task that makes it true, so this one ends green.
 
 - [ ] **Step 8: Build, test, commit**
 
@@ -656,11 +864,87 @@ git commit -m "feat(search): find any station in radio-browser, on its own route
 
 - [ ] **Step 1: Write the failing tests**
 
-1. `WithFavourite(station, isFavourite: false)` contains the play card and a button whose action is `CallPlugin` with method `favourites/toggle/{id}`.
-2. The button's label and icon differ between favourited and not, so the state is readable without colour alone.
-3. `CoverUrl` returns `station.LogoUrl` when it is a well-formed absolute https URL.
-4. `CoverUrl` returns `null` for a blank, relative, or non-https logo — the placeholder is the client's job once the URL is absent, and a mixed-content image is a broken icon on every https dashboard.
-5. `WithFavourite` renders the same card shape whether or not a cover exists, so a missing logo does not change the grid's geometry.
+Add to `tests/NoMercy.Plugin.InternetRadio.Tests/Views/StationCardsTests.cs`. `PluginNodes` is the existing helper that reads a built view the way the design system draws it — use it rather than reaching into props by hand.
+
+```csharp
+    private static RadioStation Logo(string? url) =>
+        new()
+        {
+            Id = "a", Name = "Example FM",
+            StreamUrl = "https://example.com/stream", LogoUrl = url,
+        };
+
+    [Fact]
+    public void WithFavourite_PairsThePlayCardWithAToggle()
+    {
+        PluginComponent row = StationCards.WithFavourite(Logo(null), isFavourite: false);
+
+        PluginNodes.Descendants(row)
+            .Should().Contain(node => node.Id == "station-card-a")
+            .And.Contain(node => node.Id == "station-favourite-a");
+    }
+
+    [Fact]
+    public void WithFavourite_TogglesThroughTheControllersOwnRoute()
+    {
+        PluginComponent row = StationCards.WithFavourite(Logo(null), isFavourite: false);
+
+        PluginComponent toggle = PluginNodes.Descendants(row)
+            .Single(node => node.Id == "station-favourite-a");
+
+        toggle.Props["action"].Should().NotBeNull();
+        toggle.Props["action"]!.ToString().Should().Contain("favourites/toggle/a");
+    }
+
+    // Readable without colour. A toggle whose only difference is a tint is unreadable to
+    // a good share of viewers, and unreadable in a screenshot to everyone.
+    [Fact]
+    public void WithFavourite_LooksDifferentInEachState()
+    {
+        PluginComponent off = StationCards.WithFavourite(Logo(null), isFavourite: false);
+        PluginComponent on = StationCards.WithFavourite(Logo(null), isFavourite: true);
+
+        string LabelOf(PluginComponent row) => PluginNodes.Descendants(row)
+            .Single(node => node.Id == "station-favourite-a").Props["label"]!.ToString()!;
+
+        LabelOf(off).Should().NotBe(LabelOf(on));
+    }
+
+    [Fact]
+    public void CoverUrl_KeepsAnHttpsLogo()
+    {
+        StationCards.CoverUrl(Logo("https://cdn.example.com/logo.png"))
+            .Should().Be("https://cdn.example.com/logo.png");
+    }
+
+    // An http image on an https dashboard is blocked as mixed content and draws as a
+    // broken icon, which reads as our bug rather than as a station's dead logo. Same
+    // judgement the stream gates already make, for the same reason.
+    [Theory]
+    [InlineData("http://cdn.example.com/logo.png")]
+    [InlineData("/relative/logo.png")]
+    [InlineData("not a url")]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void CoverUrl_RefusesAnythingTheBrowserCannotDrawOverHttps(string? url)
+    {
+        StationCards.CoverUrl(Logo(url)).Should().BeNull();
+    }
+
+    // The grid's geometry must not depend on whether a logo happened to survive.
+    [Fact]
+    public void WithFavourite_HasTheSameShapeWithAndWithoutACover()
+    {
+        PluginComponent with = StationCards.WithFavourite(Logo("https://cdn.example.com/l.png"), false);
+        PluginComponent without = StationCards.WithFavourite(Logo(null), false);
+
+        PluginNodes.Descendants(with).Select(node => node.Id)
+            .Should().BeEquivalentTo(PluginNodes.Descendants(without).Select(node => node.Id));
+    }
+```
+
+Read `TestSupport/PluginNodes.cs` first and use its real member names; if it exposes a different walker than `Descendants`, use that rather than adding one.
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -727,11 +1011,68 @@ git commit -m "feat(ui): a favourite toggle beside every station, and a gated co
 
 - [ ] **Step 1: Write the failing tests**
 
-1. The search field is the first component after the page title.
-2. A user with favourites gets a "Favourites" section before the genre chips, holding one card per favourite.
-3. A user with none gets **no** favourites section at all — not an empty one.
-4. The genre chips and the popular grid still render as before, and "Popular" is ordered by popularity descending.
-5. A favourited station in the popular grid shows the toggle in its favourited state, so the same station cannot read two ways on one screen.
+Add to `tests/NoMercy.Plugin.InternetRadio.Tests/Views/BrowseViewTests.cs`:
+
+```csharp
+    private static UserState With(params RadioStation[] favourites) =>
+        new() { Favourites = favourites };
+
+    private static IEnumerable<string> Ids(PluginView view) =>
+        PluginNodes.Descendants(view).Select(node => node.Id);
+
+    // You asked for easy searching; easy means on the screen you land on.
+    [Fact]
+    public void Build_PutsTheSearchFieldAboveEverythingButTheTitle()
+    {
+        List<string> ids = [.. Ids(BrowseView.Build(Catalog(), With()))];
+
+        ids.IndexOf("search-form").Should().BeLessThan(ids.IndexOf("browse-genres"));
+    }
+
+    [Fact]
+    public void Build_ShowsFavouritesBeforeTheGenreChips()
+    {
+        List<string> ids = [.. Ids(BrowseView.Build(Catalog(), With(Station("a"))))];
+
+        ids.Should().Contain("browse-favourites");
+        ids.IndexOf("browse-favourites").Should().BeLessThan(ids.IndexOf("browse-genres"));
+        ids.Should().Contain("station-card-a");
+    }
+
+    // Absent, not empty. An empty section is a heading over nothing, which reads as a
+    // screen that failed to load rather than as a list you have not started.
+    [Fact]
+    public void Build_OmitsTheFavouritesSectionEntirelyWhenThereAreNone()
+    {
+        Ids(BrowseView.Build(Catalog(), With())).Should().NotContain("browse-favourites");
+    }
+
+    // The same station cannot read two ways on one screen: favourited in the favourites
+    // section and not-favourited in the grid below it is the bug this catches.
+    [Fact]
+    public void Build_ShowsAFavouritedStationAsFavouritedEverywhereItAppears()
+    {
+        RadioStation station = Catalog().Stations.First();
+        PluginView view = BrowseView.Build(Catalog(), With(station));
+
+        IEnumerable<string?> labels = PluginNodes.Descendants(view)
+            .Where(node => node.Id == $"station-favourite-{station.Id}")
+            .Select(node => node.Props["label"]?.ToString());
+
+        labels.Should().NotBeEmpty().And.AllBe(StationCards.RemoveFavouriteLabel);
+    }
+```
+
+This needs Task 6 to expose its two labels as constants rather than inline strings:
+
+```csharp
+    public const string AddFavouriteLabel = "Add to favourites";
+    public const string RemoveFavouriteLabel = "Remove from favourites";
+```
+
+Add them there, and have `WithFavourite` read them. A test comparing against a literal copied from the view asserts only that two copies match, and both copies are wrong together the moment somebody edits one.
+
+Reuse the existing `Catalog()` and `Station()` helpers already in this file; if they are named differently, use those.
 
 - [ ] **Step 2: Run to verify they fail**
 
