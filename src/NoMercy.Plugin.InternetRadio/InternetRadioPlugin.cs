@@ -145,6 +145,48 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         return PluginActionOutcome.Ok(term is null ? "Search cleared." : $"Searching for {term}.");
     }
 
+    /// <summary>
+    /// Runs the stored term live and hands the results to the view.
+    ///
+    /// The network call belongs here rather than in SearchView: views are pure Build
+    /// methods, which is what makes them cheap to test exhaustively and keeps the plugin
+    /// the only thing that touches the wire.
+    ///
+    /// A failed query renders as failed, not as "nothing found". The two ask the user to
+    /// do different things, and reporting an outage as an empty result set has them
+    /// retrying a search that was never the problem.
+    /// </summary>
+    private async Task<PluginView> BuildSearchAsync(string? userId, CancellationToken ct)
+    {
+        string? term = userId is null
+            ? null
+            : (await UserState.GetAsync(userId, ct)).LastSearch;
+
+        if (string.IsNullOrWhiteSpace(term))
+        {
+            return SearchView.Build(null, [], queryFailed: false);
+        }
+
+        try
+        {
+            RadioBrowserClient client = new(Context.HttpClient);
+            IReadOnlyList<RadioBrowserStation> wire =
+                await client.SearchByNameAsync(term, RadioBrowserClient.SearchLimit, ct);
+
+            return SearchView.Build(term, [.. StationGates.Admitted(wire)], queryFailed: false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _context?.Logger.LogWarning(exception, "Internet Radio could not search for {Term}.", term);
+
+            return SearchView.Build(term, [], queryFailed: true);
+        }
+    }
+
     // === IScheduledTaskPlugin ==============================================
 
     public string CronExpression => DefaultCron;
@@ -258,6 +300,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
                 RadioRouteKind.Genre => GenreView.Build(catalog, route.Value),
                 RadioRouteKind.AllStations => AllStationsView.Build(catalog),
                 RadioRouteKind.Station => StationView.Build(catalog, route.Value),
+                RadioRouteKind.Search => await BuildSearchAsync(request.UserId, ct),
                 RadioRouteKind.Settings => SettingsView.Build(
                     catalog, context.DataFolderPath, DateTimeOffset.UtcNow, NextRefreshUtc(DateTimeOffset.UtcNow)),
                 _ => PluginViews.Declarative(

@@ -87,6 +87,48 @@ public sealed class RadioBrowserClient(HttpClient http)
         return await SendAsync(request, ct);
     }
 
+    /// <summary>
+    /// How many search results to ask for.
+    ///
+    /// Requested from the API rather than trimmed after, so the response stays small.
+    /// This is an upper bound on what is drawn and not a promise of fifty rows: the
+    /// gates reject a share of any response. Fifty is a page worth scrolling; a larger
+    /// number mostly buys results nobody reaches, on every submit.
+    /// </summary>
+    public const int SearchLimit = 50;
+
+    /// <summary>
+    /// Stations whose name matches, most voted first.
+    ///
+    /// This is what reaches a station the genre sweep never returns, which is the whole
+    /// reason it exists: the sweep is seventeen tags deep, and everything else in the
+    /// database is found by asking for it by name.
+    ///
+    /// <c>hidebroken</c> and <c>is_https</c> pre-filter server-side to keep the response
+    /// small; they do not decide admission. <see cref="StationGates"/> still runs over
+    /// everything that comes back, because radio-browser has been observed reporting a
+    /// 404 stream as healthy.
+    /// </summary>
+    public async Task<IReadOnlyList<RadioBrowserStation>> SearchByNameAsync(
+        string name,
+        int limit,
+        CancellationToken ct
+    )
+    {
+        string query = string.Join(
+            '&',
+            $"name={Uri.EscapeDataString(name)}",
+            $"limit={limit.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            "order=votes",
+            "reverse=true",
+            "hidebroken=true",
+            "is_https=true"
+        );
+
+        using HttpRequestMessage request = Request(HttpMethod.Get, $"/json/stations/search?{query}");
+        return await SendAsync(request, ct);
+    }
+
     private static HttpRequestMessage Request(HttpMethod method, string path)
     {
         HttpRequestMessage request = new(method, $"{BaseAddress}{path}");

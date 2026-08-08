@@ -282,4 +282,48 @@ public class RadioBrowserClientTests
             .Awaiting(() => client.SearchByTagAsync("ambient", 5, cts.Token))
             .Should().ThrowAsync<OperationCanceledException>();
     }
+
+    [Fact]
+    public async Task SearchByNameAsync_AsksForTheMostVotedPlayableMatches()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond("[]");
+
+        await client.SearchByNameAsync("groove salad", 50, CancellationToken.None);
+
+        Uri asked = handler.Requests.Should().ContainSingle().Subject.RequestUri!;
+        asked.AbsolutePath.Should().Be("/json/stations/search");
+        asked.Query.Should().Contain("name=groove%20salad")
+            .And.Contain("limit=50")
+            .And.Contain("order=votes")
+            .And.Contain("reverse=true")
+            .And.Contain("hidebroken=true");
+    }
+
+    // Searching by name must not carry tagExact, which would make every query an exact
+    // tag match and return nothing for a partial station name.
+    [Fact]
+    public async Task SearchByNameAsync_DoesNotSendTagFilters()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Respond("[]");
+
+        await client.SearchByNameAsync("soma", 50, CancellationToken.None);
+
+        handler.Requests.Should().ContainSingle().Subject
+            .RequestUri!.Query.Should().NotContain("tag");
+    }
+
+    // radio-browser having a bad minute is a search that reports itself as failed, not
+    // an exception escaping into the view that renders it.
+    [Fact]
+    public async Task SearchByNameAsync_ThrowsOnAFailedResponseSoTheCallerCanReportIt()
+    {
+        (RadioBrowserClient client, FakeHttpMessageHandler handler) = Build();
+        handler.Fail(new HttpRequestException("down"));
+
+        await FluentActions
+            .Awaiting(() => client.SearchByNameAsync("x", 50, CancellationToken.None))
+            .Should().ThrowAsync<HttpRequestException>();
+    }
 }

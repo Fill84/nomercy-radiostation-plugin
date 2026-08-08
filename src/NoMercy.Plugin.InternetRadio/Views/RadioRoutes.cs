@@ -10,6 +10,7 @@ public enum RadioRouteKind
     AllStations,
     Station,
     Settings,
+    Search,
 
     /// <summary>Anything else. Rendered as an empty state, never as an error.</summary>
     Unknown,
@@ -29,6 +30,7 @@ public static class RadioRoutes
     public const string Browse = "/";
     public const string AllStations = "/all";
     public const string Settings = "/settings";
+    public const string Search = "/search";
 
     private const string GenrePrefix = "genre";
     private const string StationPrefix = "station";
@@ -62,6 +64,7 @@ public static class RadioRoutes
             {
                 "all" => new RadioRoute(RadioRouteKind.AllStations, string.Empty),
                 "settings" => new RadioRoute(RadioRouteKind.Settings, string.Empty),
+                "search" => new RadioRoute(RadioRouteKind.Search, string.Empty),
                 _ => Unknown,
             };
         }

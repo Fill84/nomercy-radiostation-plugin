@@ -70,6 +70,12 @@ public class EmitPayloadsForRendering
             ["radio-all"] = AllStationsView.Build(catalog),
             ["radio-station"] = StationView.Build(catalog, "groove"),
             ["radio-settings"] = SettingsView.Build(catalog, "/data", now, now.AddDays(1)),
+            ["radio-search"] = SearchView.Build(
+                "groove", [Station("groove", "Ambient"), Station("jazz", "Jazz")], queryFailed: false),
+            // Emitted too, because the three empty states are the ones a structural test
+            // cannot judge: they have to be told apart by looking at them.
+            ["radio-search-empty"] = SearchView.Build("nothing at all", [], queryFailed: false),
+            ["radio-search-failed"] = SearchView.Build("anything", [], queryFailed: true),
         };
 
         Directory.CreateDirectory(OutputDirectory);
@@ -80,6 +86,6 @@ public class EmitPayloadsForRendering
             File.WriteAllText(Path.Combine(OutputDirectory, $"{name}.json"), json);
         }
 
-        Assert.Equal(5, Directory.GetFiles(OutputDirectory, "radio-*.json").Length);
+        Assert.Equal(8, Directory.GetFiles(OutputDirectory, "radio-*.json").Length);
     }
 }
