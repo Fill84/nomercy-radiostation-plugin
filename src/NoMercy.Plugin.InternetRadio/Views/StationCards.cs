@@ -198,9 +198,33 @@ public static class StationCards
     }
 
     /// <summary>
+    /// The key a media intent carries the station's own id under.
+    ///
+    /// Not part of PlayMedia's signature - the factory takes a url, a title, an artist and
+    /// a cover, and nothing else - but the payload is an open dictionary, so this rides
+    /// along beside them.
+    ///
+    /// It is here because the client has to identify a track somehow and, with no id in
+    /// the payload, it builds one out of the stream url: `plugin:{pluginId}:{streamUrl}`.
+    /// That identifier then goes into a CSS selector and into a route, and a url is legal
+    /// in neither - which is what throws before any audio starts, and why no /stream/
+    /// request ever reaches this server. See
+    /// docs/upstream/2026-08-08-plugin-media-cannot-play.md.
+    ///
+    /// Sending it costs nothing and is ignored until the client reads it. A station's
+    /// radio-browser uuid is also the honest key: it is what the relay routes on, and it
+    /// does not change when a station moves its stream, which a url-derived id does - so
+    /// history and resume state stop hanging off something that was never a key.
+    /// </summary>
+    public const string StationIdKey = "id";
+
+    /// <summary>
     /// The play intent for a station, so every screen starts the same station the same way.
     /// </summary>
     public static PluginActionIntent Play(RadioStation station) =>
+        WithStationId(PlayIntent(station), station);
+
+    private static PluginActionIntent PlayIntent(RadioStation station) =>
         PluginActionIntent.PlayMedia(
             // Through this plugin's own endpoint when we know where this server lives.
             // The station's own url is refused by the dashboard's media-src, so the direct
@@ -220,11 +244,24 @@ public static class StationCards
 
     /// <summary>Queueing a station, built from the same relayed urls as <see cref="Play"/>.</summary>
     public static PluginActionIntent Enqueue(RadioStation station) =>
-        PluginActionIntent.Enqueue(
-            MediaProxy.Stream(station.Id) ?? station.StreamUrl,
-            station.Name,
-            null,
-            CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id));
+        WithStationId(
+            PluginActionIntent.Enqueue(
+                MediaProxy.Stream(station.Id) ?? station.StreamUrl,
+                station.Name,
+                null,
+                CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id)),
+            station);
+
+    // Written into the payload after the factory built it rather than by hand-rolling the
+    // intent here: the factory owns which keys a media intent carries and what they are
+    // called, and a copy of that here would drift the first time it gains one.
+    private static PluginActionIntent WithStationId(
+        PluginActionIntent intent, RadioStation station)
+    {
+        intent.Payload[StationIdKey] = station.Id;
+
+        return intent;
+    }
 
     /// <summary>
     /// Adding or removing this station, as the toggle every tile and the station page draw.

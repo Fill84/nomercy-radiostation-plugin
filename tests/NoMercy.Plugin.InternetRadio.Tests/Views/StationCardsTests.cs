@@ -213,6 +213,31 @@ public class StationCardsTests
         intent.Payload["artist"].Should().BeNull();
     }
 
+    // The station's own id travels with the intent. Without one the client builds a track
+    // id out of the stream url, and that id then goes into a CSS selector and a route where
+    // a url is legal in neither - which is what stops playback before it starts.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BothMediaIntentsCarryTheStationsOwnId(bool enqueue)
+    {
+        PluginActionIntent intent =
+            enqueue ? StationCards.Enqueue(Station()) : StationCards.Play(Station());
+
+        intent.Payload[StationCards.StationIdKey].Should().Be("a");
+    }
+
+    // A uuid, not a url: the point is an identifier that survives being put in a selector
+    // and in a path, and that does not change when a station moves its stream.
+    [Fact]
+    public void TheIdItSendsIsNotDerivedFromTheStreamUrl()
+    {
+        object? id = StationCards.Play(Station()).Payload[StationCards.StationIdKey];
+
+        id.Should().Be("a");
+        id!.ToString().Should().NotContain("/").And.NotContain(":");
+    }
+
     [Fact]
     public void Subtitle_JoinsWhatIsKnownAndIsNullWhenNothingIs()
     {
