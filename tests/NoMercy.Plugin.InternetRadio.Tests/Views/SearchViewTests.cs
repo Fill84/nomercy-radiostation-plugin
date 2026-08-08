@@ -131,7 +131,7 @@ public class SearchViewTests
         PluginView view = View(
             "tom", [Station("found")], state: new UserState { Favourites = [Station("found")] });
 
-        Node(view, "station-favourite-search-found").Props["label"]
+        Node(view, "station-favourite-search-found-label").Props["text"]
             .Should().Be(StationCards.RemoveFavouriteLabel);
     }
 }

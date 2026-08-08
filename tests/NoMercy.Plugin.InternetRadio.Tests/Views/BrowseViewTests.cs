@@ -194,8 +194,8 @@ public class BrowseViewTests
 
         IEnumerable<string?> labels = AllNodes(BrowseView.Build(Catalog(station), With(station)))
             .Where(node => node.Id.StartsWith("station-favourite-", StringComparison.Ordinal)
-                && node.Id.EndsWith("-a", StringComparison.Ordinal))
-            .Select(node => node.Props["label"]?.ToString());
+                && node.Id.EndsWith("-a-label", StringComparison.Ordinal))
+            .Select(node => node.Props["text"]?.ToString());
 
         labels.Should().NotBeEmpty().And.AllBe(StationCards.RemoveFavouriteLabel);
     }

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
+using System.Text.RegularExpressions;
 using FluentAssertions;
+using NoMercy.Design;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 using NoMercy.Plugins.Abstractions;
 using Xunit;
@@ -10,6 +12,13 @@ namespace NoMercy.Plugin.InternetRadio.Tests.Views;
 
 public class StationCardsTests
 {
+    // The one rule that keeps the grid even. NmBox.Width is an NMSize, and this is the
+    // pattern the contract defines it by - so "13rem" was never a width. It did not fail
+    // loudly; it simply did not match, the width was dropped, and each tile fell back to
+    // sizing itself from its own logo. That is why one tile was 1000px and the next 200px.
+    private const string Size =
+        @"^(0|px|\d+(-\d)?|\d+/\d+|auto|full|available|content|min|max|screen)$";
+
     private static RadioStation Station(string? logo = null, string id = "a") =>
         new()
         {
@@ -27,50 +36,71 @@ public class StationCardsTests
     private static IEnumerable<PluginComponent> Nodes(PluginComponent root) =>
         PluginNodes.Flatten(root);
 
-    private static PluginComponent CardOf(PluginComponent tile) => tile.Items[0];
+    private static NmBox? BoxOf(PluginComponent node) =>
+        (node.Design as NMCardProps)?.Box ?? (node.Design as NMImageProps)?.Box;
 
-    // The name is the whole thing. Sent as PluginComponentType.Grid this went out as
-    // "NMCard" and the client drew a design-system card, so nothing ever laid the tiles
-    // out - which is why every attempt to make them even by hand failed. The client's own
-    // grid is auto-fill over a 10rem minimum and needs no help.
     [Fact]
-    public void TheGridIsTheClientsGrid()
+    public void EveryTileAsksForTheSameFractionOfTheRow()
     {
         PluginComponent grid = StationCards.Grid(
             "g", [Station(id: "a"), Station(id: "b")], UserState.Empty, "s");
 
-        grid.Component.Should().Be(Ui.GridComponent);
         grid.Items.Should().HaveCount(2);
+        grid.Items.Select(tile => BoxOf(tile)!.Width).Should().AllBe(StationCards.TileWidth);
     }
 
     [Fact]
-    public void ATileIsACardTheClientCanDraw()
+    public void TheTileWidthIsAValidSizeAndNotALength()
     {
-        // The relay only knows where this server lives once a request has told it, and no
-        // request has in a test - so the cover is told explicitly rather than left to
-        // whichever other test ran first.
+        StationCards.TileWidth.Should().MatchRegex(Size);
+        Regex.IsMatch("13rem", Size).Should().BeFalse("that is the value that was dropped");
+    }
+
+    // Every box this plugin sets, not just the tile: one stray "11rem" left on the cover
+    // puts the whole grid back to uneven, and no single assertion would show it.
+    [Fact]
+    public void EveryBoxThisPluginSetsCarriesAValidSize()
+    {
+        string[] sizes =
+        [
+            .. Nodes(StationCards.Grid(
+                    "g", [Station("https://c.example.com/l.png")], UserState.Empty, "s"))
+                .Select(BoxOf)
+                .Where(box => box is not null)
+                .SelectMany(box => new[] { box!.Width, box.Height, box.MinWidth, box.MaxWidth })
+                .Where(value => value is not null)!,
+        ];
+
+        sizes.Should().NotBeEmpty();
+        sizes.Should().OnlyContain(value => Regex.IsMatch(value, Size));
+    }
+
+    // The cover fills the tile rather than carrying a fraction of its own, or it would be
+    // a sixth of a sixth.
+    [Fact]
+    public void TheCoverFillsTheTileAndIsSquareWhateverShapeTheLogoIs()
+    {
+        // Relayed through this server, because the dashboard's img-src refuses the
+        // station's own host. The relay only learns this server's address from a request,
+        // so the test supplies one rather than depending on whichever test ran first.
         MediaProxy.Remember("https://server.example", null);
 
-        PluginComponent tile = StationCards.Tile(Station("https://c.example.com/l.png"), false);
+        PluginComponent cover = Nodes(StationCards.Tile(Station("https://c.example.com/l.png"), false))
+            .Single(node => node.Id == "station-cover-a");
 
-        tile.Component.Should().Be(Ui.ContainerComponent);
-        CardOf(tile).Component.Should().Be(Ui.CardComponent);
-        CardOf(tile).Props["title"].Should().Be("Example FM");
-        CardOf(tile).Props["subtitle"].Should().Be("Ambient · NL");
-        CardOf(tile).Props["image"].Should().NotBeNull();
+        NMImageProps props = cover.Design.Should().BeOfType<NMImageProps>().Subject;
+
+        // The one that made every cover an img with an alt and no source: Src lives on the
+        // props record, and the loose bag beside it is overwritten by the merge.
+        props.Src.Should().Be(
+            $"https://server.example/api/v1/plugins/{PluginIdentity.Id}/cover/a");
+        props.AspectRatio.Should().Be("square");
+        props.Fit.Should().Be("cover");
+        props.Box!.Width.Should().Be("full");
     }
 
-    [Fact]
-    public void OneClickOnTheCardPlaysTheStation()
-    {
-        PluginActionIntent action = CardOf(StationCards.Tile(Station(), false)).Action!;
-
-        action.Type.Should().Be(PluginActionType.PlayMedia);
-        action.Payload["title"].Should().Be("Example FM");
-    }
-
-    // Keeping a station must not also play it. Nested inside the card, the click would land
-    // on the thing carrying the play action and do both.
+    // Keeping a station must not also play it. Nested inside the card, the click landed on
+    // the thing carrying the play action and did both.
     [Fact]
     public void TheFavouriteToggleIsASiblingOfTheCardAndNotInsideIt()
     {
@@ -79,7 +109,17 @@ public class StationCardsTests
         tile.Items.Select(node => node.Id)
             .Should().BeEquivalentTo(["station-card-a", "station-favourite-a"]);
 
-        Nodes(CardOf(tile)).Select(node => node.Id).Should().NotContain("station-favourite-a");
+        Nodes(tile.Items[0]).Select(node => node.Id)
+            .Should().NotContain("station-favourite-a");
+    }
+
+    [Fact]
+    public void OneClickOnTheCardPlaysTheStation()
+    {
+        PluginComponent card = StationCards.Tile(Station(), false).Items[0];
+
+        card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
+        card.Action.Payload["title"].Should().Be("Example FM");
     }
 
     // Readable without colour. A toggle whose only difference is a tint is unreadable to a
@@ -90,19 +130,14 @@ public class StationCardsTests
         PluginComponent grid = StationCards.Grid(
             "g", [Station(id: "a"), Station(id: "b")], Keeping(Station(id: "b")), "s");
 
-        static string Label(PluginComponent tile) => tile.Items[1].Props["label"]!.ToString()!;
+        static string Label(PluginComponent tile) =>
+            PluginNodes.Flatten(tile)
+                .Single(node => node.Id.StartsWith("station-favourite-", StringComparison.Ordinal)
+                    && node.Id.EndsWith("-label", StringComparison.Ordinal))
+                .Props["text"]!.ToString()!;
 
         Label(grid.Items[0]).Should().Be(StationCards.AddFavouriteLabel);
         Label(grid.Items[1]).Should().Be(StationCards.RemoveFavouriteLabel);
-    }
-
-    [Fact]
-    public void ToggleFavourite_GoesThroughTheControllersOwnRoute()
-    {
-        PluginActionIntent action = StationCards.ToggleFavourite(Station());
-
-        action.Type.Should().Be(PluginActionType.CallPlugin);
-        action.Payload["method"].Should().Be($"{InternetRadioController.ToggleFavouriteMethod}/a");
     }
 
     // One station legitimately appears twice on one page - kept above, popular below - and
@@ -114,6 +149,15 @@ public class StationCardsTests
         string popular = StationCards.Grid("g", [Station()], UserState.Empty, "popular").Items[0].Id;
 
         kept.Should().NotBe(popular);
+    }
+
+    [Fact]
+    public void ToggleFavourite_GoesThroughTheControllersOwnRoute()
+    {
+        PluginActionIntent action = StationCards.ToggleFavourite(Station());
+
+        action.Type.Should().Be(PluginActionType.CallPlugin);
+        action.Payload["method"].Should().Be($"{InternetRadioController.ToggleFavouriteMethod}/a");
     }
 
     [Fact]
@@ -138,17 +182,22 @@ public class StationCardsTests
         StationCards.CoverUrl(Station(url)).Should().BeNull();
     }
 
-    // A rejected logo must not reach the card, or the grid draws the broken icon the gate
-    // just refused. The card loses its image and keeps everything else.
+    // A station with no drawable logo loses the cover and nothing else. A tile that quietly
+    // drops its title when the logo rots is the real regression, and six had already rotted.
     [Fact]
-    public void Tile_DrawsNoImageWhenTheLogoIsOneTheBrowserWouldRefuse()
+    public void Tile_LosesOnlyTheCoverWhenThereIsNone()
     {
-        PluginComponent card = CardOf(StationCards.Tile(Station("http://cdn.example.com/l.png"), false));
+        string[] with =
+            [.. Nodes(StationCards.Tile(Station("https://c.example.com/l.png"), false))
+                .Select(node => node.Id)];
+        string[] without = [.. Nodes(StationCards.Tile(Station(), false)).Select(node => node.Id)];
 
-        card.Props["image"].Should().BeNull();
-        card.Props["title"].Should().Be("Example FM");
+        with.Should().Contain("station-cover-a");
+        without.Should().BeEquivalentTo(with.Where(id => id != "station-cover-a"));
     }
 
+    // A rejected logo must not reach the player either, or the now-playing panel shows the
+    // broken icon the grid just refused.
     [Fact]
     public void Play_DoesNotHandARejectedCoverToThePlayer()
     {
@@ -156,8 +205,9 @@ public class StationCardsTests
             .Payload["cover"].Should().BeNull();
     }
 
-    // The player builds an artist link and a route from this. A live stream has no artist,
-    // and a genre there made the app route to something that is not one.
+    // The player builds an artist link, a route and a DOM id from this. A live stream has no
+    // artist, and a genre there made the app route to nothing and then build a selector out
+    // of a url - both of which surfaced as component-error toasts.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -169,8 +219,9 @@ public class StationCardsTests
         intent.Payload["artist"].Should().BeNull();
     }
 
-    // Without an id of its own the client builds a track id out of the stream url, and that
-    // id then goes into a CSS selector and a route where a url is legal in neither.
+    // The station's own id travels with the intent. Without one the client builds a track
+    // id out of the stream url, and that id then goes into a CSS selector and a route where
+    // a url is legal in neither - which is what stops playback before it starts.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -179,7 +230,15 @@ public class StationCardsTests
         PluginActionIntent intent =
             enqueue ? StationCards.Enqueue(Station()) : StationCards.Play(Station());
 
-        object? id = intent.Payload[StationCards.StationIdKey];
+        intent.Payload[StationCards.StationIdKey].Should().Be("a");
+    }
+
+    // A uuid, not a url: the point is an identifier that survives being put in a selector
+    // and in a path, and that does not change when a station moves its stream.
+    [Fact]
+    public void TheIdItSendsIsNotDerivedFromTheStreamUrl()
+    {
+        object? id = StationCards.Play(Station()).Payload[StationCards.StationIdKey];
 
         id.Should().Be("a");
         id!.ToString().Should().NotContain("/").And.NotContain(":");
@@ -188,7 +247,7 @@ public class StationCardsTests
     [Fact]
     public void Subtitle_JoinsWhatIsKnownAndIsNullWhenNothingIs()
     {
-        StationCards.Subtitle(Station()).Should().Be("Ambient · NL");
+        StationCards.Subtitle(Station()).Should().Be("Ambient \u00b7 NL");
         StationCards.Subtitle(new RadioStation
         {
             Id = "x",
