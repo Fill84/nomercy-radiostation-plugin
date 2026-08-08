@@ -120,7 +120,13 @@ exhaustively testable and is the existing convention.
 
 Per user, holding the **full station record**.
 
-Storage is `DataFolderPath/favourites.json`, shaped `{ "<userId>": [ RadioStation, … ] }`.
+Storage is `DataFolderPath/user-state.json`, shaped
+`{ "<userId>": { "favourites": [ RadioStation, … ], "lastSearch": "…" } }`.
+
+One file, not two. The search term needs exactly the same thing favourites do — something
+per-user that survives a form submit — and splitting them would mean two locks, two atomic
+writes and two chances to get the same problem wrong differently.
+
 The data folder rather than `IPluginConfiguration` because that is where `catalog-cache.json`
 already lives, and because configuration is for a plugin's settings, not for user data that
 grows without bound.
