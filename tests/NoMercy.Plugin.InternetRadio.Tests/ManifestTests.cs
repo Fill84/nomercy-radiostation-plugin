@@ -125,11 +125,21 @@ public class ManifestTests
     // Scoped to radio-browser's mirrors and nothing wider. The allowlist glob is
     // label-scoped - '*' matches within one label - so this covers all./de1./nl1.
     // and cannot broaden to another domain.
+    // The grant is deliberately as wide as it can be written, and the owner is told so.
+    //
+    // The dashboard's Content-Security-Policy refuses media and images from anywhere but
+    // NoMercy's own hosts, so the plugin has to fetch a station's audio and logo itself and
+    // relay them - and those live on thousands of domains that no manifest can enumerate.
+    // `**` is the only pattern that means "any host": a bare `*` matches within one label
+    // and so would silently match no real hostname at all.
     [Fact]
-    public void Manifest_DeclaresOnlyTheRadioBrowserHost()
+    public void Manifest_DeclaresAWideEnoughGrantToRelayAnyStation()
     {
-        LoadManifest().Capabilities!.Network!.Hosts
-            .Should().Equal("*.api.radio-browser.info");
+        IReadOnlyList<string> hosts = LoadManifest().Capabilities!.Network!.Hosts;
+
+        hosts.Should().Contain("**", "a station's stream and logo are on hosts nothing can list");
+        hosts.Should().Contain("*.api.radio-browser.info",
+            "kept so the manifest still says plainly which API this plugin is built around");
     }
 
     [Fact]

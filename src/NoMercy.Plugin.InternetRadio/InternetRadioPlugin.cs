@@ -3,6 +3,7 @@
 
 using System.Globalization;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.Http;
 using NoMercy.Plugins.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio;
@@ -219,6 +220,83 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         );
     }
 
+    /// <summary>
+    /// Fetches a station's stream or cover, so the browser never talks to the station.
+    ///
+    /// The dashboard's Content-Security-Policy allows media and images from NoMercy's own
+    /// hosts and nowhere else, and every radio stream and station logo is on somebody
+    /// else's domain. Handing the client those urls directly is what made every station
+    /// silent and every cover blank. Fetched here, the browser only ever sees this
+    /// server - which the policy already allows - and the owner's consent stays the thing
+    /// that governs where the bytes come from.
+    ///
+    /// Returns null when the station cannot be resolved. The caller turns that into a 404
+    /// rather than an empty 200, because a media element retries a 200 with no body.
+    /// </summary>
+    public async Task<HttpResponseMessage?> FetchStationMediaAsync(
+        string stationId, bool cover, string? range, CancellationToken ct)
+    {
+        StationCatalog catalog = await Provider.GetAsync(ct);
+        RadioBrowserClient client = new(Context.HttpClient);
+        FavouriteResolver resolver = new(catalog, client);
+
+        if (await resolver.ResolveAsync(stationId, ct) is not { } station)
+        {
+            return null;
+        }
+
+        string? url = cover ? StationCards.CoverUrl(station) : station.StreamUrl;
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        HttpRequestMessage request = new(HttpMethod.Get, url);
+
+        // Forwarded verbatim so seeking and buffering keep working: a player asks for a
+        // byte range and expects a 206 back. Swallowing the header would turn every
+        // request into a fetch of the whole stream from the beginning, which for a live
+        // stream never ends.
+        if (!string.IsNullOrWhiteSpace(range))
+        {
+            request.Headers.TryAddWithoutValidation("Range", range);
+        }
+
+        // ResponseHeadersRead, not the default: this must start relaying as soon as the
+        // headers arrive rather than buffering a live stream into memory first.
+        return await Context.HttpClient.SendAsync(
+            request, HttpCompletionOption.ResponseHeadersRead, ct);
+    }
+
+    /// <summary>
+    /// Scheme and authority of the request currently being served, or null outside one.
+    ///
+    /// Read through the host's own accessor rather than guessed from configuration: the
+    /// server answers on several addresses - a LAN ip, a tunnelled hostname - and the only
+    /// correct one is whichever this viewer actually reached.
+    /// </summary>
+    private string? PublicBaseUrl()
+    {
+        try
+        {
+            if (_context?.Services.GetService(typeof(IHttpContextAccessor)) is not IHttpContextAccessor accessor)
+            {
+                return null;
+            }
+
+            HttpRequest? request = accessor.HttpContext?.Request;
+
+            return request is null ? null : $"{request.Scheme}://{request.Host}";
+        }
+        catch (Exception exception)
+        {
+            _context?.Logger.LogWarning(
+                exception, "Internet Radio could not determine this server's public address.");
+
+            return null;
+        }
+    }
+
     // === IScheduledTaskPlugin ==============================================
 
     public string CronExpression => DefaultCron;
@@ -323,6 +401,12 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         try
         {
             IPluginContext context = Context;
+
+            // The server's own public address, learned from the request being served. It
+            // is not on IPluginContext and cannot be: the plugin is loaded once and the
+            // address is a property of how a client reached it.
+            MediaProxy.Remember(PublicBaseUrl());
+
             RadioRoute route = RadioRoutes.Parse(request.Route);
             StationCatalog catalog = await Provider.GetAsync(ct);
 

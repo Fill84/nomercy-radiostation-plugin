@@ -99,14 +99,17 @@ public static class StationCards
     /// </summary>
     public static PluginActionIntent Play(RadioStation station) =>
         PluginActionIntent.PlayMedia(
-            station.StreamUrl,
+            // Through this plugin's own endpoint when we know where this server lives.
+            // The station's own url is refused by the dashboard's media-src, so the direct
+            // url is a fallback that plays nothing - kept only so a view still renders.
+            MediaProxy.Stream(station.Id) ?? station.StreamUrl,
             station.Name,
             // The player shows this where a track's artist would go; the genre is the most
             // useful thing a live stream has to put there.
             station.Genre,
             // The full-size cover, not a tile-sized one: this goes to the now-playing
             // panel, which wants a real image.
-            CoverUrl(station)
+            CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id) ?? CoverUrl(station)
         );
 
     /// <summary>
@@ -115,10 +118,13 @@ public static class StationCards
     /// </summary>
     private static PluginComponent? Cover(RadioStation station, string scope)
     {
-        if (CoverUrl(station) is not { } url)
+        if (CoverUrl(station) is not { } direct)
         {
             return null;
         }
+
+        // Same reason as the stream: img-src refuses the station's own host.
+        string url = MediaProxy.Cover(station.Id) ?? direct;
 
         // Src belongs on the props record, not in the loose bag beside it. Setting
         // Props["src"] and leaving Design.Src null put the url in the bag and then let the

@@ -26,14 +26,26 @@ page under plugin settings.
 | --- | --- |
 | `ui` | The six pages above. |
 | `scheduledTask` | One job, `refresh`, daily at 04:00, which updates the catalogue. |
-| `network` → `*.api.radio-browser.info` | The only host it contacts. Streams are played by your client, not by the server. |
+| `network` → `**` | **Any host.** See below — this is the widest grant a plugin can ask for, and it is asked for a reason. |
 | `rest` | Two endpoints of its own: one to toggle a favourite, one to submit a search. Nothing else reaches them — a button on its own page is the only caller. |
 
 It declares no `ws`, no library access and no secrets storage.
 
-Station logos are loaded by your browser directly from wherever the station hosts
-them, exactly as any image on a web page is. The server never fetches them, and the
-network capability above does not cover them.
+### Why it asks for any host
+
+Your dashboard refuses media and images that do not come from a NoMercy host — that is
+its Content-Security-Policy, and it is there for good reason. Every radio stream and every
+station logo is on somebody else's domain, so handing them to your browser directly
+produces silence and blank tiles.
+
+So the server fetches them and passes them on: your browser only ever talks to your own
+server. That is what needs the wide grant. radio-browser carries some fifty thousand
+stations across thousands of hosts, and no list written in advance can cover them.
+
+What this means in practice: **this plugin can make outbound requests to any address.** It
+uses that to fetch station audio and artwork and nothing else, and its whole source is
+readable — but you are trusting it with that, and you should know you are. If that is more
+than you want to grant, do not install it.
 
 **You will need to enable it once.** A plugin that declares a network host is not
 auto-enabled however `autoEnabled` is set, so the server starts it disabled until

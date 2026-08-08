@@ -17,7 +17,7 @@
     "hooks": ["ui", "scheduledTask"],
     "rest": true,
     "ws": false,
-    "network": { "hosts": ["*.api.radio-browser.info"] },
+    "network": { "hosts": ["**", "*.api.radio-browser.info"] },
     "ui": {
       "mounts": [
         { "section": "music",    "label": "Internet Radio", "icon": "portableRadio", "route": "/" },

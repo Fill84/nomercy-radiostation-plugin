@@ -23,6 +23,11 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public const string SearchMethod = "search";
     public const string ClearSearchMethod = "search/clear";
 
+    public const string StreamRouteTemplate = "stream/{stationId}";
+    public const string StreamMethod = "stream";
+    public const string CoverRouteTemplate = "cover/{stationId}";
+    public const string CoverMethod = "cover";
+
     /// <summary>
     /// What the search form posts.
     ///
@@ -50,6 +55,56 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     [HttpPost(ClearSearchMethod)]
     public Task<IActionResult> ClearSearch(CancellationToken ct) =>
         RespondAsync(plugin => plugin.StoreSearchAsync(CurrentUserId(), null, ct));
+
+    /// <summary>
+    /// The station's audio, relayed. See FetchStationMediaAsync for why the browser must
+    /// not be sent the station's own url.
+    /// </summary>
+    [HttpGet(StreamRouteTemplate)]
+    public Task<IActionResult> Stream(string stationId, CancellationToken ct) =>
+        RelayAsync(stationId, cover: false, ct);
+
+    /// <summary>The station's logo, relayed for the same reason.</summary>
+    [HttpGet(CoverRouteTemplate)]
+    public Task<IActionResult> Cover(string stationId, CancellationToken ct) =>
+        RelayAsync(stationId, cover: true, ct);
+
+    private async Task<IActionResult> RelayAsync(string stationId, bool cover, CancellationToken ct)
+    {
+        if (pluginManager.GetPluginInstance(PluginId) is not InternetRadioPlugin plugin)
+        {
+            return NotFound();
+        }
+
+        HttpResponseMessage? upstream = await plugin.FetchStationMediaAsync(
+            stationId, cover, Request.Headers.Range.ToString(), ct);
+
+        if (upstream is null)
+        {
+            return NotFound();
+        }
+
+        // The upstream status is passed through, not normalised to 200: a player asking
+        // for a byte range needs the 206 and the Content-Range that answers it, or it
+        // cannot seek and will not buffer.
+        Response.StatusCode = (int)upstream.StatusCode;
+
+        if (upstream.Content.Headers.ContentRange is { } contentRange)
+        {
+            Response.Headers.ContentRange = contentRange.ToString();
+        }
+
+        Response.Headers.AcceptRanges = "bytes";
+
+        Response.ContentType =
+            upstream.Content.Headers.ContentType?.ToString()
+            ?? (cover ? "application/octet-stream" : "audio/mpeg");
+
+        await using Stream body = await upstream.Content.ReadAsStreamAsync(ct);
+        await body.CopyToAsync(Response.Body, ct);
+
+        return new EmptyResult();
+    }
 
     /// <summary>
     /// The same claim the server reads for its own controllers, so a plugin's idea of who
