@@ -159,43 +159,26 @@ public class SearchViewTests
         Ids(View(term, failed: failed)).Should().Contain("search-key-a");
     }
 
-    // Everywhere, not only on tv. A version of this hid the keys off tv and offered the
-    // field instead; the field could not search, so that left web and mobile with nothing.
-    [Theory]
-    [InlineData("")]
-    [InlineData("tom")]
-    public void TheKeysAndTheFieldAreBothDrawnOnEverySurface(string term)
+    // No field. Three attempts at one all failed in the client - a plugin form posts an
+    // empty body, an NMSearchInput posts an empty body, and an NMSearchInput given a
+    // Navigate action ignores the route and lands on the plugin root. A field that cannot
+    // be read or steered invites typing and then loses your place.
+    [Fact]
+    public void ThereIsNoTypedFieldToBeMisledBy()
     {
-        PluginView view = View(term);
+        Ids(View("tom")).Should().NotContain("search-input");
+    }
 
-        Ids(view).Should().Contain("search-key-a").And.Contain("search-input");
-
-        PluginNodes.All(view)
-            .Select(node => (node.Design as NMCardProps)?.Box ?? (node.Design as NMSearchInputProps)?.Box)
+    // The keys are the search, so they are on every surface rather than only where there
+    // is a remote.
+    [Fact]
+    public void TheKeysCarryNoSurfaceRestriction()
+    {
+        PluginNodes.All(View("tom"))
+            .Select(node => (node.Design as NMCardProps)?.Box)
             .Where(box => box is not null)
-            .Should().OnlyContain(box => box!.HiddenOn.Count == 0);
-    }
-
-    // Searching is a GET of /search/<term>, so the field navigates. It used to post to an
-    // endpoint and the body arrived as "{}" - the same answer a PluginFormField gives -
-    // because there was never anything to post: the term belongs in the address.
-    [Fact]
-    public void TheFieldNavigatesRatherThanPostingAnything()
-    {
-        PluginComponent input = Node(View("tom"), "search-input");
-
-        input.Component.Should().Be(NmComponents.SearchInput);
-        input.Action!.Type.Should().Be(PluginActionType.Navigate);
-        input.Action.Payload["route"].Should().Be(RadioRoutes.SearchRoot);
-    }
-
-    // The field carries the term back, so arriving on a search does not look like one that
-    // was thrown away.
-    [Fact]
-    public void TheFieldHoldsWhateverIsBeingSearchedFor()
-    {
-        (Node(View("tomorrowland"), "search-input").Design as NMSearchInputProps)!
-            .Value.Should().Be("tomorrowland");
+            .Should().NotBeEmpty()
+            .And.OnlyContain(box => box!.HiddenOn.Count == 0);
     }
 
     [Fact]

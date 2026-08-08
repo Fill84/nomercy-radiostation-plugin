@@ -1,3 +1,27 @@
+# A plugin cannot receive typed text, by any route
+
+*(Originally about PluginViews.Form. Two further mechanisms were tried afterwards and are
+recorded at the end; the conclusion is broader than the original title.)*
+
+## The three attempts
+
+| What was rendered | Action given | What happened |
+| --- | --- | --- |
+| `PluginViews.Form` + text field | `CallPlugin` | body arrives as `{}` |
+| `NMSearchInput` | `CallPlugin` | body arrives as `{}` |
+| `NMSearchInput` | `Navigate("/search")` | route ignored; lands on the plugin root |
+
+The third is the interesting one. The action fires on **click**, not on submit — so merely
+focusing the field throws the viewer off the page — and pressing Enter does nothing at all.
+The identical `Navigate("/search")` works correctly from an `NMButton` on the same view,
+which is what pins this to the component rather than to the intent.
+
+So there is no channel: a plugin cannot read what was typed, and cannot steer where typing
+leads. Until one of those changes, an on-screen keyboard that spells the term into the route
+is the only search a plugin can offer. That is what this plugin ships.
+
+---
+
 # A PluginViews.Form submit posts an empty body
 
 **Where:** app.nomercy.tv, plugin UI host · observed 2026-08-08 against server v0.1.470

@@ -24,19 +24,19 @@ public static class SearchView
     /// <summary>How many keys are drawn per row before it wraps.</summary>
     private const int KeysPerRow = 13;
 
-    // The keys are drawn on every surface, not only on tv.
+    // There is no field here, and it is not for want of trying. Three attempts, three
+    // different failures, all of them in the client:
     //
-    // They belong on tv, and there was a version of this that said so with
-    // hidden_on: [web, mobile] and offered an NMSearchInput everywhere else. It was
-    // reverted for one reason: the field does not work. NMSearchInput submits an empty
-    // body exactly as a PluginFormField does - two different components, two independent
-    // confirmations that this client has no channel for an input value - so hiding the
-    // keys off tv would leave web and mobile with no way to search at all.
+    //   1. PluginViews.Form with a text field   - posted "{}", no field at all.
+    //   2. NMSearchInput posting to an endpoint - posted "{}", same answer.
+    //   3. NMSearchInput with a Navigate action - the client ignored the route it was
+    //      given and went to the plugin's root instead, so typing a name threw the viewer
+    //      off the search page. The identical Navigate works from a button, which is what
+    //      makes it the component and not the intent.
     //
-    // (hidden_on is also not currently honoured on web: the keys stayed on screen with it
-    // set. Both findings are in docs/upstream/.)
-    //
-    // The day a typed value arrives, this becomes a one-line change back.
+    // A field the plugin cannot read and cannot steer is worse than no field: it invites
+    // typing and then loses your place. So the keys stay, on every surface, and they are
+    // the search until a client can hand a plugin what was typed. See docs/upstream/.
 
     public static PluginView Build(
         string term,
@@ -53,7 +53,6 @@ public static class SearchView
                 icon: "arrowLeft"),
 
             Spelled(term),
-            Typing(term),
         ];
 
         children.AddRange(Keyboard(term));
@@ -77,33 +76,6 @@ public static class SearchView
                 ? "Tap the letters to spell a station name."
                 : $"Searching for “{term}”",
             "subtitle");
-
-    /// <summary>
-    /// A field to type into, whose action is a navigation rather than a call.
-    ///
-    /// The previous version posted to an endpoint and the body came back "{}" - the same
-    /// answer a PluginFormField gives. That was the wrong thing to ask for. There is
-    /// nothing to POST: the term belongs in the address, and every search this plugin
-    /// serves is already a plain GET of /search/&lt;term&gt;. So the action says navigate,
-    /// and the route it names is the search root for the client to complete with whatever
-    /// was typed - the same shape the keys use, one letter at a time.
-    ///
-    /// If the client cannot complete it, this lands on the bare keyboard rather than
-    /// anywhere broken, and the keys below still work.
-    /// </summary>
-    private static PluginComponent Typing(string term) =>
-        new()
-        {
-            Id = "search-input",
-            Component = NmComponents.SearchInput,
-            Action = PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
-            Design = new NMSearchInputProps
-            {
-                Placeholder = "Type a station name",
-                Value = term,
-                Box = new NmBox { Width = "full" },
-            },
-        };
 
     private static IEnumerable<PluginComponent> Keyboard(string term)
     {
