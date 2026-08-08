@@ -92,6 +92,14 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
 
         Response.Headers.AcceptRanges = "bytes";
 
+        // The client requests media with crossorigin="anonymous", which makes the browser
+        // discard a response that does not say who may read it - so without this the bytes
+        // arrive and the image still draws as broken, with nothing in any log to say why.
+        // The dashboard is a different origin from the server it talks to, so this is the
+        // ordinary case rather than the exotic one. Safe to allow any origin: the url is
+        // useless without the caller's own token, which is what actually gates it.
+        Response.Headers.AccessControlAllowOrigin = "*";
+
         Response.ContentType =
             upstream.Content.Headers.ContentType?.ToString()
             ?? (cover ? "application/octet-stream" : "audio/mpeg");

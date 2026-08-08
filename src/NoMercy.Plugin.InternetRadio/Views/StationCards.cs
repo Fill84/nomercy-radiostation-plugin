@@ -76,7 +76,11 @@ public static class StationCards
                     Width = "full",
                     Direction = "row",
                     Wrap = "wrap",
-                    Align = "start",
+                    // Stretch, not start. With `start` a tile is only as tall as its own
+                    // content, so a station whose name wraps onto a second line stands
+                    // taller than the one beside it and the row reads as ragged. Stretch
+                    // gives every tile in a row the height of the tallest.
+                    Align = "stretch",
                     Gap = new NmGap { All = "4" },
                 },
             },
@@ -111,6 +115,11 @@ public static class StationCards
                     Width = TileWidth,
                     Direction = "column",
                     Gap = new NmGap { All = "2" },
+                    // Fills the height the row hands it, so the favourite button sits on
+                    // the same line across the whole row rather than riding up under a
+                    // short name.
+                    Height = "full",
+                    Justify = "between",
                 },
             },
             Items =
