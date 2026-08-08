@@ -38,24 +38,53 @@ the browser, from the page, and the page's CSP is what refuses them.
 
 ## What would have to change
 
-- **`media-src`** has to allow the stream host, or plugin audio cannot play at all.
-- **`img-src`** has to allow the logo host, or plugin artwork cannot draw.
+Neither host set can be enumerated ahead of time: radio-browser carries some fifty
+thousand stations across thousands of hosts, and the stream host is never the API host the
+plugin declared. So widening the directives from the manifest does not help, and relaxing
+them removes the dashboard's protection to serve one plugin.
 
-Neither can be enumerated ahead of time: radio-browser carries some fifty thousand
-stations across thousands of hosts. Realistic options, in the order we would suggest them:
+Both directives are satisfied by the same answer — **the server fetches it, so the browser
+sees `'self'`.**
 
-1. **Proxy through the server.** The plugin host already mediates outbound calls through a
-   declared allowlist. Serving `/api/v1/plugins/{id}/media?url=…` and `/image?url=…` from
-   the server would keep both inside `'self'`, keep the existing consent model meaningful,
-   and give the owner one place to see what a plugin reaches for. It also solves mixed
-   content and dead-logo handling in one place.
-2. **Widen the directives from the manifest.** A plugin already declares the hosts it may
-   contact. The page could extend `media-src` and `img-src` with the granted hosts of
-   loaded plugins — but a wildcard host like `*.api.radio-browser.info` does not cover the
-   stream hosts that API points at, so this only helps plugins whose media lives on the
-   same domain they call.
-3. **Relax the directives.** Fastest, and the one we would argue against: it removes the
-   protection for the whole dashboard to serve one plugin.
+### Images: the pipeline already exists
+
+`BaseImageManager.ColorPalette(DownloadUrl client, string type, Uri path, download: true,
+Size? maxDecodeSize)` already takes an arbitrary URL, downloads it, stores it and decodes
+it to produce a palette. That is exactly what artwork does today, and it is why NoMercy's
+own hosts and its R2 buckets are the ones `img-src` allows.
+
+What is missing is a way in. `IPluginSystem` exposes capabilities by name —
+`player`, `cast`, `downloads`, `notifications`, `library`, `tasks` — and there is no
+`images`. Adding one fits that design exactly, which was written so "a host can grow a
+capability without the contract moving at all":
+
+```
+system.Has("images")
+system.InvokeAsync("images", new { url = "https://cdn.example.com/logo.png" })
+  -> a path the client can draw, on a host img-src already allows
+```
+
+A plugin then hands the served path to `NMImage` instead of the third party's URL, and
+gets the palette and the caching for free. The grant model stays meaningful: the host is
+the one fetching, so the owner can see and refuse it.
+
+### Audio: no equivalent exists
+
+Nothing in the server relays a live third-party stream — the media pipeline encodes and
+serves the library's own files. A pass-through proxy would be a new thing:
+
+```
+GET /api/v1/plugins/{id}/stream?url=…   ->  relays the audio, no transcoding
+```
+
+That keeps playback inside `'self'`, and it is the only approach that works for a
+catalogue this size. The costs are real and worth stating: the server carries the
+bandwidth for every listener, and a plugin-supplied URL reaching a proxy needs the same
+scrutiny the network capability already applies — it should be bounded by the plugin's
+granted hosts, not open to any URL a plugin invents.
+
+Until one of these exists, a plugin that plays third-party audio cannot work on this
+dashboard, however correct the rest of it is.
 
 ## Scope
 
