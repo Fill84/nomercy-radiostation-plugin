@@ -36,21 +36,24 @@ public class BrowseViewTests
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
-    // The whole point of the plugin: one click and it is playing.
+    // A card opens the station, the station page plays it. It used to play on the tile
+    // itself, and that is not a preference that was traded away for looks: NMMusicCard -
+    // the component the app draws its own artists with, and the only one that sizes every
+    // card alike - carries a link, and its context_menu_items take a string action
+    // identifier rather than a PluginActionIntent. There is nowhere on it to hang play.
     [Fact]
-    public void CardsPlayTheStationRatherThanNavigatingToIt()
+    public void CardsOpenTheStationPage()
     {
         PluginView view = BrowseView.Build(Catalog(Station("a")), UserState.Empty);
 
-        // The play control, not the tile: play moved off the tile so that keeping a
-        // station no longer also plays it.
         PluginComponent card = AllNodes(view)
-            .Should().ContainSingle(node => node.Id == "station-play-popular-a").Subject;
+            .Should().ContainSingle(node => node.Id == "station-card-popular-a").Subject;
 
-        card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
-        card.Action.Payload["streamUrl"].Should().Be("https://example.com/a");
-        card.Action.Payload["title"].Should().Be("Station a");
-        card.Action.Payload["cover"].Should().Be("https://example.com/logo.png");
+        Dictionary<string, object?> data = card.Props["data"]
+            .Should().BeOfType<Dictionary<string, object?>>().Subject;
+
+        data["name"].Should().Be("Station a");
+        data["link"].Should().Be(AppRoutes.Station("a"));
     }
 
     [Fact]
@@ -83,8 +86,9 @@ public class BrowseViewTests
         PluginView view = BrowseView.Build(
             Catalog(Station("quiet", "Ambient", 1), Station("loud", "Rock", 99)), UserState.Empty);
 
-        AllNodes(view).Where(node => node.Action?.Type == PluginActionType.PlayMedia)
-            .First().Action!.Payload["title"].Should().Be("Station loud");
+        PluginComponent grid = AllNodes(view).Single(node => node.Id == "browse-popular-grid");
+
+        grid.Items[0].Id.Should().Be("station-card-popular-loud");
     }
 
     // An empty catalogue has to explain itself. A blank grid reads as a broken plugin.
@@ -153,17 +157,16 @@ public class BrowseViewTests
     private static UserState With(params RadioStation[] favourites) =>
         new() { Favourites = favourites };
 
-    // You asked for easy searching, and easy means on the screen you land on - not
-    // behind a click. Since the curated list went, search is how most of the database
-    // is reachable at all.
+    // High on the page. Since the curated list went, search is how all but a handful of
+    // the fifty thousand stations in radio-browser are reachable at all.
     [Fact]
-    public void PutsTheSearchFieldAboveTheGenreChips()
+    public void PutsSearchAboveTheGenreChips()
     {
         List<string> ids = [.. AllNodes(BrowseView.Build(Catalog(Station("a")), UserState.Empty))
             .Select(node => node.Id)];
 
-        ids.Should().Contain("search-form");
-        ids.IndexOf("search-form").Should().BeLessThan(ids.IndexOf("browse-genres"));
+        ids.Should().Contain("browse-search");
+        ids.IndexOf("browse-search").Should().BeLessThan(ids.IndexOf("browse-genres"));
     }
 
     [Fact]
@@ -194,12 +197,12 @@ public class BrowseViewTests
     {
         RadioStation station = Station("a");
 
-        IEnumerable<string?> labels = AllNodes(BrowseView.Build(Catalog(station), With(station)))
-            .Where(node => node.Id.StartsWith("station-favourite-", StringComparison.Ordinal)
-                && node.Id.EndsWith("-a-label", StringComparison.Ordinal))
-            .Select(node => node.Props["text"]?.ToString());
+        IEnumerable<object?> flags = AllNodes(BrowseView.Build(Catalog(station), With(station)))
+            .Where(node => node.Id.EndsWith("-a", StringComparison.Ordinal)
+                && node.Id.StartsWith("station-card-", StringComparison.Ordinal))
+            .Select(node => ((Dictionary<string, object?>)node.Props["data"]!)["favorite"]);
 
-        labels.Should().NotBeEmpty().And.AllBe(StationCards.RemoveFavouriteLabel);
+        flags.Should().NotBeEmpty().And.AllBeEquivalentTo(true);
     }
 
     // A favourite the sweep no longer returns still has to render - that is the whole
@@ -212,15 +215,15 @@ public class BrowseViewTests
         AllNodes(view).Select(node => node.Id).Should().Contain("station-card-fav-gone");
     }
 
-    // The field carries the term back, so returning to the landing page does not look
-    // like the search was thrown away.
+    // Searching is a navigation, not a form: the term is spelled into the route, because
+    // a submitted form posts an empty body in this client.
     [Fact]
-    public void KeepsTheLastSearchTermInTheField()
+    public void OffersSearchAsAWayIntoTheRestOfTheDatabase()
     {
-        UserState state = new() { LastSearch = "groove salad" };
+        PluginComponent search = AllNodes(BrowseView.Build(Catalog(Station("a")), UserState.Empty))
+            .Single(node => node.Id == "browse-search");
 
-        AllNodes(BrowseView.Build(Catalog(Station("a")), state))
-            .Single(node => node.Id == "search-form-query")
-            .Props["value"].Should().Be("groove salad");
+        search.Action!.Type.Should().Be(PluginActionType.Navigate);
+        search.Action.Payload["route"].Should().Be(RadioRoutes.SearchRoot);
     }
 }

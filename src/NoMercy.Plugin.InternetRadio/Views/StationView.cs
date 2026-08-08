@@ -14,10 +14,19 @@ public static class StationView
             new() { Key = "value", Label = "Value" },
         ];
 
-    public static PluginView Build(StationCatalog catalog, string id, UserState state)
-    {
-        RadioStation? station = catalog.ById(id);
+    public static PluginView Build(StationCatalog catalog, string id, UserState state) =>
+        Build(catalog.ById(id) ?? state.Favourites.FirstOrDefault(kept => kept.Id == id), state);
 
+    /// <summary>
+    /// The page for an already-resolved station.
+    ///
+    /// Resolution moved out of the view because a card can now be opened from a search
+    /// result, and a search result is not in the catalogue: it came straight off
+    /// radio-browser and was never cached. Looking it up needs the network, and views here
+    /// are pure Build methods on purpose.
+    /// </summary>
+    public static PluginView Build(RadioStation? station, UserState state)
+    {
         if (station is null)
         {
             // The catalogue refreshes underneath an open page, so a link followed a
@@ -43,8 +52,11 @@ public static class StationView
                     $"station-detail-{station.Id}",
                     station.Name,
                     Description(station),
-                    station.LogoUrl,
-                    Actions(station),
+                    // Relayed, like every other image this plugin draws: the dashboard's
+                    // img-src refuses the station's own host, so its own url renders as a
+                    // broken icon.
+                    StationCards.CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id),
+                    Actions(station, state.Favourites.Any(kept => kept.Id == station.Id)),
                     Facts(station)
                 )
             )
@@ -86,23 +98,38 @@ public static class StationView
         return sentences.Count > 0 ? string.Join(' ', sentences) : null;
     }
 
-    private static PluginComponent Actions(RadioStation station)
+    // This page is where playing and keeping a station live, because the card that opens it
+    // cannot carry either: NMMusicCard's context_menu_items take a string action
+    // identifier, not a PluginActionIntent.
+    private static PluginComponent Actions(RadioStation station, bool isFavourite)
     {
         List<PluginComponent> buttons =
         [
+            // Built by StationCards so the station page and every grid start the same
+            // station the same way. Both go through this plugin's own relay, and neither
+            // passes an artist - the genre used to go there, and the player builds an
+            // artist LINK out of it and then fails to resolve a route for a genre that is
+            // not one, which was the "Something went wrong" toast on every play.
             PluginViews.Button(
                 $"station-play-{station.Id}",
                 "Play",
-                PluginActionIntent.PlayMedia(
-                    station.StreamUrl, station.Name, station.Genre, station.LogoUrl),
+                StationCards.Play(station),
                 icon: "play"
             ),
             PluginViews.Button(
                 $"station-enqueue-{station.Id}",
                 "Add to queue",
-                PluginActionIntent.Enqueue(
-                    station.StreamUrl, station.Name, station.Genre, station.LogoUrl),
+                StationCards.Enqueue(station),
                 icon: "playlistAdd"
+            ),
+            // Two states that differ by label and by variant, never by colour alone: a
+            // toggle whose only difference is a tint is unreadable to a good share of
+            // viewers, and to everyone in a screenshot.
+            PluginViews.Button(
+                $"station-favourite-{station.Id}",
+                isFavourite ? StationCards.RemoveFavouriteLabel : StationCards.AddFavouriteLabel,
+                StationCards.ToggleFavourite(station),
+                variant: isFavourite ? "primary" : "secondary"
             ),
         ];
 

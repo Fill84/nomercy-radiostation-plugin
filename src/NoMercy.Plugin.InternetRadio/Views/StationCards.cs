@@ -9,113 +9,86 @@ namespace NoMercy.Plugin.InternetRadio;
 // One station as a tile, shared by every grid so two screens cannot drift into behaving
 // differently for the same station.
 //
-// Built from design-system nodes rather than PluginViews.Card, and that is the whole point
-// of this file. The convenience factory gives a card a box of `width: full` and hands the
-// image straight to it, so a 400x400 station logo drew about 830px tall on a desktop
-// panel: one tile filled the viewport, its name sat below the fold, and eighteen stations
-// became eighteen full-width blocks a screen apart. How wide a tile is has to be this
-// plugin's decision, so it is made here.
+// Drawn with NMMusicCard inside NMGrid - the same two components the app's own Artists and
+// Albums screens are built from - rather than with PluginViews.Card and PluginViews.Grid.
+// Those two are why the tiles were all different sizes: PluginViews.Grid is not a grid at
+// all (it is Stack(id, "row", wrap: true), the same call as Row), and PluginViews.Card
+// hands the image its natural size, so a 1000px logo drew a 1000px tile next to a 200px
+// one. Sizing a card is the design system's job, and NMGrid already does it; a plugin
+// reaching for tokens to fix the layout by hand was the wrong layer to fix it at.
+//
+// The card carries a link rather than an action, because that is what NMMusicCard is: its
+// context_menu_items take a string action identifier, not a PluginActionIntent, so a plugin
+// cannot hang play or favourite off it. Both live on the station page the card opens, which
+// is also where they belong - it is the screen with room to say what you are about to play.
 public static class StationCards
 {
     /// <summary>How many stations the browse page's "Popular" grid shows.</summary>
     public const int PopularCount = 18;
 
     /// <summary>
-    /// How wide one tile is.
-    ///
-    /// Fixed rather than fluid, because the grid is a wrapping row: a tile with no width
-    /// of its own takes the whole row, and the row then holds exactly one tile.
+    /// A grid of stations, sized and spaced by the app rather than by this plugin.
     /// </summary>
-    public const string TileWidth = "13rem";
-
-    /// <summary>
-    /// How large every cover is drawn, width and height both.
-    ///
-    /// Fixed on the image itself rather than left to fill its parent. `width: full` let
-    /// each logo take its own natural size, so a tile with a 1000px cover grew to 1000px
-    /// and one with no cover stayed at TileWidth - a grid where every tile was a different
-    /// size. Cropped to this box, they are all the same and a wide logo and a tall one
-    /// occupy the same square.
-    /// </summary>
-    public const string CoverSize = "11rem";
-
-    /// <summary>Shown on the toggle when the station is not a favourite yet.</summary>
-    public const string AddFavouriteLabel = "Add to favourites";
-
-    /// <summary>Shown on the toggle when it is.</summary>
-    public const string RemoveFavouriteLabel = "Remove from favourites";
-
-    /// <summary>
-    /// A tile: cover, name, where it is from, and a control to keep it.
-    ///
-    /// The tile itself carries the play action, so a click anywhere on it starts the
-    /// station — one click is listening, which is the entire job. Keeping is a separate
-    /// control beneath, because a component carries one action and that one is taken.
-    ///
-    /// The two favourite states differ by label and by variant, never by colour alone: a
-    /// toggle whose only difference is a tint is unreadable to a good share of viewers,
-    /// and to everyone in a screenshot. No icon — the Moooom set verified for this plugin
-    /// has no heart, and pluginIcon() substitutes `plugged` for a name the app does not
-    /// have rather than failing, so a guess would put a plug on every tile.
-    /// </summary>
-    public static PluginComponent WithFavourite(
-        RadioStation station, bool isFavourite, string scope = "")
+    public static PluginComponent Grid(
+        string id,
+        IEnumerable<RadioStation> stations,
+        UserState state,
+        string scope)
     {
-        string id = Scoped(scope, station.Id);
-        List<PluginComponent> children = [];
-
-        // A station with no drawable cover contributes no node at all rather than an empty
-        // frame. What a gap looks like is the design system's call, not this plugin's.
-        if (Cover(station, scope) is { } cover)
-        {
-            children.Add(cover);
-        }
-
-        children.Add(PluginViews.Text($"station-card-{id}-title", station.Name, "subtitle"));
-
-        if (Subtitle(station) is { } subtitle)
-        {
-            children.Add(PluginViews.Text($"station-card-{id}-meta", subtitle, "caption"));
-        }
-
-        // Play is its own control rather than the tile's action. With the action on the
-        // tile, the favourite button sits inside the thing that starts playback, so
-        // keeping a station also played it - one click doing two things, one of them
-        // unasked for.
-        children.Add(PluginViews.Button(
-            $"station-play-{id}",
-            "Play",
-            Play(station),
-            icon: "play"));
-
-        children.Add(PluginViews.Button(
-            $"station-favourite-{id}",
-            isFavourite ? RemoveFavouriteLabel : AddFavouriteLabel,
-            PluginActionIntent.CallPlugin(
-                $"{InternetRadioController.ToggleFavouriteMethod}/{Uri.EscapeDataString(station.Id)}"),
-            variant: isFavourite ? "primary" : "secondary"));
+        // A set built once, not a scan per card. A grid is eighteen cards and a favourites
+        // list is unbounded, so the naive form is quadratic in the two things here most
+        // likely to grow.
+        HashSet<string> favourites = [.. state.Favourites.Select(favourite => favourite.Id)];
 
         return new PluginComponent
         {
-            Id = $"station-card-{id}",
-            Component = PluginComponentType.Card,
-            Design = new NMCardProps
-            {
-                Padding = "3",
-                Box = new NmBox
-                {
-                    Width = TileWidth,
-                    Direction = "column",
-                    Gap = new NmGap { All = "2" },
-                },
-            },
-            Items = children,
+            Id = id,
+            Component = NmAppComponents.Grid,
+            Items =
+            [
+                .. stations.Select(station =>
+                    Card(station, favourites.Contains(station.Id), scope)),
+            ],
         };
     }
 
     /// <summary>
-    /// The play intent for a station, so the all-stations table and the tiles cannot drift
-    /// into starting the same station two different ways.
+    /// One station, as the app draws an artist.
+    ///
+    /// The props are the wrapper the contract names: an id, and a `data` object carrying
+    /// the card's own fields. Written as a dictionary with the wire names spelled out
+    /// because there is no props record for the app components - NmAppComponents is names
+    /// only, deliberately, since their props carry database-shaped data a plugin has no
+    /// business being handed.
+    /// </summary>
+    public static PluginComponent Card(RadioStation station, bool isFavourite, string scope = "")
+    {
+        string id = Scoped(scope, station.Id);
+
+        return new PluginComponent
+        {
+            Id = $"station-card-{id}",
+            Component = NmAppComponents.MusicCard,
+            Props = new()
+            {
+                ["data"] = new Dictionary<string, object?>
+                {
+                    ["id"] = station.Id,
+                    ["name"] = station.Name,
+                    // Absolute, not plugin-relative: this goes to the app's own router,
+                    // which does not know which plugin drew the card. See AppRoutes.
+                    ["link"] = AppRoutes.Station(station.Id),
+                    ["cover"] = CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id),
+                    ["favorite"] = isFavourite,
+                    ["description"] = Subtitle(station),
+                    ["type"] = "radio",
+                },
+            },
+        };
+    }
+
+    /// <summary>
+    /// The play intent for a station, so every screen starts the same station the same way.
     /// </summary>
     public static PluginActionIntent Play(RadioStation station) =>
         PluginActionIntent.PlayMedia(
@@ -133,47 +106,28 @@ public static class StationCards
             // has colons and slashes in it. Those two were every "Something went wrong"
             // toast on the page.
             null,
-            // The full-size cover, not a tile-sized one: this goes to the now-playing
-            // panel, which wants a real image.
-            CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id) ?? CoverUrl(station)
-        );
+            CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id));
+
+    /// <summary>Queueing a station, built from the same relayed urls as <see cref="Play"/>.</summary>
+    public static PluginActionIntent Enqueue(RadioStation station) =>
+        PluginActionIntent.Enqueue(
+            MediaProxy.Stream(station.Id) ?? station.StreamUrl,
+            station.Name,
+            null,
+            CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id));
 
     /// <summary>
-    /// The cover: square and cropped, so a wide logo and a tall one occupy the same tile,
-    /// and bounded by the tile rather than by the panel.
+    /// Adding or removing this station, as the toggle the station page draws.
     /// </summary>
-    private static PluginComponent? Cover(RadioStation station, string scope)
-    {
-        if (CoverUrl(station) is not { } direct)
-        {
-            return null;
-        }
+    public static PluginActionIntent ToggleFavourite(RadioStation station) =>
+        PluginActionIntent.CallPlugin(
+            $"{InternetRadioController.ToggleFavouriteMethod}/{Uri.EscapeDataString(station.Id)}");
 
-        // Same reason as the stream: img-src refuses the station's own host.
-        string url = MediaProxy.Cover(station.Id) ?? direct;
+    /// <summary>Shown on the toggle when the station is not a favourite yet.</summary>
+    public const string AddFavouriteLabel = "Add to favourites";
 
-        // Src belongs on the props record, not in the loose bag beside it. Setting
-        // Props["src"] and leaving Design.Src null put the url in the bag and then let the
-        // merge overwrite it with null - PluginComponent.Props applies the design record
-        // last - so every cover reached the browser as an img with an alt and no source.
-        // That is what the whole grid of alt text was.
-        return new PluginComponent
-        {
-            Id = $"station-cover-{Scoped(scope, station.Id)}",
-            Component = PluginComponentType.Image,
-            Design = new NMImageProps
-            {
-                Src = url,
-                Alt = station.Name,
-                AspectRatio = "square",
-                Fit = "cover",
-                Rounded = "lg",
-                Border = false,
-                Shadow = "none",
-                Box = new NmBox { Width = CoverSize, Height = CoverSize },
-            },
-        };
-    }
+    /// <summary>Shown on the toggle when it is.</summary>
+    public const string RemoveFavouriteLabel = "Remove from favourites";
 
     /// <summary>
     /// A node id, qualified by the section it is drawn in.

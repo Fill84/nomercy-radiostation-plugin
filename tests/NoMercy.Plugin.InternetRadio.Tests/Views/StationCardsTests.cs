@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
 using FluentAssertions;
-using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 using NoMercy.Design;
 using NoMercy.Plugins.Abstractions;
 using Xunit;
@@ -11,57 +10,92 @@ namespace NoMercy.Plugin.InternetRadio.Tests.Views;
 
 public class StationCardsTests
 {
-    private static RadioStation Station(string? logo = null) =>
+    private static RadioStation Station(string? logo = null, string id = "a") =>
         new()
         {
-            Id = "a",
+            Id = id,
             Name = "Example FM",
             StreamUrl = "https://example.com/stream",
+            Genre = "Ambient",
+            Country = "NL",
             LogoUrl = logo,
         };
 
-    private static IEnumerable<PluginComponent> Nodes(PluginComponent root) =>
-        PluginNodes.Flatten(root);
+    private static UserState Keeping(params RadioStation[] stations) =>
+        new() { Favourites = stations };
 
-    private static PluginComponent Toggle(PluginComponent row) =>
-        Nodes(row).Single(node => node.Id == "station-favourite-a");
+    private static Dictionary<string, object?> Data(PluginComponent card) =>
+        card.Props["data"].Should().BeOfType<Dictionary<string, object?>>().Subject;
 
-    // A button's label is a text leaf inside it, not a prop on it. Same shape the design
-    // system gives a form field, and the reason the view tests were rewritten.
-    private static string ToggleLabel(PluginComponent row) =>
-        Nodes(row).Single(node => node.Id == "station-favourite-a-label")
-            .Props["text"]!.ToString()!;
-
+    // The whole point of the rewrite. PluginViews.Card sized itself from the image it was
+    // given, so a 1000px logo drew a 1000px tile beside a 200px one; NMMusicCard is the
+    // component the app's own Artists grid is built from and sizes every card the same.
     [Fact]
-    public void WithFavourite_PairsThePlayCardWithAToggle()
+    public void Card_IsTheAppsOwnMusicCard()
     {
-        PluginComponent row = StationCards.WithFavourite(Station(), isFavourite: false);
-
-        Nodes(row).Select(node => node.Id)
-            .Should().Contain("station-card-a").And.Contain("station-favourite-a");
+        StationCards.Card(Station(), isFavourite: false)
+            .Component.Should().Be(NmAppComponents.MusicCard);
     }
 
-
-
+    // Likewise the container: PluginViews.Grid is not a grid, it is Stack(id, "row",
+    // wrap: true) - the identical call to PluginViews.Row - so nothing was laying the
+    // tiles out at all.
     [Fact]
-    public void WithFavourite_TogglesThroughTheControllersOwnRoute()
+    public void Grid_IsTheAppsOwnGrid()
     {
-        PluginActionIntent action = Toggle(StationCards.WithFavourite(Station(), false)).Action!;
+        PluginComponent grid = StationCards.Grid(
+            "g", [Station(id: "a"), Station(id: "b")], UserState.Empty, "scope");
 
-        action.Type.Should().Be(PluginActionType.CallPlugin);
-        action.Payload["method"].Should().Be(
-            $"{InternetRadioController.ToggleFavouriteMethod}/a");
+        grid.Component.Should().Be(NmAppComponents.Grid);
+        grid.Items.Should().HaveCount(2);
     }
 
-    // Readable without colour. A toggle whose only difference is a tint is unreadable to
-    // a good share of viewers, and to everyone in a screenshot.
     [Fact]
-    public void WithFavourite_LabelsEachStateDifferently()
+    public void Card_CarriesTheFieldsTheComponentRequires()
     {
-        ToggleLabel(StationCards.WithFavourite(Station(), false))
-            .Should().Be(StationCards.AddFavouriteLabel);
-        ToggleLabel(StationCards.WithFavourite(Station(), true))
-            .Should().Be(StationCards.RemoveFavouriteLabel);
+        Dictionary<string, object?> data = Data(StationCards.Card(Station(), false));
+
+        data["id"].Should().Be("a");
+        data["name"].Should().Be("Example FM");
+        data["link"].Should().NotBeNull();
+    }
+
+    // A plugin-relative route here is a dead link: `link` goes to the app's own router,
+    // which has no idea which plugin drew the card. Navigate is the one that gets prefixed.
+    [Fact]
+    public void Card_LinksThroughTheAppsRouterAndNotThePluginsOwnRoute()
+    {
+        Data(StationCards.Card(Station(), false))["link"]
+            .Should().Be($"/plugins/{PluginIdentity.Id}/station/a")
+            .And.NotBe(RadioRoutes.Station("a"));
+    }
+
+    [Fact]
+    public void Card_ReportsWhetherThisViewerKeptIt()
+    {
+        Data(StationCards.Card(Station(), isFavourite: true))["favorite"].Should().Be(true);
+        Data(StationCards.Card(Station(), isFavourite: false))["favorite"].Should().Be(false);
+    }
+
+    [Fact]
+    public void Grid_MarksOnlyTheStationsThisViewerKept()
+    {
+        PluginComponent grid = StationCards.Grid(
+            "g", [Station(id: "a"), Station(id: "b")], Keeping(Station(id: "b")), "s");
+
+        Data(grid.Items[0])["favorite"].Should().Be(false);
+        Data(grid.Items[1])["favorite"].Should().Be(true);
+    }
+
+    // One station legitimately appears twice on one page - kept above, popular below - and
+    // an unscoped id makes those the same node id in one payload.
+    [Fact]
+    public void Grid_ScopesCardIdsSoOnePageCanShowAStationTwice()
+    {
+        string kept = StationCards.Grid("g", [Station()], UserState.Empty, "fav").Items[0].Id;
+        string popular = StationCards.Grid("g", [Station()], UserState.Empty, "popular").Items[0].Id;
+
+        kept.Should().NotBe(popular);
     }
 
     [Fact]
@@ -86,44 +120,13 @@ public class StationCardsTests
         StationCards.CoverUrl(Station(url)).Should().BeNull();
     }
 
-    // A station with no drawable logo contributes no cover node at all, rather than an
-    // empty one - and loses nothing else with it. A tile that quietly drops its title
-    // when the logo rots is the real regression, and six logos had already rotted.
+    // A rejected logo must not reach the card either, or the grid draws the broken icon
+    // the gate just refused.
     [Fact]
-    public void WithFavourite_LosesOnlyTheCoverWhenThereIsNone()
+    public void Card_SendsNoCoverWhenTheLogoIsOneTheBrowserWouldRefuse()
     {
-        string[] withCover =
-            [.. Nodes(StationCards.WithFavourite(Station("https://cdn.example.com/l.png"), false))
-                .Select(node => node.Id)];
-        string[] without =
-            [.. Nodes(StationCards.WithFavourite(Station(), false)).Select(node => node.Id)];
-
-        withCover.Should().Contain("station-cover-a");
-        without.Should().BeEquivalentTo(withCover.Where(id => id != "station-cover-a"));
-    }
-
-    // The cap that stops one tile filling the screen. PluginViews.Card hands an image to
-    // a card whose box is width:full and the image keeps its natural aspect, so a 400x400
-    // logo drew about 830px tall and everything below it fell past the fold. The cover is
-    // its own node now precisely so this is the plugin's decision.
-    [Fact]
-    public void Cover_IsSquareCroppedAndCapped()
-    {
-        PluginComponent cover = Nodes(
-            StationCards.WithFavourite(Station("https://cdn.example.com/l.png"), false))
-            .Single(node => node.Id == "station-cover-a");
-
-        NMImageProps props = cover.Design.Should().BeOfType<NMImageProps>().Subject;
-
-        // The one that made every cover an img with an alt and no source: Src lives on
-        // the props record, and the loose bag beside it is overwritten by the merge.
-        props.Src.Should().Be("https://cdn.example.com/l.png");
-        props.AspectRatio.Should().Be("square");
-        props.Fit.Should().Be("cover");
-        // Fixed on the image, not left to fill the tile: "full" let each logo take its
-        // natural size, so every tile ended up a different size.
-        props.Box!.Width.Should().Be(StationCards.CoverSize);
-        props.Box.Height.Should().Be(StationCards.CoverSize);
+        Data(StationCards.Card(Station("http://cdn.example.com/l.png"), false))["cover"]
+            .Should().BeNull();
     }
 
     // A rejected logo must not reach the player either, or the now-playing panel shows
@@ -135,36 +138,45 @@ public class StationCardsTests
             .Payload["cover"].Should().BeNull();
     }
 
-    // The tile carries its own width. Without one it takes the whole wrapping row, which
-    // is how eighteen stations became eighteen full-width blocks a screen apart.
-    [Fact]
-    public void WithFavourite_GivesTheTileAWidthOfItsOwn()
-    {
-        PluginComponent tile = StationCards.WithFavourite(Station(), isFavourite: false);
-
-        NMCardProps props = tile.Design.Should().BeOfType<NMCardProps>().Subject;
-
-        props.Box!.Width.Should().Be(StationCards.TileWidth);
-    }
-
-    // Play is its own control. With the action on the tile, the favourite button sat
-    // inside the thing that starts playback, so keeping a station also played it.
-    [Fact]
-    public void WithFavourite_PutsPlayOnItsOwnControlRatherThanTheTile()
-    {
-        PluginComponent tile = StationCards.WithFavourite(Station(), isFavourite: false);
-
-        tile.Action.Should().BeNull("keeping a station must not also play it");
-        Nodes(tile).Single(node => node.Id == "station-play-a")
-            .Action!.Type.Should().Be(PluginActionType.PlayMedia);
-    }
-
     // The player builds an artist link, a route and a DOM id from this. A live stream has
     // no artist, and a genre there made the app route to nothing and then build a selector
     // out of a url - both of which surfaced as component-error toasts.
-    [Fact]
-    public void Play_SendsNoArtist()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NeitherPlayNorEnqueueSendsAnArtist(bool enqueue)
     {
-        StationCards.Play(Station()).Payload["artist"].Should().BeNull();
+        PluginActionIntent intent =
+            enqueue ? StationCards.Enqueue(Station()) : StationCards.Play(Station());
+
+        intent.Payload["artist"].Should().BeNull();
+    }
+
+    [Fact]
+    public void ToggleFavourite_GoesThroughTheControllersOwnRoute()
+    {
+        PluginActionIntent action = StationCards.ToggleFavourite(Station());
+
+        action.Type.Should().Be(PluginActionType.CallPlugin);
+        action.Payload["method"].Should().Be(
+            $"{InternetRadioController.ToggleFavouriteMethod}/a");
+    }
+
+    // Readable without colour. A toggle whose only difference is a tint is unreadable to
+    // a good share of viewers, and to everyone in a screenshot.
+    [Fact]
+    public void TheTwoFavouriteLabelsDiffer()
+    {
+        StationCards.AddFavouriteLabel.Should().NotBe(StationCards.RemoveFavouriteLabel);
+    }
+
+    [Fact]
+    public void Subtitle_JoinsWhatIsKnownAndIsNullWhenNothingIs()
+    {
+        StationCards.Subtitle(Station()).Should().Be("Ambient · NL");
+        StationCards.Subtitle(new RadioStation
+        {
+            Id = "x", Name = "n", StreamUrl = "https://e.com/s",
+        }).Should().BeNull();
     }
 }

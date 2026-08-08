@@ -65,9 +65,6 @@ public sealed class UserStateStore(string dataFolderPath)
                 : (state with { Favourites = kept }, true);
         }, ct);
 
-    public Task SetLastSearchAsync(string userId, string? term, CancellationToken ct) =>
-        MutateAsync(userId, state => (state with { LastSearch = term }, true), ct);
-
     private async Task<bool> MutateAsync(
         string userId,
         Func<UserState, (UserState State, bool Changed)> mutate,

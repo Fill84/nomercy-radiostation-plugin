@@ -12,6 +12,8 @@ public enum RadioRouteKind
     AllStations,
     Station,
     Settings,
+
+    /// <summary>Spelling a name out, one path segment at a time. <see cref="RadioRoute.Value"/> is what has been spelled so far.</summary>
     Search,
 
     /// <summary>Anything else. Rendered as an empty state, never as an error.</summary>
@@ -32,10 +34,35 @@ public static class RadioRoutes
     public const string Browse = "/";
     public const string AllStations = "/all";
     public const string Settings = "/settings";
-    public const string Search = "/search";
 
     private const string GenrePrefix = "genre";
     private const string StationPrefix = "station";
+
+    /// <summary>
+    /// The route that has spelled <paramref name="term"/> so far.
+    ///
+    /// The term travels as a path segment, because a path segment is the only thing this
+    /// client reliably delivers. A typed field cannot be used at all: PluginComponentType
+    /// .Form maps to NMCard, so a "form" is a card, there is no form element in the DOM,
+    /// and a submit posts an empty object no matter what the field holds - see
+    /// docs/upstream/2026-08-08-plugin-form-submits-empty-body.md.
+    ///
+    /// Space is written as '+' rather than percent-escaped. The escape would have to
+    /// survive the client's own route handling, which already comma-joins segments, and a
+    /// plus needs no escaping to survive anything. A term cannot contain a literal plus:
+    /// Sanitise keeps letters, digits and spaces and nothing else.
+    /// </summary>
+    public static string Search(string term)
+    {
+        string clean = SearchTerms.Sanitise(term);
+
+        return clean.Length == 0 ? SearchRoot : $"/{SearchPrefix}/{clean.Replace(' ', '+')}";
+    }
+
+    private const string SearchPrefix = "search";
+
+    /// <summary>The keyboard with nothing spelled yet.</summary>
+    public const string SearchRoot = "/search";
 
     // `slug`/`id` must be non-empty for the built route to round-trip: an empty
     // value builds a trailing-slash path (e.g. "/station/"), and Parse's
@@ -78,7 +105,7 @@ public static class RadioRoutes
             {
                 "all" => new RadioRoute(RadioRouteKind.AllStations, string.Empty),
                 "settings" => new RadioRoute(RadioRouteKind.Settings, string.Empty),
-                "search" => new RadioRoute(RadioRouteKind.Search, string.Empty),
+                SearchPrefix => new RadioRoute(RadioRouteKind.Search, string.Empty),
                 _ => Unknown,
             };
         }
@@ -91,6 +118,11 @@ public static class RadioRoutes
             {
                 GenrePrefix => new RadioRoute(RadioRouteKind.Genre, value),
                 StationPrefix => new RadioRoute(RadioRouteKind.Station, value),
+                // Sanitised on the way back in as well as on the way out. What arrives
+                // here is a path segment from a client, so it is untrusted input that
+                // becomes a query to radio-browser - not something this plugin built.
+                SearchPrefix => new RadioRoute(
+                    RadioRouteKind.Search, SearchTerms.Sanitise(value.Replace('+', ' '))),
                 _ => Unknown,
             };
         }

@@ -12,20 +12,12 @@ namespace NoMercy.Plugin.InternetRadio;
 // something now", and the genre pages answer "show me all of one kind".
 public static class BrowseView
 {
-    public static PluginView Build(
-        StationCatalog catalog,
-        UserState state,
-        IReadOnlyList<RadioStation>? searchResults = null,
-        bool searchFailed = false)
+    public static PluginView Build(StationCatalog catalog, UserState state)
     {
         if (catalog.IsEmpty)
         {
             return PluginViews.Declarative(EmptyCatalog.Build(catalog));
         }
-
-        // A set, not a scan per card. A grid is eighteen cards and a favourites list is
-        // unbounded, so the naive form is quadratic in the two things most likely to grow.
-        HashSet<string> favourites = [.. state.Favourites.Select(station => station.Id)];
 
         List<PluginComponent> children =
         [
@@ -37,45 +29,32 @@ public static class BrowseView
                 "caption"
             ),
 
-            // Above everything else it could be below. Searching is how a station outside
-            // the seventeen-tag sweep is reached at all, which since the curated list went
-            // is most of the database - so it belongs on the screen you land on rather
-            // than behind a click.
-            SearchView.Field(state.LastSearch),
+            // High on the page, because searching is how a station outside the
+            // seventeen-tag sweep is reached at all - which, since the curated list went,
+            // is all but a handful of the fifty thousand in radio-browser.
+            PluginViews.Button(
+                "browse-search",
+                "Search stations",
+                PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
+                icon: "magnifyingGlass"),
         ];
-
-        // Results go directly under the field that produced them. They cannot live on a
-        // route of their own: a controller answers with data and cannot navigate, so the
-        // client refreshes the page the form was on - see the comment in SearchView.
-        bool searching = searchFailed || !string.IsNullOrWhiteSpace(state.LastSearch);
-        children.AddRange(
-            SearchView.Results(state.LastSearch, searchResults ?? [], searchFailed, state));
 
         // Absent, not empty. A heading over nothing reads as a screen that failed to
         // load, and everyone's first visit here has no favourites at all.
         if (state.Favourites.Count > 0)
         {
             children.Add(PluginViews.Text("browse-favourites-heading", "Favourites", "subtitle"));
-            children.Add(PluginViews.Grid(
-                "browse-favourites",
-                [.. state.Favourites.Select(station => StationCards.WithFavourite(station, true, "fav"))]
-            ));
+            children.Add(StationCards.Grid("browse-favourites", state.Favourites, state, "fav"));
         }
 
         children.Add(GenreChips(catalog));
 
-        // Popular steps aside while a search is on screen. Two grids of unrelated stations
-        // under one field is a page where it is not clear which one answered you.
-        if (!searching)
-        {
-            children.Add(PluginViews.Text("browse-popular-heading", "Popular", "subtitle"));
-            children.Add(PluginViews.Grid(
-                "browse-popular-grid",
-                [.. catalog.Popular(StationCards.PopularCount)
-                    .Select(station => StationCards.WithFavourite(
-                        station, favourites.Contains(station.Id), "popular"))]
-            ));
-        }
+        children.Add(PluginViews.Text("browse-popular-heading", "Popular", "subtitle"));
+        children.Add(StationCards.Grid(
+            "browse-popular-grid",
+            catalog.Popular(StationCards.PopularCount),
+            state,
+            "popular"));
 
         return PluginViews.Declarative(PluginViews.Container("browse-root", [.. children]));
     }

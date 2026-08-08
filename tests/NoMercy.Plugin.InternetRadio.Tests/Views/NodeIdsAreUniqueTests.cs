@@ -44,7 +44,6 @@ public class NodeIdsAreUniqueTests
         UserState state = new()
         {
             Favourites = [Station("a"), Station("b")],
-            LastSearch = "something",
         };
 
         return new()
@@ -55,8 +54,9 @@ public class NodeIdsAreUniqueTests
             { "all", AllStationsView.Build(catalog) },
             { "station", StationView.Build(catalog, "a", state) },
             { "settings", SettingsView.Build(catalog, "/data", now, now.AddDays(1), state) },
-            { "search", BrowseView.Build(catalog, state, [Station("a"), Station("z")]) },
-            { "search-failed", BrowseView.Build(catalog, state, [], searchFailed: true) },
+            { "search-empty-keyboard", SearchView.Build("", [], false, state) },
+            { "search", SearchView.Build("so", [Station("a"), Station("z")], false, state) },
+            { "search-failed", SearchView.Build("so", [], true, state) },
         };
     }
 

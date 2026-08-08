@@ -73,23 +73,21 @@ public class EmitPayloadsForRendering
                 new UserState
                 {
                     Favourites = [Station("groove", "Ambient"), Station("jazz", "Jazz")],
-                    LastSearch = "groove",
                 }),
             ["radio-genre"] = GenreView.Build(catalog, "ambient", UserState.Empty),
             ["radio-all"] = AllStationsView.Build(catalog),
             ["radio-station"] = StationView.Build(catalog, "groove", UserState.Empty),
             ["radio-settings"] = SettingsView.Build(catalog, "/data", now, now.AddDays(1), UserState.Empty),
-            // The search states, drawn where they actually appear: on the landing page,
-            // under the field that produced them. These are the ones a structural test
-            // cannot judge - they have to be told apart by looking.
-            ["radio-search"] = BrowseView.Build(
-                catalog,
-                new UserState { LastSearch = "groove" },
-                [Station("groove", "Ambient"), Station("jazz", "Jazz")]),
-            ["radio-search-empty"] = BrowseView.Build(
-                catalog, new UserState { LastSearch = "nothing at all" }, []),
-            ["radio-search-failed"] = BrowseView.Build(
-                catalog, new UserState { LastSearch = "anything" }, [], searchFailed: true),
+            // The search states. These are the ones a structural test cannot judge - a
+            // keyboard that wraps badly or a result grid that reads as a wall of text has
+            // to be told apart by looking.
+            ["radio-search-keyboard"] = SearchView.Build("", [], false, UserState.Empty),
+            ["radio-search"] = SearchView.Build(
+                "groove", [Station("groove", "Ambient"), Station("jazz", "Jazz")], false,
+                UserState.Empty),
+            ["radio-search-empty"] = SearchView.Build(
+                "nothing at all", [], false, UserState.Empty),
+            ["radio-search-failed"] = SearchView.Build("anything", [], true, UserState.Empty),
         };
 
         Directory.CreateDirectory(OutputDirectory);

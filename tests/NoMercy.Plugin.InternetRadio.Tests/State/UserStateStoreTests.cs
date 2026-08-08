@@ -32,7 +32,6 @@ public sealed class UserStateStoreTests : IDisposable
         UserState state = await Store().GetAsync("user-1", CancellationToken.None);
 
         state.Favourites.Should().BeEmpty();
-        state.LastSearch.Should().BeNull();
     }
 
     [Fact]
@@ -103,28 +102,6 @@ public sealed class UserStateStoreTests : IDisposable
             .Favourites.Should().ContainSingle().Which.Id.Should().Be("b");
     }
 
-    [Fact]
-    public async Task SetLastSearchAsync_RoundTripsAndDoesNotDisturbFavourites()
-    {
-        UserStateStore store = Store();
-        await store.AddFavouriteAsync("user-1", Station("a"), CancellationToken.None);
-        await store.SetLastSearchAsync("user-1", "groove salad", CancellationToken.None);
-
-        UserState state = await store.GetAsync("user-1", CancellationToken.None);
-
-        state.LastSearch.Should().Be("groove salad");
-        state.Favourites.Should().ContainSingle();
-    }
-
-    [Fact]
-    public async Task SetLastSearchAsync_ClearsTheTermWhenGivenNull()
-    {
-        UserStateStore store = Store();
-        await store.SetLastSearchAsync("user-1", "something", CancellationToken.None);
-        await store.SetLastSearchAsync("user-1", null, CancellationToken.None);
-
-        (await store.GetAsync("user-1", CancellationToken.None)).LastSearch.Should().BeNull();
-    }
 
     // Two viewers clicking at the same moment is the ordinary case on a family server,
     // and the file holds every user's list - so a lost write is not one favourite gone,

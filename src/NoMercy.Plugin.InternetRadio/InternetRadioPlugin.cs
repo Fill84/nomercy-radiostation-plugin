@@ -128,43 +128,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     }
 
     /// <summary>
-    /// Stores the term so the refreshed /search view can run it. Blank clears it, which
-    /// is what returns the page to its "search for a station" state rather than leaving
-    /// it insisting nothing matched an empty query.
-    /// </summary>
-    public Task<PluginActionOutcome> StoreSearchAsync(
-        string? userId, string? query, CancellationToken ct) =>
-        StoreSearchAsync(userId, query, rawBody: null, ct);
-
-    /// <inheritdoc cref="StoreSearchAsync(string?, string?, CancellationToken)" />
-    public async Task<PluginActionOutcome> StoreSearchAsync(
-        string? userId, string? query, string? rawBody, CancellationToken ct)
-    {
-        if (userId is null)
-        {
-            return PluginActionOutcome.Failed("Sign in to search.");
-        }
-
-        string? term = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
-
-        // Logged because a blank term is indistinguishable from a broken one on screen:
-        // both render the landing page. The first attempt at this bound the posted field
-        // to null and cleared the search instead of running it, and nothing said so.
-        if (term is null)
-        {
-            _context?.Logger.LogInformation(
-                "Internet Radio cleared the search for {User} - no term in the submitted body: {Body}",
-                userId,
-                rawBody is null ? "(not captured)" : rawBody);
-        }
-
-        await StateStore.SetLastSearchAsync(userId, term, ct);
-
-        return PluginActionOutcome.Ok(term is null ? "Search cleared." : $"Searching for {term}.");
-    }
-
-    /// <summary>
-    /// The landing page, with the stored search run live if there is one.
+    /// The search page for whatever has been spelled so far.
     ///
     /// The query runs here rather than in the view: views are pure Build methods, which is
     /// what makes them cheap to test exhaustively and keeps this class the only thing that
@@ -172,23 +136,23 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     ///
     /// A failed query renders as failed, not as "nothing found". The two ask the viewer to
     /// do different things, and reporting an outage as an empty result set has them
-    /// retrying a search that was never the problem.
+    /// respelling a search that was never the problem.
     /// </summary>
-    private async Task<PluginView> BuildBrowseAsync(
-        StationCatalog catalog, UserState state, CancellationToken ct)
+    private async Task<PluginView> BuildSearchAsync(
+        string term, UserState state, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(state.LastSearch))
+        if (term.Length < SearchTerms.MinLength)
         {
-            return BrowseView.Build(catalog, state);
+            return SearchView.Build(term, [], queryFailed: false, state);
         }
 
         try
         {
             RadioBrowserClient client = new(Context.HttpClient);
             IReadOnlyList<RadioBrowserStation> wire =
-                await client.SearchByNameAsync(state.LastSearch, RadioBrowserClient.SearchLimit, ct);
+                await client.SearchByNameAsync(term, RadioBrowserClient.SearchLimit, ct);
 
-            return BrowseView.Build(catalog, state, [.. StationGates.Admitted(wire)]);
+            return SearchView.Build(term, [.. StationGates.Admitted(wire)], queryFailed: false, state);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -197,9 +161,45 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         catch (Exception exception)
         {
             _context?.Logger.LogWarning(
-                exception, "Internet Radio could not search for {Term}.", state.LastSearch);
+                exception, "Internet Radio could not search for {Term}.", term);
 
-            return BrowseView.Build(catalog, state, [], searchFailed: true);
+            return SearchView.Build(term, [], queryFailed: true, state);
+        }
+    }
+
+    /// <summary>
+    /// One station's page, for a station that need not be in the catalogue.
+    ///
+    /// A search result is opened by id and was never cached - it came straight off
+    /// radio-browser - so the catalogue alone cannot answer this. FavouriteResolver already
+    /// knows the order to try: the catalogue first, then the network, then give up.
+    /// </summary>
+    private async Task<PluginView> BuildStationAsync(
+        StationCatalog catalog, string id, UserState state, CancellationToken ct)
+    {
+        if (catalog.ById(id) is { } known)
+        {
+            return StationView.Build(known, state);
+        }
+
+        try
+        {
+            FavouriteResolver resolver = new(catalog, new RadioBrowserClient(Context.HttpClient));
+
+            return StationView.Build(await resolver.ResolveAsync(id, ct), state);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            _context?.Logger.LogWarning(
+                exception, "Internet Radio could not resolve the station {Station}.", id);
+
+            // The "not found" page, not the error page: the viewer's next move is the same
+            // either way, and it is on that page.
+            return StationView.Build(station: null, state);
         }
     }
 
@@ -478,14 +478,11 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
             return route.Kind switch
             {
-                RadioRouteKind.Browse => await BuildBrowseAsync(catalog, state, ct),
-                // The same page. Results live under the field that produced them, so
-                // /search has nothing of its own to draw - it stays declared and resolves
-                // so an old link is not a dead end.
-                RadioRouteKind.Search => await BuildBrowseAsync(catalog, state, ct),
+                RadioRouteKind.Browse => BrowseView.Build(catalog, state),
+                RadioRouteKind.Search => await BuildSearchAsync(route.Value, state, ct),
                 RadioRouteKind.Genre => GenreView.Build(catalog, route.Value, state),
                 RadioRouteKind.AllStations => AllStationsView.Build(catalog),
-                RadioRouteKind.Station => StationView.Build(catalog, route.Value, state),
+                RadioRouteKind.Station => await BuildStationAsync(catalog, route.Value, state, ct),
                 RadioRouteKind.Settings => SettingsView.Build(
                     catalog, context.DataFolderPath, DateTimeOffset.UtcNow, NextRefreshUtc(DateTimeOffset.UtcNow), state),
                 _ => UnknownRoute(request.Route),

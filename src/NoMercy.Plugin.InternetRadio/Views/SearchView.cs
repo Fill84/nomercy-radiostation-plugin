@@ -5,109 +5,184 @@ using NoMercy.Plugins.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio;
 
-// The search field and its results, as sections of whatever page draws them.
+// Searching, spelled out on screen rather than typed into a field.
 //
-// Not a page of its own any more. A plugin controller answers with a data envelope and
-// cannot tell the client where to navigate, so a form that submits on one route can only
-// ever be answered on that same route - the client refreshes where it already is. Putting
-// the field on the browse page and the results behind /search meant the results were
-// unreachable by any sequence of clicks: the term was stored, the page came back, and it
-// was still the browse page.
+// A typed field cannot be used at all. PluginComponentType.Form maps to NMCard, so a
+// PluginViews.Form renders as a card - the a11y tree shows role=button with the input and
+// the submit nested inside it - and there is no form element for anything to collect. Four
+// plugin-side shapes were tried and the posted body was "{}" every time, because the term
+// never leaves the browser. See docs/upstream/2026-08-08-plugin-form-submits-empty-body.md.
 //
-// So the results render where the field is. /search still resolves, and renders the same
-// page, so an old link is not a dead end.
+// What does arrive is a path segment: the genre chips and the favourite toggle both prove
+// it. So the term is spelled a character at a time, each key a navigation to the route that
+// has one more character in it. That is not a workaround grafted onto a broken design - it
+// is the interaction a remote-controlled ten-foot interface wants anyway, and it makes a
+// search bookmarkable and shareable for free, which a field never was.
 public static class SearchView
 {
-    public const string FieldName = "query";
+    /// <summary>How many keys are drawn per row before it wraps.</summary>
+    private const int KeysPerRow = 13;
+
+    public static PluginView Build(
+        string term,
+        IReadOnlyList<RadioStation> results,
+        bool queryFailed,
+        UserState state)
+    {
+        List<PluginComponent> children =
+        [
+            PluginViews.Button(
+                "search-back",
+                "Back",
+                PluginActionIntent.Navigate(RadioRoutes.Browse),
+                icon: "arrowLeft"),
+
+            Spelled(term),
+        ];
+
+        children.AddRange(Keyboard(term));
+        children.Add(Controls(term));
+        children.AddRange(Results(term, results, queryFailed, state));
+
+        return PluginViews.Declarative(PluginViews.Container("search-root", [.. children]));
+    }
 
     /// <summary>
-    /// The field, carrying whatever was last searched for. A submitted query that
-    /// vanishes from the box reads as a search that was lost rather than one that ran.
+    /// What has been spelled, always on screen.
+    ///
+    /// Shown even while empty, and as its own line rather than as a heading over the keys:
+    /// tapping a key changes only this text and the results, so a viewer who cannot see
+    /// what they have spelled has no way to tell a mistyped search from an empty one.
     /// </summary>
-    public static PluginComponent Field(string? term) =>
-        PluginViews.Form(
-            "search-form",
-            "Search",
-            PluginActionIntent.CallPlugin(InternetRadioController.SearchMethod),
-            new PluginFormField
+    private static PluginComponent Spelled(string term) =>
+        PluginViews.Text(
+            "search-spelled",
+            term.Length == 0
+                ? "Tap the letters to spell a station name."
+                : $"Searching for “{term}”",
+            "subtitle");
+
+    private static IEnumerable<PluginComponent> Keyboard(string term)
+    {
+        // Full at MaxLength: the keys stay on screen but stop adding, because a row of
+        // keys that vanishes mid-search is a screen that looks like it crashed.
+        bool full = term.Length >= SearchTerms.MaxLength;
+
+        foreach ((char[] keys, int index) in Rows())
+        {
+            yield return PluginViews.Row(
+                $"search-keys-{index}",
+                [.. keys.Select(key => Key(term, key, full))]);
+        }
+    }
+
+    private static IEnumerable<(char[] Keys, int Index)> Rows()
+    {
+        char[] all = [.. SearchTerms.Letters, .. SearchTerms.Digits];
+
+        return all
+            .Chunk(KeysPerRow)
+            .Select((keys, index) => (keys, index));
+    }
+
+    private static PluginComponent Key(string term, char key, bool full) =>
+        PluginViews.Button(
+            $"search-key-{key}",
+            key.ToString().ToUpperInvariant(),
+            PluginActionIntent.Navigate(
+                RadioRoutes.Search(full ? term : SearchTerms.Append(term, key))),
+            variant: "secondary");
+
+    /// <summary>
+    /// Space, backspace and clear — the three keys that are not a character.
+    ///
+    /// All three are absent until there is something to act on. A backspace over an empty
+    /// term navigates to the page it is already on, which reads as a dead button.
+    /// </summary>
+    private static PluginComponent Controls(string term)
+    {
+        List<PluginComponent> controls = [];
+
+        if (term.Length > 0)
+        {
+            // Only when the last character is not already a space: Sanitise refuses a
+            // doubled space, so the key would otherwise do nothing.
+            if (term[^1] != ' ' && term.Length < SearchTerms.MaxLength)
             {
-                Name = FieldName,
-                Label = "Station name",
-                Type = PluginFormFieldType.Text,
-                // An empty string rather than null, and Required, because the submitted
-                // body arrived as "{}" - no fields at all - while the input on screen
-                // plainly held the term. Those are the two differences from the torrent
-                // plugin's settings form, where the same PluginViews.Form does deliver its
-                // values in production: every field there is Required and every Value is a
-                // string. A null initial value most likely never enters the client's form
-                // model, so there is nothing for the submit to collect.
-                Value = term ?? string.Empty,
-                Required = true,
-                Placeholder = "Search every station on radio-browser",
+                controls.Add(PluginViews.Button(
+                    "search-key-space",
+                    "Space",
+                    PluginActionIntent.Navigate(RadioRoutes.Search(SearchTerms.Append(term, ' '))),
+                    variant: "secondary"));
             }
-        );
+
+            controls.Add(PluginViews.Button(
+                "search-backspace",
+                "Backspace",
+                PluginActionIntent.Navigate(RadioRoutes.Search(SearchTerms.Backspace(term))),
+                icon: "arrowLeft",
+                variant: "secondary"));
+
+            controls.Add(PluginViews.Button(
+                "search-clear",
+                "Clear",
+                PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
+                variant: "secondary"));
+        }
+
+        return PluginViews.Row("search-controls", [.. controls]);
+    }
 
     /// <summary>
     /// What a search turned up, or why it turned up nothing.
     ///
-    /// Three ways to have no results, and they must not look alike: unreachable, nothing
-    /// typed yet, and nothing matched. Reporting an outage as an empty result set has the
-    /// viewer retrying a search that was never the problem.
+    /// Four ways to have no results, and they must not look alike: too short to run,
+    /// unreachable, nothing matched, and a term nobody has spelled yet. Reporting an outage
+    /// as an empty result set has the viewer retyping a search that was never the problem.
     /// </summary>
-    public static IEnumerable<PluginComponent> Results(
-        string? term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState state)
+    private static IEnumerable<PluginComponent> Results(
+        string term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState state)
     {
+        if (term.Length == 0)
+        {
+            yield break;
+        }
+
+        if (term.Length < SearchTerms.MinLength)
+        {
+            yield return PluginViews.Text(
+                "search-too-short",
+                $"Spell at least {SearchTerms.MinLength} characters.",
+                "caption");
+
+            yield break;
+        }
+
         if (queryFailed)
         {
-            yield return Heading("search-results-heading", "Search");
             yield return PluginViews.EmptyState(
                 "search-failed",
                 "Search is unavailable",
-                "radio-browser did not answer. Try again in a moment."
-            );
-            yield return ClearButton();
+                "radio-browser did not answer. Try again in a moment.");
+
             yield break;
         }
-
-        if (string.IsNullOrWhiteSpace(term))
-        {
-            yield break;
-        }
-
-        yield return Heading("search-results-heading", $"Results for “{term}”");
 
         if (results.Count == 0)
         {
             yield return PluginViews.EmptyState(
                 "search-empty",
                 "Nothing found",
-                $"No playable station matches “{term}”."
-            );
-        }
-        else
-        {
-            yield return PluginViews.Grid(
-                "search-grid",
-                [.. results.Select(station => StationCards.WithFavourite(
-                    station,
-                    state.Favourites.Any(favourite => favourite.Id == station.Id),
-                    "search"))]
-            );
+                $"No playable station matches “{term}”.");
+
+            yield break;
         }
 
-        yield return ClearButton();
+        yield return PluginViews.Text(
+            "search-results-heading",
+            results.Count == 1 ? "1 station" : $"{results.Count} stations",
+            "subtitle");
+
+        yield return StationCards.Grid("search-grid", results, state, "search");
     }
-
-    private static PluginComponent Heading(string id, string text) =>
-        PluginViews.Text(id, text, "subtitle");
-
-    // A plain button carries nothing but its path, so clearing cannot reuse the form's
-    // submit - it has its own endpoint rather than a magic empty value.
-    private static PluginComponent ClearButton() =>
-        PluginViews.Button(
-            "search-clear",
-            "Clear search",
-            PluginActionIntent.CallPlugin(InternetRadioController.ClearSearchMethod),
-            variant: "secondary"
-        );
 }
