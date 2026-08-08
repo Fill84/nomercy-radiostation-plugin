@@ -280,13 +280,6 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     // One entry per manifest mount. DiscoveryContractTests asserts the two agree,
     // since PluginUiDescriptorDto prefers this over the manifest and nothing else
     // would catch them drifting.
-    /// <summary>
-    /// The pages this plugin serves. Declaring them is what lets the host list them, pick
-    /// a shell per page, and tell a client that a path is real - none of which it can do
-    /// for a route that exists only as a case in this plugin's own switch.
-    /// </summary>
-    public PluginRouteTable Routes => RadioRoutes.Table;
-
     public IReadOnlyList<PluginNavEntry> NavEntries { get; } =
         [
             new PluginNavEntry

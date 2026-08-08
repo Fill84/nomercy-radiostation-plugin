@@ -50,26 +50,6 @@ public static class RadioRoutes
 
     public static string Station(string id) => $"/{StationPrefix}/{Uri.EscapeDataString(id)}";
 
-    /// <summary>
-    /// The pages this plugin serves, declared rather than only string-matched below.
-    ///
-    /// An undeclared page is one nothing outside this file can see: the server cannot
-    /// list it, cannot tell a client which shell it wants, and cannot answer whether a
-    /// link points at a page that exists. Parse stays because the plugin still receives a
-    /// path and has to turn it into a view - the table is what makes that path reachable.
-    ///
-    /// Parameters use the contract's `:name` syntax, not the `{name}` of ASP.NET routing.
-    /// </summary>
-    public static PluginRouteTable Table { get; } =
-        new(
-            new PluginRoute { Path = Browse, Name = "browse", Label = "Internet Radio" },
-            new PluginRoute { Path = Search, Name = "search", Label = "Search" },
-            new PluginRoute { Path = AllStations, Name = "all", Label = "All stations" },
-            new PluginRoute { Path = Settings, Name = "settings", Label = "Settings" },
-            new PluginRoute { Path = $"/{GenrePrefix}/:slug", Name = "genre" },
-            new PluginRoute { Path = $"/{StationPrefix}/:id", Name = "station" }
-        );
-
     public static RadioRoute Parse(string? route)
     {
         // Comma is a separator here, not a character in a value.

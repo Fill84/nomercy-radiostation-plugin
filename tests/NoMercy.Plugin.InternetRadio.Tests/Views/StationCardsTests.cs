@@ -115,6 +115,9 @@ public class StationCardsTests
 
         NMImageProps props = cover.Design.Should().BeOfType<NMImageProps>().Subject;
 
+        // The one that made every cover an img with an alt and no source: Src lives on
+        // the props record, and the loose bag beside it is overwritten by the merge.
+        props.Src.Should().Be("https://cdn.example.com/l.png");
         props.AspectRatio.Should().Be("square");
         props.Fit.Should().Be("cover");
         props.Box!.Width.Should().Be("full", "the cover fills its tile, and the tile is what is capped");

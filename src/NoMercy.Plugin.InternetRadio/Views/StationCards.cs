@@ -120,17 +120,24 @@ public static class StationCards
             return null;
         }
 
+        // Src belongs on the props record, not in the loose bag beside it. Setting
+        // Props["src"] and leaving Design.Src null put the url in the bag and then let the
+        // merge overwrite it with null - PluginComponent.Props applies the design record
+        // last - so every cover reached the browser as an img with an alt and no source.
+        // That is what the whole grid of alt text was.
         return new PluginComponent
         {
             Id = $"station-cover-{Scoped(scope, station.Id)}",
             Component = PluginComponentType.Image,
-            Props = new Dictionary<string, object?> { ["src"] = url },
             Design = new NMImageProps
             {
+                Src = url,
                 Alt = station.Name,
                 AspectRatio = "square",
                 Fit = "cover",
                 Rounded = "lg",
+                Border = false,
+                Shadow = "none",
                 Box = new NmBox { Width = "full" },
             },
         };
