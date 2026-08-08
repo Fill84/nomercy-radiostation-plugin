@@ -17,10 +17,10 @@ public static class GenreView
             // A stale bookmark or a genre that emptied out between refreshes. Not an
             // error - the way back is what is actually useful here.
             return PluginViews.Declarative(
-                PluginViews.Container(
+                Ui.Container(
                     "genre-root",
                     BackToBrowse,
-                    PluginViews.EmptyState(
+                    Ui.EmptyState(
                         "genre-empty",
                         "No stations in this genre",
                         "It may have been renamed or emptied since this page was last opened."
@@ -32,18 +32,18 @@ public static class GenreView
         string label = GenreMap.BySlug(slug)?.Label ?? stations[0].Genre ?? GenreMap.Other;
 
         return PluginViews.Declarative(
-            PluginViews.Container(
+            Ui.Container(
                 "genre-root",
                 BackToBrowse,
-                PluginViews.Text("genre-title", label, "title"),
-                PluginViews.Text("genre-count", $"{stations.Count} stations", "caption"),
+                Ui.Text("genre-title", label, "title"),
+                Ui.Text("genre-count", $"{stations.Count} stations", "caption"),
                 StationCards.Grid("genre-grid", stations, state, "genre")
             )
         );
     }
 
     private static PluginComponent BackToBrowse =>
-        PluginViews.Button(
+        Ui.Button(
             "genre-back",
             "All genres",
             PluginActionIntent.Navigate(RadioRoutes.Browse),

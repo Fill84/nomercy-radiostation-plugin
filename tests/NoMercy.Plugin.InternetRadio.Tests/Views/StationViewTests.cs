@@ -49,24 +49,27 @@ public class StationViewTests
     private static PluginComponent Node(PluginView view, string id) =>
         AllNodes(view).Single(node => node.Id == id);
 
-    // A table renders a header row ahead of its body rows, and a body row turns each
-    // authored cell into a Cell holding a Text node at a derived id - the flat props
-    // the view handed in are not what the renderer keeps.
-    private static List<PluginComponent> Rows(PluginComponent table) =>
-        table.Items.Skip(1).ToList();
+    // A row carries its cells as props, keyed by column. The header is a prop on the
+    // table rather than a row, so every item here is a row a viewer would count.
+    private static List<PluginComponent> Rows(PluginComponent table) => [.. table.Items];
 
     private static string CellText(PluginComponent row, string columnKey) =>
-        Flatten(row)
-            .Single(node => node.Id == $"{row.Id}-{columnKey}-value")
-            .Props.GetValueOrDefault("text") as string ?? string.Empty;
+        row.Props.GetValueOrDefault(columnKey)?.ToString() ?? string.Empty;
 
     [Fact]
     public void OffersPlayAndEnqueueForTheStream()
     {
         PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
+        // Through this server, not straight at the station: the dashboard's media-src
+        // refuses the station's own host, so a direct url plays nothing. The relay only
+        // knows where this server lives once a request has told it, so the test tells it.
+        MediaProxy.Remember("https://server.example", null);
+        view = StationView.Build(Catalog(Full), "a", UserState.Empty);
+
         PluginComponent play = ActionOfType(view, PluginActionType.PlayMedia)!;
-        play.Action!.Payload["streamUrl"].Should().Be("https://example.com/a");
+        play.Action!.Payload["streamUrl"].Should().Be(
+            $"https://server.example/api/v1/plugins/{PluginIdentity.Id}/stream/a");
         play.Action.Payload["title"].Should().Be("Alpha FM");
 
         ActionOfType(view, PluginActionType.Enqueue).Should().NotBeNull();
@@ -170,7 +173,7 @@ public class StationViewTests
     {
         PluginView view = StationView.Build(Catalog(Full), "gone", UserState.Empty);
 
-        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+        AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
         ActionOfType(view, PluginActionType.PlayMedia).Should().BeNull();
     }
 
@@ -195,7 +198,7 @@ public class StationViewTests
         PluginComponent detail = Node(view, "station-detail-b");
         Flatten(detail).Should().NotContain(node =>
             node.Props.ContainsKey("text")
-            && string.IsNullOrWhiteSpace(node.Props["text"] as string));
+            && string.IsNullOrWhiteSpace(node.Props["value"] as string));
         Flatten(detail).Should().NotContain(node => node.Id == "station-detail-b-secondary");
 
         // Stream and Source are the only two facts that always survive - Stream

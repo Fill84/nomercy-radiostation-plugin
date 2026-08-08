@@ -39,24 +39,24 @@ public static class SettingsView
     {
         List<PluginComponent> children =
         [
-            PluginViews.Text("settings-title", "Internet Radio", "title"),
-            PluginViews.Row(
+            Ui.Text("settings-title", "Internet Radio", "title"),
+            Ui.Row(
                 "settings-status",
                 SourceBadge(catalog),
-                PluginViews.Text("settings-age", Age(catalog, now), "caption")
+                Ui.Text("settings-age", Age(catalog, now), "caption")
             ),
-            PluginViews.Text("settings-next-refresh", NextRefresh(nextRefreshUtc, now), "caption"),
+            Ui.Text("settings-next-refresh", NextRefresh(nextRefreshUtc, now), "caption"),
             // Labelled for what it honestly does. A cache younger than the 36-hour
             // TTL - always, given the daily job - means RefreshView re-renders the
             // same cache untouched, so this must not read as a button that forces a
             // fetch. "Refresh now" claimed exactly that and did nothing about it.
-            PluginViews.Button(
+            Ui.Button(
                 "settings-refresh",
                 "Reload",
                 PluginActionIntent.RefreshView(),
                 icon: "portableRadio"
             ),
-            PluginViews.Text(
+            Ui.Text(
                 "settings-refresh-caption",
                 "Reloads this page from what is already cached. It does not force an early fetch - "
                     + "the catalogue itself only refreshes on the schedule above.",
@@ -67,7 +67,7 @@ public static class SettingsView
         if (catalog.LastFetchFailed)
         {
             children.Add(
-                PluginViews.Text(
+                Ui.Text(
                     "settings-refresh-failed",
                     "The catalogue could not be refreshed on the last attempt. "
                         + "Anything shown is from the cache. Check the server log for Internet Radio.",
@@ -78,14 +78,14 @@ public static class SettingsView
 
         if (!catalog.IsEmpty)
         {
-            children.Add(PluginViews.Text("settings-genres-heading", "Genres", "subtitle"));
+            children.Add(Ui.Text("settings-genres-heading", "Genres", "subtitle"));
             children.Add(
-                PluginViews.Table(
+                Ui.Table(
                     "settings-genres",
                     Columns,
                     [
                         .. catalog.Genres.Select(genre =>
-                            PluginViews.Row(
+                            Ui.TableRow(
                                 $"settings-genre-{genre.Section.Slug}",
                                 new Dictionary<string, object?>
                                 {
@@ -103,16 +103,16 @@ public static class SettingsView
         // The one place an owner can see that favourites are being stored at all. The
         // singular is spelled out rather than pluralised with an "s": "1 favourite
         // stations" reads as a bug to whoever has exactly one.
-        children.Add(PluginViews.Text(
+        children.Add(Ui.Text(
             "settings-favourites-count",
             state.Favourites.Count == 1
                 ? "1 favourite station."
                 : $"{state.Favourites.Count} favourite stations.",
             "caption"));
 
-        children.Add(PluginViews.Text("settings-own-heading", "Your own stations", "subtitle"));
+        children.Add(Ui.Text("settings-own-heading", "Your own stations", "subtitle"));
         children.Add(
-            PluginViews.Text(
+            Ui.Text(
                 "settings-own-body",
                 $"Drop a file named {StationOverrides.FileName} into {dataFolderPath} to replace the "
                     + "fetched list entirely. It is a JSON array of stations, each needing at least a "
@@ -122,9 +122,9 @@ public static class SettingsView
             )
         );
 
-        children.Add(PluginViews.Text("settings-editing-heading", "Why there is nothing to edit", "subtitle"));
+        children.Add(Ui.Text("settings-editing-heading", "Why there is nothing to edit", "subtitle"));
         children.Add(
-            PluginViews.Text(
+            Ui.Text(
                 "settings-editing-body",
                 "This page is read-only. When this version was built a plugin could not receive "
                     + "anything from its own UI on this server, so there was nowhere for a form to "
@@ -136,7 +136,7 @@ public static class SettingsView
             )
         );
 
-        return PluginViews.Declarative(PluginViews.Container("settings-root", [.. children]));
+        return PluginViews.Declarative(Ui.Container("settings-root", [.. children]));
     }
 
     private static PluginComponent SourceBadge(StationCatalog catalog)
@@ -151,7 +151,7 @@ public static class SettingsView
             _ => ("No stations", PluginBadgeVariant.Danger),
         };
 
-        return PluginViews.Badge("settings-source", badge.Label, badge.Variant);
+        return Ui.Badge("settings-source", badge.Label, badge.Variant);
     }
 
     /// <summary>

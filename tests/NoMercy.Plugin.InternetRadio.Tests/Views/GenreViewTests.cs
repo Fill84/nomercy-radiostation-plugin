@@ -63,7 +63,7 @@ public class GenreViewTests
     {
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "no-such-genre", UserState.Empty);
 
-        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+        AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
         AllNodes(view).Should().NotContain(node => node.Id.StartsWith("station-play-", StringComparison.Ordinal));
     }
 

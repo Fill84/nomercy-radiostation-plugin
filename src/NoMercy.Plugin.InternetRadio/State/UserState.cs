@@ -16,10 +16,20 @@ public sealed record UserState
     [JsonPropertyName("favourites")]
     public IReadOnlyList<RadioStation> Favourites { get; init; } = [];
 
-    // No stored search term. There was one, back when searching was a form submit that had
-    // to survive a refresh; the term now lives in the route itself, which is a better place
-    // for it - a search is shareable, bookmarkable, and cannot go stale against a state
-    // file. A `lastSearch` left over in an existing file is simply ignored.
+    /// <summary>
+    /// The term, never the results.
+    ///
+    /// A plugin controller answers with data and cannot tell the client where to navigate -
+    /// after a callPlugin the client refreshes the route it is already on - so a submitted
+    /// term has to survive that refresh somewhere, and this is that somewhere. Re-running
+    /// the query when the page renders means what is on screen is what radio-browser says
+    /// now, and there is no second copy of the results to go stale.
+    ///
+    /// /search/&lt;term&gt; does not need this: that term is in the route. This is only for
+    /// the term that arrived by submit.
+    /// </summary>
+    [JsonPropertyName("lastSearch")]
+    public string? LastSearch { get; init; }
 
     public static UserState Empty { get; } = new();
 }

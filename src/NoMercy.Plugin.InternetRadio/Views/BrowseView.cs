@@ -23,7 +23,7 @@ public static class BrowseView
         [
             // No title here. The host draws the plugin's name as the page heading already,
             // and repeating it put "Internet Radio" on screen twice, one line apart.
-            PluginViews.Text(
+            Ui.Text(
                 "browse-summary",
                 $"{catalog.Count} stations across {catalog.Genres.Count} genres. Pick one and it plays.",
                 "caption"
@@ -32,7 +32,7 @@ public static class BrowseView
             // High on the page, because searching is how a station outside the
             // seventeen-tag sweep is reached at all - which, since the curated list went,
             // is all but a handful of the fifty thousand in radio-browser.
-            PluginViews.Button(
+            Ui.Button(
                 "browse-search",
                 "Search stations",
                 PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
@@ -43,20 +43,20 @@ public static class BrowseView
         // load, and everyone's first visit here has no favourites at all.
         if (state.Favourites.Count > 0)
         {
-            children.Add(PluginViews.Text("browse-favourites-heading", "Favourites", "subtitle"));
+            children.Add(Ui.Text("browse-favourites-heading", "Favourites", "subtitle"));
             children.Add(StationCards.Grid("browse-favourites", state.Favourites, state, "fav"));
         }
 
         children.Add(GenreChips(catalog));
 
-        children.Add(PluginViews.Text("browse-popular-heading", "Popular", "subtitle"));
+        children.Add(Ui.Text("browse-popular-heading", "Popular", "subtitle"));
         children.Add(StationCards.Grid(
             "browse-popular-grid",
             catalog.Popular(StationCards.PopularCount),
             state,
             "popular"));
 
-        return PluginViews.Declarative(PluginViews.Container("browse-root", [.. children]));
+        return PluginViews.Declarative(Ui.Container("browse-root", [.. children]));
     }
 
     private static PluginComponent GenreChips(StationCatalog catalog)
@@ -64,13 +64,13 @@ public static class BrowseView
         List<PluginComponent> chips =
         [
             .. catalog.Genres.Select(genre =>
-                PluginViews.Button(
+                Ui.Button(
                     $"browse-genre-{genre.Section.Slug}",
                     $"{genre.Section.Label} ({genre.Count})",
                     PluginActionIntent.Navigate(RadioRoutes.Genre(genre.Section.Slug))
                 )
             ),
-            PluginViews.Button(
+            Ui.Button(
                 "browse-all",
                 "All stations",
                 PluginActionIntent.Navigate(RadioRoutes.AllStations),
@@ -78,6 +78,6 @@ public static class BrowseView
             ),
         ];
 
-        return PluginViews.Row("browse-genres", [.. chips]);
+        return Ui.Row("browse-genres", [.. chips]);
     }
 }

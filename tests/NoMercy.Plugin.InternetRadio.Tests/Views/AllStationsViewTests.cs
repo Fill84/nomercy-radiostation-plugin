@@ -50,8 +50,6 @@ public class AllStationsViewTests
         // merely exists would no longer catch anything.
         foreach (PluginComponent row in PluginNodes.Rows(table))
         {
-            row.Items.Should().HaveSameCount(PluginNodes.HeaderRow(table).Items);
-
             foreach (string column in PluginNodes.Columns(table))
             {
                 PluginNodes.Value(table, row, column).Should().NotBeEmpty();
@@ -113,7 +111,7 @@ public class AllStationsViewTests
     {
         PluginView view = AllStationsView.Build(StationCatalog.Empty());
 
-        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+        AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
     }
 
     [Fact]

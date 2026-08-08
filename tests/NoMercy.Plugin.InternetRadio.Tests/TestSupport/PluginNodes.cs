@@ -6,13 +6,13 @@ using NoMercy.Plugins.Abstractions;
 namespace NoMercy.Plugin.InternetRadio.Tests;
 
 /// <summary>
-/// Reading a built view the way a client does.
+/// Reading a built view the way the client does.
 ///
-/// A card and a layout container are the same design-system component wearing
-/// different clothes: both are <c>NMCard</c>, and a container says so with
-/// <c>variant: ghost</c>. Filtering on the tag alone therefore counts every
-/// wrapper as a card — which is what these tests did, back when a container had
-/// a tag of its own and the design system had never seen the payload.
+/// These helpers used to reconstruct a table out of nested boxes and ARIA roles, because
+/// that is what this plugin was emitting: every component went out under a design-system
+/// name, so there was no table, no grid and no form to read - only cards standing in for
+/// them. Now that the components are named the way the client names them, a table has
+/// columns and rows and this file can simply ask for them.
 /// </summary>
 internal static class PluginNodes
 {
@@ -29,75 +29,64 @@ internal static class PluginNodes
     public static IEnumerable<PluginComponent> All(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
-    /// <summary>A card a viewer would call one: not one of the ghost boxes holding the layout.</summary>
-    public static bool IsCard(PluginComponent node) =>
-        node.Component == PluginComponentType.Card && !IsLayout(node);
-
-    /// <summary>A box that exists to place things, drawn as nothing at all.</summary>
-    public static bool IsLayout(PluginComponent node) =>
-        node.Component == PluginComponentType.Container
-        && node.Props.TryGetValue("variant", out object? variant)
-        && "ghost".Equals(variant);
+    /// <summary>A card a viewer would call one.</summary>
+    public static bool IsCard(PluginComponent node) => node.Component == Ui.CardComponent;
 
     public static IEnumerable<PluginComponent> Cards(PluginView view) => All(view).Where(IsCard);
 
     /// <summary>
-    /// Every word in the view, in order. Text is a leaf now rather than a prop
-    /// on whatever was going to draw it, so a title lives one or two levels
-    /// under the thing it titles.
+    /// Every word in the view, in order — from the text leaves and from the props of the
+    /// components that carry their own words.
     /// </summary>
     public static IEnumerable<string> Words(PluginView view) =>
-        All(view)
-            .Where(node => node.Component == PluginComponentType.Text)
-            .Select(Word)
-            .Where(word => word.Length > 0);
+        All(view).SelectMany(Spoken).Where(word => word.Length > 0);
 
-    private static string Word(PluginComponent node) =>
-        node.Props.TryGetValue("text", out object? text) ? text?.ToString() ?? "" : "";
+    private static IEnumerable<string> Spoken(PluginComponent node)
+    {
+        foreach (string key in Speaks)
+        {
+            if (node.Props.TryGetValue(key, out object? value) && value?.ToString() is { Length: > 0 } word)
+            {
+                yield return word;
+            }
+        }
+    }
 
-    /// <summary>What a screen reader is told this node is.</summary>
-    public static bool HasRole(PluginComponent node, string role) =>
-        node.Props.TryGetValue("accessibility", out object? accessibility)
-        && accessibility is IDictionary<string, object?> map
-        && map.TryGetValue("role", out object? value)
-        && role.Equals(value);
+    // The prop each component says its words under. PluginText is `value`, not `text`:
+    // that one rename is why half these tests went quiet.
+    private static readonly string[] Speaks = ["value", "label", "title", "subtitle", "message"];
 
-    /// <summary>
-    /// The table on a screen. There is no table tag to look for: a table is boxes
-    /// carrying the ARIA roles, because the design system's own table element has
-    /// a single slot and generates neither a row nor a cell to put in it. The role
-    /// is what a client reads and what a reader announces, so it is what a test
-    /// asks about too.
-    /// </summary>
+    /// <summary>The single table on a screen.</summary>
     public static PluginComponent Table(PluginView view) =>
-        All(view).Single(node => HasRole(node, "table"));
+        All(view).Single(node => node.Component == Ui.TableComponent);
 
     public static IEnumerable<PluginComponent> Tables(PluginView view) =>
-        All(view).Where(node => HasRole(node, "table"));
+        All(view).Where(node => node.Component == Ui.TableComponent);
 
     /// <summary>The column labels, in the order they are drawn.</summary>
     public static IReadOnlyList<string> Columns(PluginComponent table) =>
-        [.. HeaderRow(table).Items.Select(CellText)];
+        [.. ColumnsOf(table).Select(column => column.Label)];
 
-    public static PluginComponent HeaderRow(PluginComponent table) =>
-        table.Items.Single(row => row.Items.Any(cell => HasRole(cell, "columnheader")));
-
-    /// <summary>The rows a viewer counts: the header is not one of them.</summary>
-    public static IReadOnlyList<PluginComponent> Rows(PluginComponent table) =>
-        [.. table.Items.Where(row => row.Items.Any(cell => HasRole(cell, "cell")))];
+    /// <summary>The rows a viewer counts. The header is a prop, so it is never one of them.</summary>
+    public static IReadOnlyList<PluginComponent> Rows(PluginComponent table) => table.Items;
 
     /// <summary>
-    /// What one row says under one column, found by the label the viewer reads
-    /// rather than by the key the plugin used: the key never reaches the client.
+    /// What one row says under one column, found by the label the viewer reads rather than
+    /// by the key the plugin used.
     /// </summary>
     public static string Value(PluginComponent table, PluginComponent row, string column)
     {
-        int index = Columns(table).ToList().IndexOf(column);
+        PluginTableColumn? match = ColumnsOf(table)
+            .FirstOrDefault(candidate => candidate.Label == column);
 
-        return index < 0 || index >= row.Items.Count ? "" : CellText(row.Items[index]);
+        return match is null
+            ? string.Empty
+            : row.Props.TryGetValue(match.Key, out object? cell) ? cell?.ToString() ?? "" : "";
     }
 
-    /// <summary>Whatever a cell says, whether it says it as text or as a badge.</summary>
-    public static string CellText(PluginComponent cell) =>
-        Flatten(cell).Select(Word).FirstOrDefault(word => word.Length > 0) ?? "";
+    private static IReadOnlyList<PluginTableColumn> ColumnsOf(PluginComponent table) =>
+        table.Props.TryGetValue("columns", out object? columns)
+        && columns is IReadOnlyList<PluginTableColumn> typed
+            ? typed
+            : [];
 }

@@ -31,10 +31,26 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public Task<IActionResult> ToggleFavourite(string stationId, CancellationToken ct) =>
         RespondAsync(plugin => plugin.ToggleFavouriteAsync(CurrentUserId(), stationId, ct));
 
-    // No search endpoint at all. Searching is a GET of /search/<term>: the keys navigate
-    // one character at a time and the field navigates with what was typed. Nothing about a
-    // search is a POST, which is also why the two attempts to make it one both came back
-    // with an empty body - there was never anything to send.
+    public const string SearchMethod = "search";
+
+    /// <summary>
+    /// The search box's submit.
+    ///
+    /// The client posts the form's collected fields as the request body and then refreshes
+    /// the view, so the term is stored and the refreshed page runs it. Earlier versions of
+    /// this arrived with an empty body every time - not because the binding was wrong, but
+    /// because the form was being rendered as a card and there was no form to collect. See
+    /// Ui.
+    /// </summary>
+    [HttpPost(SearchMethod)]
+    public Task<IActionResult> Search([FromBody] SearchRequest? request, CancellationToken ct) =>
+        RespondAsync(plugin => plugin.StoreSearchAsync(CurrentUserId(), request?.Query, ct));
+
+    /// <summary>The one field the search form carries.</summary>
+    public sealed class SearchRequest
+    {
+        public string? Query { get; init; }
+    }
 
     /// <summary>
     /// The station's audio, relayed. See FetchStationMediaAsync for why the browser must

@@ -57,7 +57,7 @@ public class BrowseViewTests
         PluginView view = BrowseView.Build(Catalog(Station("a", "Ambient"), Station("b", "Rock")), UserState.Empty);
 
         IEnumerable<PluginComponent> buttons = AllNodes(view)
-            .Where(node => node.Component == PluginComponentType.Button
+            .Where(node => node.Component == Ui.ButtonComponent
                 && node.Action?.Type == PluginActionType.Navigate);
 
         buttons.Select(button => button.Action!.Payload["route"])
@@ -92,7 +92,7 @@ public class BrowseViewTests
     {
         PluginView view = BrowseView.Build(StationCatalog.Empty(lastFetchFailed: true), UserState.Empty);
 
-        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
+        AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public class BrowseViewTests
         PluginView view = BrowseView.Build(Catalog(Station("a")), UserState.Empty);
 
         AllNodes(view)
-            .Where(node => node.Component == PluginComponentType.Text)
+            .Where(node => node.Component == Ui.TextComponent)
             .Select(node => node.Props.GetValueOrDefault("variant") as string)
             .Should().OnlyContain(variant =>
                 variant == null || variant == "title" || variant == "subtitle" || variant == "caption");
@@ -194,8 +194,8 @@ public class BrowseViewTests
 
         IEnumerable<string?> labels = AllNodes(BrowseView.Build(Catalog(station), With(station)))
             .Where(node => node.Id.StartsWith("station-favourite-", StringComparison.Ordinal)
-                && node.Id.EndsWith("-a-label", StringComparison.Ordinal))
-            .Select(node => node.Props["text"]?.ToString());
+                && node.Id.EndsWith("-a", StringComparison.Ordinal))
+            .Select(node => node.Props["label"]?.ToString());
 
         labels.Should().NotBeEmpty().And.AllBe(StationCards.RemoveFavouriteLabel);
     }

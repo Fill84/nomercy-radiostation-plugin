@@ -3,16 +3,16 @@
 
 using FluentAssertions;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
-using NoMercy.Design;
 using NoMercy.Plugins.Abstractions;
 using Xunit;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Views;
 
-// Searching is a keyboard now, not a form. The form could never work: a
-// PluginComponentType.Form is an NMCard, so there is no form element in the DOM and a
-// submit posts "{}" whatever the field holds. Every assertion here is about the term
-// travelling in the route instead, which is the one channel this client does deliver.
+// Searching is a box you type into. It only ever failed for one reason, and it was the
+// component name: PluginComponentType.Form is "NMCard", so the form went out as a
+// design-system card and the real PluginForm - which renders a <form>, collects its fields
+// and posts them - was never reached. Every assertion about the field here is really an
+// assertion that it is named the way the client names it.
 public class SearchViewTests
 {
     private static RadioStation Station(string id) =>
@@ -37,89 +37,48 @@ public class SearchViewTests
     private static PluginComponent Node(PluginView view, string id) =>
         PluginNodes.All(view).Single(node => node.Id == id);
 
-    private static string Route(PluginView view, string id) =>
-        Node(view, id).Action!.Payload["route"]!.ToString()!;
+    private static PluginFormField TheField(PluginView view) =>
+        ((PluginFormField[])Node(view, "search-form").Props["fields"]!).Single();
 
     [Fact]
-    public void EveryLetterAndDigitIsAKey()
+    public void TheFormIsTheOneTheClientCanActuallySubmit()
     {
-        IEnumerable<string> ids = Ids(View(string.Empty));
-
-        foreach (char key in SearchTerms.Letters + SearchTerms.Digits)
-        {
-            ids.Should().Contain($"search-key-{key}");
-        }
-    }
-
-    // The one assertion the whole design rests on: a key does not submit anything, it
-    // navigates to the route with one more character in it.
-    [Fact]
-    public void AKeyNavigatesToTheRouteWithThatCharacterAppended()
-    {
-        PluginComponent key = Node(View("tom"), "search-key-o");
-
-        key.Action!.Type.Should().Be(PluginActionType.Navigate);
-        key.Action.Payload["route"].Should().Be(RadioRoutes.Search("tomo"));
+        Node(View(string.Empty), "search-form").Component.Should().Be(Ui.FormComponent);
     }
 
     [Fact]
-    public void TheSpelledTermIsAlwaysOnScreen()
+    public void TheFieldIsThereBeforeAnythingHasBeenSearchedFor()
     {
-        Node(View("tomorrowland"), "search-spelled-text")
-            .Props["text"]!.ToString().Should().Contain("tomorrowland");
+        PluginFormField field = TheField(View(string.Empty));
+
+        field.Name.Should().Be(SearchView.FieldName);
+        field.Type.Should().Be(PluginFormFieldType.Text);
     }
 
-    // A viewer who cannot see what they spelled cannot tell a mistyped search from an
-    // empty one, so the line is there before the first key too.
+    // A submitted term that vanishes from the box reads as a search that was lost, and
+    // correcting a typo should mean editing rather than retyping.
     [Fact]
-    public void TheSpelledLineIsThereBeforeAnythingIsSpelled()
+    public void TheFieldHoldsWhateverIsBeingSearchedFor()
     {
-        Ids(View(string.Empty)).Should().Contain("search-spelled");
-    }
-
-    [Fact]
-    public void BackspaceGoesToTheRouteWithoutTheLastCharacter()
-    {
-        Route(View("tomo"), "search-backspace").Should().Be(RadioRoutes.Search("tom"));
+        TheField(View("tomorrowland")).Value.Should().Be("tomorrowland");
     }
 
     [Fact]
-    public void ClearGoesBackToTheEmptyKeyboard()
+    public void SubmittingGoesToTheControllersOwnRoute()
     {
-        Route(View("tomo"), "search-clear").Should().Be(RadioRoutes.SearchRoot);
+        PluginActionIntent action = Node(View(string.Empty), "search-form").Action!;
+
+        action.Type.Should().Be(PluginActionType.CallPlugin);
+        action.Payload["method"].Should().Be(InternetRadioController.SearchMethod);
     }
 
-    // A backspace over an empty term navigates to the page it is already on, which reads
-    // as a dead button.
     [Fact]
-    public void WithNothingSpelled_ThereIsNothingToBackspaceOrClear()
+    public void WithNoTerm_ShowsNoResultsSectionAtAll()
     {
         Ids(View(string.Empty))
-            .Should().NotContain("search-backspace").And.NotContain("search-clear");
-    }
-
-    [Fact]
-    public void SpaceIsAKeyToo()
-    {
-        Route(View("radio"), "search-key-space").Should().Be(RadioRoutes.Search("radio "));
-    }
-
-    // Sanitise refuses a doubled space, so the key would navigate to the page it is on.
-    [Fact]
-    public void SpaceIsAbsentWhenItWouldDoNothing()
-    {
-        Ids(View("radio ")).Should().NotContain("search-key-space");
-    }
-
-    // One letter matches thousands of stations and answers nothing.
-    [Fact]
-    public void OneCharacterAsksForAnotherRatherThanSearching()
-    {
-        IEnumerable<string> ids = Ids(View("t"));
-
-        ids.Should().Contain("search-too-short")
+            .Should().NotContain("search-results-heading")
             .And.NotContain("search-empty")
-            .And.NotContain("search-grid");
+            .And.NotContain("search-failed");
     }
 
     [Fact]
@@ -127,8 +86,8 @@ public class SearchViewTests
     {
         Ids(View("tom", [Station("found-a"), Station("found-b")]))
             .Should().Contain("search-grid")
-            .And.Contain("station-card-search-found-a")
-            .And.Contain("station-card-search-found-b");
+            .And.Contain("station-tile-search-found-a")
+            .And.Contain("station-tile-search-found-b");
     }
 
     [Fact]
@@ -138,8 +97,8 @@ public class SearchViewTests
     }
 
     // "We could not reach radio-browser" and "there is no such station" ask the viewer to
-    // do different things. Reporting an outage as an empty result set has them respelling
-    // the search that was never the problem.
+    // do different things. Reporting an outage as an empty result set has them retyping the
+    // search that was never the problem.
     [Fact]
     public void WhenTheQueryFailed_SaysSoInsteadOfClaimingNoResults()
     {
@@ -147,57 +106,32 @@ public class SearchViewTests
             .Should().Contain("search-failed").And.NotContain("search-empty");
     }
 
-    // The keyboard stays up through every state, or a failed search is a screen with no
-    // way to try a different one.
+    // The box survives every state, or a failed search is a screen with no way to try a
+    // different one.
     [Theory]
     [InlineData("", false)]
-    [InlineData("t", false)]
     [InlineData("tom", false)]
     [InlineData("tom", true)]
-    public void TheKeyboardSurvivesEveryState(string term, bool failed)
+    public void TheBoxSurvivesEveryState(string term, bool failed)
     {
-        Ids(View(term, failed: failed)).Should().Contain("search-key-a");
-    }
-
-    // No field. Three attempts at one all failed in the client - a plugin form posts an
-    // empty body, an NMSearchInput posts an empty body, and an NMSearchInput given a
-    // Navigate action ignores the route and lands on the plugin root. A field that cannot
-    // be read or steered invites typing and then loses your place.
-    [Fact]
-    public void ThereIsNoTypedFieldToBeMisledBy()
-    {
-        Ids(View("tom")).Should().NotContain("search-input");
-    }
-
-    // The keys are the search, so they are on every surface rather than only where there
-    // is a remote.
-    [Fact]
-    public void TheKeysCarryNoSurfaceRestriction()
-    {
-        PluginNodes.All(View("tom"))
-            .Select(node => (node.Design as NMCardProps)?.Box)
-            .Where(box => box is not null)
-            .Should().NotBeEmpty()
-            .And.OnlyContain(box => box!.HiddenOn.Count == 0);
+        Ids(View(term, failed: failed)).Should().Contain("search-form");
     }
 
     [Fact]
     public void ThereIsAWayBackToTheLandingPage()
     {
-        Route(View("tom"), "search-back").Should().Be(RadioRoutes.Browse);
+        Node(View("tom"), "search-back").Action!.Payload["route"].Should().Be(RadioRoutes.Browse);
     }
 
-    // A result is the same card as any grid, so a station cannot behave one way when
+    // A result is the same tile as any grid, so a station cannot behave one way when
     // browsed and another when searched for.
     [Fact]
     public void AResultKnowsItIsAlreadyAFavourite()
     {
         PluginView view = View(
-            "tom",
-            [Station("found")],
-            state: new UserState { Favourites = [Station("found")] });
+            "tom", [Station("found")], state: new UserState { Favourites = [Station("found")] });
 
-        Node(view, "station-favourite-search-found-label")
-            .Props["text"].Should().Be(StationCards.RemoveFavouriteLabel);
+        Node(view, "station-favourite-search-found").Props["label"]
+            .Should().Be(StationCards.RemoveFavouriteLabel);
     }
 }

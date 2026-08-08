@@ -32,10 +32,10 @@ public static class StationView
             // The catalogue refreshes underneath an open page, so a link followed a
             // minute later can point at a station that is no longer listed.
             return PluginViews.Declarative(
-                PluginViews.Container(
+                Ui.Container(
                     "station-root",
                     BackButtons,
-                    PluginViews.EmptyState(
+                    Ui.EmptyState(
                         "station-missing",
                         "Station not found",
                         "It may have been removed from the catalogue since this page was opened."
@@ -45,10 +45,10 @@ public static class StationView
         }
 
         return PluginViews.Declarative(
-            PluginViews.Container(
+            Ui.Container(
                 "station-root",
                 BackButtons,
-                PluginViews.Detail(
+                Ui.Detail(
                     $"station-detail-{station.Id}",
                     station.Name,
                     Description(station),
@@ -110,13 +110,13 @@ public static class StationView
             // passes an artist - the genre used to go there, and the player builds an
             // artist LINK out of it and then fails to resolve a route for a genre that is
             // not one, which was the "Something went wrong" toast on every play.
-            PluginViews.Button(
+            Ui.Button(
                 $"station-play-{station.Id}",
                 "Play",
                 StationCards.Play(station),
                 icon: "play"
             ),
-            PluginViews.Button(
+            Ui.Button(
                 $"station-enqueue-{station.Id}",
                 "Add to queue",
                 StationCards.Enqueue(station),
@@ -125,7 +125,7 @@ public static class StationView
             // Two states that differ by label and by variant, never by colour alone: a
             // toggle whose only difference is a tint is unreadable to a good share of
             // viewers, and to everyone in a screenshot.
-            PluginViews.Button(
+            Ui.Button(
                 $"station-favourite-{station.Id}",
                 isFavourite ? StationCards.RemoveFavouriteLabel : StationCards.AddFavouriteLabel,
                 StationCards.ToggleFavourite(station),
@@ -139,7 +139,7 @@ public static class StationView
         if (StationGates.IsSafeExternalUrl(station.Homepage))
         {
             buttons.Add(
-                PluginViews.Button(
+                Ui.Button(
                     $"station-homepage-{station.Id}",
                     "Open homepage",
                     PluginActionIntent.OpenWebView(station.Homepage),
@@ -148,7 +148,7 @@ public static class StationView
             );
         }
 
-        return PluginViews.Row($"station-actions-{station.Id}", [.. buttons]);
+        return Ui.Row($"station-actions-{station.Id}", [.. buttons]);
     }
 
     private static PluginComponent Facts(RadioStation station)
@@ -169,13 +169,13 @@ public static class StationView
         IEnumerable<PluginComponent> rows = facts
             .Where(fact => !string.IsNullOrWhiteSpace(fact.Value))
             .Select(fact =>
-                PluginViews.Row(
+                Ui.TableRow(
                     $"station-fact-{station.Id}-{StationGates.Slugify(fact.Field)}",
                     new Dictionary<string, object?> { ["field"] = fact.Field, ["value"] = fact.Value }
                 )
             );
 
-        return PluginViews.Table($"station-facts-{station.Id}", Columns, [.. rows]);
+        return Ui.Table($"station-facts-{station.Id}", Columns, [.. rows]);
     }
 
     private static string Provenance(RadioStation station) =>
@@ -187,15 +187,15 @@ public static class StationView
     // from, and back to the landing page for someone who arrived here from a
     // bookmark or a grid card instead.
     private static PluginComponent BackButtons =>
-        PluginViews.Row(
+        Ui.Row(
             "station-back-row",
-            PluginViews.Button(
+            Ui.Button(
                 "station-back-all",
                 "All stations",
                 PluginActionIntent.Navigate(RadioRoutes.AllStations),
                 icon: "arrowLeft"
             ),
-            PluginViews.Button(
+            Ui.Button(
                 "station-back-browse",
                 "Home",
                 PluginActionIntent.Navigate(RadioRoutes.Browse),

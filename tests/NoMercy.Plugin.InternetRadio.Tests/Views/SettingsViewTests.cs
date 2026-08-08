@@ -71,18 +71,15 @@ public class SettingsViewTests
         }
 
         PluginComponent badge = AllNodes(Build(catalog))
-            .Where(node => node.Component == PluginComponentType.Badge)
+            .Where(node => node.Component == Ui.BadgeComponent)
             .Should().ContainSingle().Which;
 
-        badge.Props["text"].Should().Be(expectedLabel);
+        badge.Props["label"].Should().Be(expectedLabel);
 
-        // NMBadge's own "variant" is its shape, not its meaning - the helper always
-        // sets it to "solid". The semantic the arms of SourceBadge actually choose
-        // between travels on the surface, so that is what has to be pinned here; an
-        // assertion on "variant" would now pass for every arm alike.
-        Dictionary<string, object?> surface = badge.Props["surface"]
-            .Should().BeOfType<Dictionary<string, object?>>().Subject;
-        surface["status"].Should().Be(expectedVariant);
+        // PluginBadge chooses its colour from `variant` directly. The design-system badge
+        // that this used to be took its meaning from a surface status instead, which is
+        // why this assertion moved rather than disappeared.
+        badge.Props["variant"].Should().Be(expectedVariant);
     }
 
     // The first thing anyone wants when a station is missing.
@@ -117,12 +114,11 @@ public class SettingsViewTests
                 && node.Action.Type == PluginActionType.RefreshView)
             .Which;
 
-        // A button now carries its words twice: an "ariaLabel" prop for assistive
-        // technology and a Text child for the eye. Both are asserted - a label that
-        // said "Reload" to a screen reader and "Refresh now" on screen would be the
-        // same dishonesty this test exists to prevent.
-        button.Props["ariaLabel"].Should().Be("Reload");
-        Texts(button).Should().Contain("Reload").And.NotContain("Refresh now");
+        // One label, read by the eye and by a screen reader alike. It must not promise a
+        // refresh: this button re-reads what is already cached, and a label saying
+        // otherwise is the dishonesty this test exists to prevent.
+        button.Props["label"].Should().Be("Reload");
+        button.Props["label"].Should().NotBe("Refresh now");
     }
 
     // The spec asks for both how old the catalogue is and when it next refreshes -
@@ -189,7 +185,7 @@ public class SettingsViewTests
         PluginView view = Build(StationCatalog.Create([Station("a")], CatalogSource.Fetched, Now));
 
         AllNodes(view)
-            .Where(node => node.Component == PluginComponentType.Text)
+            .Where(node => node.Component == Ui.TextComponent)
             .Select(node => node.Props.GetValueOrDefault("variant") as string)
             .Should().OnlyContain(variant =>
                 variant == null || variant == "title" || variant == "subtitle" || variant == "caption");

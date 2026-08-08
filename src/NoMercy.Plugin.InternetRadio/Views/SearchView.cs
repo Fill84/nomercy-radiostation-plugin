@@ -1,42 +1,24 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
-using NoMercy.Design;
 using NoMercy.Plugins.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio;
 
-// Searching, spelled out on screen rather than typed into a field.
+// A search box, a button, and the results underneath. What it should have been all along.
 //
-// A typed field cannot be used at all. PluginComponentType.Form maps to NMCard, so a
-// PluginViews.Form renders as a card - the a11y tree shows role=button with the input and
-// the submit nested inside it - and there is no form element for anything to collect. Four
-// plugin-side shapes were tried and the posted body was "{}" every time, because the term
-// never leaves the browser. See docs/upstream/2026-08-08-plugin-form-submits-empty-body.md.
+// It did not work before for one reason, and it was not a missing feature: the component
+// name. PluginComponentType.Form is "NMCard", which the client resolves as a design-system
+// card, so the real PluginForm - which renders a <form>, collects its fields and posts them
+// - was never reached, and every submit arrived as an empty body. Named correctly, the
+// client posts {"query": "..."} to this plugin's endpoint and then refreshes the view. See
+// Ui for the full account.
 //
-// What does arrive is a path segment: the genre chips and the favourite toggle both prove
-// it. So the term is spelled a character at a time, each key a navigation to the route that
-// has one more character in it. That is not a workaround grafted onto a broken design - it
-// is the interaction a remote-controlled ten-foot interface wants anyway, and it makes a
-// search bookmarkable and shareable for free, which a field never was.
+// The term is also still a route. /search/tomorrowland renders the same page, so a search
+// stays shareable and bookmarkable, and typing is not the only way in.
 public static class SearchView
 {
-    /// <summary>How many keys are drawn per row before it wraps.</summary>
-    private const int KeysPerRow = 13;
-
-    // There is no field here, and it is not for want of trying. Three attempts, three
-    // different failures, all of them in the client:
-    //
-    //   1. PluginViews.Form with a text field   - posted "{}", no field at all.
-    //   2. NMSearchInput posting to an endpoint - posted "{}", same answer.
-    //   3. NMSearchInput with a Navigate action - the client ignored the route it was
-    //      given and went to the plugin's root instead, so typing a name threw the viewer
-    //      off the search page. The identical Navigate works from a button, which is what
-    //      makes it the component and not the intent.
-    //
-    // A field the plugin cannot read and cannot steer is worse than no field: it invites
-    // typing and then loses your place. So the keys stay, on every surface, and they are
-    // the search until a client can hand a plugin what was typed. See docs/upstream/.
+    public const string FieldName = "query";
 
     public static PluginView Build(
         string term,
@@ -46,140 +28,46 @@ public static class SearchView
     {
         List<PluginComponent> children =
         [
-            PluginViews.Button(
+            Ui.Button(
                 "search-back",
                 "Back",
                 PluginActionIntent.Navigate(RadioRoutes.Browse),
                 icon: "arrowLeft"),
 
-            Spelled(term),
+            Field(term),
         ];
 
-        children.AddRange(Keyboard(term));
-        children.Add(Controls(term));
         children.AddRange(Results(term, results, queryFailed, state));
 
-        return PluginViews.Declarative(PluginViews.Container("search-root", [.. children]));
+        return PluginViews.Declarative(Ui.Container("search-root", [.. children]));
     }
 
     /// <summary>
-    /// What has been spelled, always on screen.
+    /// The box you type into.
     ///
-    /// Shown even while empty, and as its own line rather than as a heading over the keys:
-    /// tapping a key changes only this text and the results, so a viewer who cannot see
-    /// what they have spelled has no way to tell a mistyped search from an empty one.
+    /// Carries whatever is being searched for, so arriving on a search does not read as one
+    /// that was thrown away, and correcting a typo means editing rather than retyping.
     /// </summary>
-    private static PluginComponent Spelled(string term) =>
-        PluginViews.Text(
-            "search-spelled",
-            term.Length == 0
-                ? "Tap the letters to spell a station name."
-                : $"Searching for “{term}”",
-            "subtitle");
-
-    private static IEnumerable<PluginComponent> Keyboard(string term)
-    {
-        // Full at MaxLength: the keys stay on screen but stop adding, because a row of
-        // keys that vanishes mid-search is a screen that looks like it crashed.
-        bool full = term.Length >= SearchTerms.MaxLength;
-
-        foreach ((char[] keys, int index) in Rows())
-        {
-            yield return KeyRow($"search-keys-{index}", [.. keys.Select(key => Key(term, key, full))]);
-        }
-    }
-
-    /// <summary>
-    /// A row of keys.
-    ///
-    /// Built here rather than with PluginViews.Row so the box is this file's to set: a
-    /// Design record replaces the whole box the factory put in the loose bag rather than
-    /// merging with it, so naming one field there silently drops the direction and the wrap.
-    /// </summary>
-    private static PluginComponent KeyRow(string id, List<PluginComponent> keys) =>
-        new()
-        {
-            Id = id,
-            Component = PluginComponentType.Row,
-            Design = new NMCardProps
+    public static PluginComponent Field(string term) =>
+        Ui.Form(
+            "search-form",
+            "Search",
+            PluginActionIntent.CallPlugin(InternetRadioController.SearchMethod),
+            new PluginFormField
             {
-                Box = new NmBox
-                {
-                    Width = "full",
-                    Direction = "row",
-                    Wrap = "wrap",
-                    Gap = new NmGap { All = "2" },
-                },
-            },
-            Items = keys,
-        };
-
-    private static IEnumerable<(char[] Keys, int Index)> Rows()
-    {
-        char[] all = [.. SearchTerms.Letters, .. SearchTerms.Digits];
-
-        return all
-            .Chunk(KeysPerRow)
-            .Select((keys, index) => (keys, index));
-    }
-
-    private static PluginComponent Key(string term, char key, bool full) =>
-        PluginViews.Button(
-            $"search-key-{key}",
-            key.ToString().ToUpperInvariant(),
-            PluginActionIntent.Navigate(
-                RadioRoutes.Search(full ? term : SearchTerms.Append(term, key))),
-            variant: "secondary");
-
-    /// <summary>
-    /// Space, backspace and clear — the three keys that are not a character.
-    ///
-    /// All three are absent until there is something to act on. A backspace over an empty
-    /// term navigates to the page it is already on, which reads as a dead button.
-    /// </summary>
-    private static PluginComponent Controls(string term)
-    {
-        List<PluginComponent> controls = [];
-
-        if (term.Length > 0)
-        {
-            // Only when the last character is not already a space: Sanitise refuses a
-            // doubled space, so the key would otherwise do nothing.
-            if (term[^1] != ' ' && term.Length < SearchTerms.MaxLength)
-            {
-                controls.Add(PluginViews.Button(
-                    "search-key-space",
-                    "Space",
-                    PluginActionIntent.Navigate(RadioRoutes.Search(SearchTerms.Append(term, ' '))),
-                    variant: "secondary"));
-            }
-
-            controls.Add(PluginViews.Button(
-                "search-backspace",
-                "Backspace",
-                PluginActionIntent.Navigate(RadioRoutes.Search(SearchTerms.Backspace(term))),
-                icon: "arrowLeft",
-                variant: "secondary"));
-
-            controls.Add(PluginViews.Button(
-                "search-clear",
-                "Clear",
-                PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
-                variant: "secondary"));
-        }
-
-        // Space and backspace belong to the keys, so they go where the keys go. Clear is
-        // useful on every surface, but it is only ever drawn beside them, so it travels
-        // with the row rather than being singled out.
-        return KeyRow("search-controls", controls);
-    }
+                Name = FieldName,
+                Label = "Station name",
+                Type = PluginFormFieldType.Text,
+                Value = term,
+                Placeholder = "Search every station on radio-browser",
+            });
 
     /// <summary>
     /// What a search turned up, or why it turned up nothing.
     ///
-    /// Four ways to have no results, and they must not look alike: too short to run,
-    /// unreachable, nothing matched, and a term nobody has spelled yet. Reporting an outage
-    /// as an empty result set has the viewer retyping a search that was never the problem.
+    /// Three ways to have no results and they must not look alike: nothing typed yet,
+    /// unreachable, and nothing matched. Reporting an outage as an empty result set has the
+    /// viewer retyping a search that was never the problem.
     /// </summary>
     private static IEnumerable<PluginComponent> Results(
         string term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState state)
@@ -189,19 +77,9 @@ public static class SearchView
             yield break;
         }
 
-        if (term.Length < SearchTerms.MinLength)
-        {
-            yield return PluginViews.Text(
-                "search-too-short",
-                $"Spell at least {SearchTerms.MinLength} characters.",
-                "caption");
-
-            yield break;
-        }
-
         if (queryFailed)
         {
-            yield return PluginViews.EmptyState(
+            yield return Ui.EmptyState(
                 "search-failed",
                 "Search is unavailable",
                 "radio-browser did not answer. Try again in a moment.");
@@ -211,7 +89,7 @@ public static class SearchView
 
         if (results.Count == 0)
         {
-            yield return PluginViews.EmptyState(
+            yield return Ui.EmptyState(
                 "search-empty",
                 "Nothing found",
                 $"No playable station matches “{term}”.");
@@ -219,11 +97,17 @@ public static class SearchView
             yield break;
         }
 
-        yield return PluginViews.Text(
+        yield return Ui.Text(
             "search-results-heading",
             results.Count == 1 ? "1 station" : $"{results.Count} stations",
             "subtitle");
 
         yield return StationCards.Grid("search-grid", results, state, "search");
+
+        yield return Ui.Button(
+            "search-clear",
+            "Clear search",
+            PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
+            variant: "secondary");
     }
 }

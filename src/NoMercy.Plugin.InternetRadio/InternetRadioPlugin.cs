@@ -128,7 +128,28 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     }
 
     /// <summary>
-    /// The search page for whatever has been spelled so far.
+    /// Remembers a submitted term so the refresh that follows can run it.
+    ///
+    /// Blank clears it, which returns the page to its "search for a station" state rather
+    /// than leaving it insisting that nothing matched an empty query.
+    /// </summary>
+    public async Task<PluginActionOutcome> StoreSearchAsync(
+        string? userId, string? query, CancellationToken ct)
+    {
+        if (userId is null)
+        {
+            return PluginActionOutcome.Failed("Sign in to search.");
+        }
+
+        string? term = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+
+        await StateStore.SetLastSearchAsync(userId, term, ct);
+
+        return PluginActionOutcome.Ok(term is null ? "Search cleared." : $"Searching for {term}.");
+    }
+
+    /// <summary>
+    /// The search page for whatever was asked for.
     ///
     /// The query runs here rather than in the view: views are pure Build methods, which is
     /// what makes them cheap to test exhaustively and keeps this class the only thing that
@@ -141,6 +162,10 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     private async Task<PluginView> BuildSearchAsync(
         string term, UserState state, CancellationToken ct)
     {
+        // The route wins over the stored term, so /search/<term> is what it says it is and
+        // a shared link does not show somebody else's last search.
+        term = SearchTerms.Sanitise(term.Length > 0 ? term : state.LastSearch);
+
         if (term.Length < SearchTerms.MinLength)
         {
             return SearchView.Build(term, [], queryFailed: false, state);
@@ -218,7 +243,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             "Internet Radio has no page for the route {Route}.", route ?? "(null)");
 
         return PluginViews.Declarative(
-            PluginViews.EmptyState(
+            Ui.EmptyState(
                 "unknown-route",
                 "Nothing here",
                 "This version of Internet Radio has no page at that address."
@@ -443,7 +468,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         if (_disposed)
         {
             return PluginViews.Declarative(
-                PluginViews.EmptyState(
+                Ui.EmptyState(
                     "plugin-unavailable",
                     "Internet Radio is unavailable",
                     "This plugin is disabled or is being unloaded."
@@ -503,15 +528,15 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             _context?.Logger.LogError(exception, "Internet Radio could not build the view for {Route}.", request.Route);
 
             return PluginViews.Declarative(
-                PluginViews.Container(
+                Ui.Container(
                     "view-error",
-                    PluginViews.Badge("view-error-badge", "Unavailable", PluginBadgeVariant.Danger),
-                    PluginViews.EmptyState(
+                    Ui.Badge("view-error-badge", "Unavailable", PluginBadgeVariant.Danger),
+                    Ui.EmptyState(
                         "view-error-empty",
                         "This page could not be built",
                         "Check the server log for Internet Radio."
                     ),
-                    PluginViews.Button("view-error-retry", "Try again", PluginActionIntent.RefreshView())
+                    Ui.Button("view-error-retry", "Try again", PluginActionIntent.RefreshView())
                 )
             );
         }

@@ -29,7 +29,7 @@ public static class AllStationsView
         if (catalog.IsEmpty)
         {
             return PluginViews.Declarative(
-                PluginViews.Container("all-root", BackToBrowse, EmptyCatalog.Build(catalog))
+                Ui.Container("all-root", BackToBrowse, EmptyCatalog.Build(catalog))
             );
         }
 
@@ -41,22 +41,22 @@ public static class AllStationsView
             .Select(Row);
 
         return PluginViews.Declarative(
-            PluginViews.Container(
+            Ui.Container(
                 "all-root",
                 BackToBrowse,
-                PluginViews.Text("all-title", "All stations", "title"),
-                PluginViews.Text(
+                Ui.Text("all-title", "All stations", "title"),
+                Ui.Text(
                     "all-hint",
                     "Select a station to see its details and play it.",
                     "caption"
                 ),
-                PluginViews.Table("all-table", Columns, [.. rows], "No stations.")
+                Ui.Table("all-table", Columns, [.. rows], "No stations.")
             )
         );
     }
 
     private static PluginComponent Row(RadioStation station) =>
-        PluginViews.Row(
+        Ui.TableRow(
             $"all-row-{station.Id}",
             new Dictionary<string, object?>
             {
@@ -73,7 +73,7 @@ public static class AllStationsView
         );
 
     private static PluginComponent BackToBrowse =>
-        PluginViews.Button(
+        Ui.Button(
             "all-back",
             "Back",
             PluginActionIntent.Navigate(RadioRoutes.Browse),
