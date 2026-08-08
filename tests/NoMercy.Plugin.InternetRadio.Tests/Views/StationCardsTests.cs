@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
+using NoMercy.Design;
 using NoMercy.Plugins.Abstractions;
 using Xunit;
 
@@ -95,12 +96,11 @@ public class StationCardsTests
         StationCards.CoverUrl(Station(url)).Should().BeNull();
     }
 
-    // A station with no usable logo keeps everything else. The art node is the only
-    // difference: the design system omits it rather than drawing an empty box, which is
-    // its call to make - what matters here is that nothing ELSE is lost with it, because
-    // a card that quietly drops its title when the logo rots is the real regression.
+    // A station with no drawable logo contributes no cover node at all, rather than an
+    // empty one - and loses nothing else with it. A tile that quietly drops its title
+    // when the logo rots is the real regression, and six logos had already rotted.
     [Fact]
-    public void WithFavourite_LosesNothingButTheArtWhenThereIsNoCover()
+    public void WithFavourite_LosesOnlyTheCoverWhenThereIsNone()
     {
         string[] withCover =
             [.. Nodes(StationCards.WithFavourite(Station("https://cdn.example.com/l.png"), false))
@@ -108,8 +108,26 @@ public class StationCardsTests
         string[] without =
             [.. Nodes(StationCards.WithFavourite(Station(), false)).Select(node => node.Id)];
 
-        without.Should().BeEquivalentTo(withCover.Where(id => !id.EndsWith("-art", StringComparison.Ordinal)));
-        withCover.Should().Contain("station-card-a-art");
+        withCover.Should().Contain("station-cover-a");
+        without.Should().BeEquivalentTo(withCover.Where(id => id != "station-cover-a"));
+    }
+
+    // The cap that stops one tile filling the screen. PluginViews.Card hands an image to
+    // a card whose box is width:full and the image keeps its natural aspect, so a 400x400
+    // logo drew about 830px tall and everything below it fell past the fold. The cover is
+    // its own node now precisely so this is the plugin's decision.
+    [Fact]
+    public void Cover_IsSquareCroppedAndCapped()
+    {
+        PluginComponent cover = Nodes(
+            StationCards.WithFavourite(Station("https://cdn.example.com/l.png"), false))
+            .Single(node => node.Id == "station-cover-a");
+
+        NMImageProps props = cover.Design.Should().BeOfType<NMImageProps>().Subject;
+
+        props.AspectRatio.Should().Be("square");
+        props.Fit.Should().Be("cover");
+        props.Box!.MaxWidth.Should().Be(StationCards.CoverMaxWidth);
     }
 
     // A rejected logo must not reach the player either, or the now-playing panel shows

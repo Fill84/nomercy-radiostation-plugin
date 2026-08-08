@@ -21,6 +21,16 @@
     </ItemGroup>
 
     <ItemGroup>
+        <!--
+            Declared here as well as in the plugin, because a floating version does not
+            flow through a ProjectReference: the test project has to resolve NoMercy.* for
+            itself, and inherited "*" reaches it as ">= 0.0.0" against no source it is
+            allowed to search. Same floating version on purpose - pinning one side would
+            let the tests compile against a contract the plugin was not built with.
+        -->
+        <PackageReference Include="NoMercy.Plugins.Abstractions" Version="*" />
+        <PackageReference Include="NoMercy.Plugins.Mvc" Version="*" />
+
         <ProjectReference Include="..\..\src\NoMercy.Plugin.InternetRadio\NoMercy.Plugin.InternetRadio.csproj" />
     </ItemGroup>
 
