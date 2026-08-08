@@ -23,15 +23,27 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public const string SearchMethod = "search";
     public const string ClearSearchMethod = "search/clear";
 
-    public sealed record SearchRequest(string? Query);
+    /// <summary>
+    /// What the search form posts.
+    ///
+    /// A class with init-only properties, not a positional record. The positional form
+    /// bound to null here while the field was plainly filled in - the term reached the
+    /// plugin as nothing at all and the search silently cleared itself. This is the shape
+    /// the torrent plugin has been posting settings with in production, so it is the one
+    /// that is known to bind.
+    /// </summary>
+    public sealed class SearchRequest
+    {
+        public string? Query { get; init; }
+    }
 
     [HttpPost(ToggleFavouriteRouteTemplate)]
     public Task<IActionResult> ToggleFavourite(string stationId, CancellationToken ct) =>
         RespondAsync(plugin => plugin.ToggleFavouriteAsync(CurrentUserId(), stationId, ct));
 
     [HttpPost(SearchMethod)]
-    public Task<IActionResult> Search([FromBody] SearchRequest request, CancellationToken ct) =>
-        RespondAsync(plugin => plugin.StoreSearchAsync(CurrentUserId(), request.Query, ct));
+    public Task<IActionResult> Search([FromBody] SearchRequest? request, CancellationToken ct) =>
+        RespondAsync(plugin => plugin.StoreSearchAsync(CurrentUserId(), request?.Query, ct));
 
     // Its own endpoint rather than the form submitting an empty value: a plain button
     // carries nothing but its path, and clearing is a button.

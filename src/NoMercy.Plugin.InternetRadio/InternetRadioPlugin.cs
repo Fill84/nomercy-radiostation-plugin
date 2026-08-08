@@ -140,6 +140,17 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         }
 
         string? term = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+
+        // Logged because a blank term is indistinguishable from a broken one on screen:
+        // both render the landing page. The first attempt at this bound the posted field
+        // to null and cleared the search instead of running it, and nothing said so.
+        if (term is null)
+        {
+            _context?.Logger.LogInformation(
+                "Internet Radio cleared the search for {User} - the submitted query was blank.",
+                userId);
+        }
+
         await StateStore.SetLastSearchAsync(userId, term, ct);
 
         return PluginActionOutcome.Ok(term is null ? "Search cleared." : $"Searching for {term}.");
