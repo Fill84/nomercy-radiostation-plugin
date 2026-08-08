@@ -56,20 +56,6 @@ public static class MediaProxy
     public static string? Cover(string stationId) =>
         Url(InternetRadioController.CoverMethod, stationId, withToken: true);
 
-    /// <summary>
-    /// The audio, WITH a token — for this plugin's own player page.
-    ///
-    /// The app's player appends its own token and must not be given a second one. The
-    /// audio element on the page this plugin serves has nobody to append it, so it needs
-    /// the token in the url exactly as the cover does.
-    /// </summary>
-    public static string? TokenisedStream(string stationId) =>
-        Url(InternetRadioController.StreamMethod, stationId, withToken: true);
-
-    /// <summary>This plugin's own player page for a station, or null before a request.</summary>
-    public static string? Player(string stationId) =>
-        Url(InternetRadioController.PlayerMethod, stationId, withToken: true);
-
     // The token travels in the query string, because it has to.
     //
     // An <audio> or <img> element cannot send an Authorization header, and the server's

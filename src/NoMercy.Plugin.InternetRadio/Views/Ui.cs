@@ -47,6 +47,50 @@ public static class Ui
     public const string TableComponent = "PluginTable";
     public const string BadgeComponent = "PluginBadge";
 
+    // The components the app draws its own screens with. A plugin reaches these the same
+    // way it reaches any other node - PluginNode resolves the plugin map first and then
+    // the app's own - so a plugin's grid can be the grid, rather than a lookalike.
+    public const string MediaGridComponent = "NMGrid";
+    public const string MediaCardComponent = "NMMusicCard";
+
+    /// <summary>
+    /// The grid the app lays its own libraries out with: two columns on a phone, five to
+    /// nine as the window widens, six on a television. A plugin cannot express that itself
+    /// and should not try - the whole point is that a plugin's shelf is the same shelf.
+    /// </summary>
+    public static PluginComponent MediaGrid(string id, IEnumerable<PluginComponent> items) =>
+        new() { Id = id, Component = MediaGridComponent, Items = [.. items] };
+
+    /// <summary>
+    /// One tile in that grid, drawn exactly as an artist or an album is.
+    ///
+    /// It navigates rather than acting: the card is a RouterLink to `link`, which is how
+    /// every card in the app behaves. Whatever you can do with the thing lives on the page
+    /// it opens.
+    /// </summary>
+    public static PluginComponent MediaCard(
+        string id,
+        string name,
+        string link,
+        string? cover,
+        string? type = null) =>
+        new()
+        {
+            Id = id,
+            Component = MediaCardComponent,
+            Props = new()
+            {
+                ["data"] = new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["name"] = name,
+                    ["link"] = link,
+                    ["cover"] = cover,
+                    ["type"] = type,
+                },
+            },
+        };
+
     /// <summary>A column of children.</summary>
     public static PluginComponent Container(string id, params PluginComponent[] items) =>
         new() { Id = id, Component = ContainerComponent, Items = [.. items] };
@@ -183,15 +227,6 @@ public static class Ui
             Component = RowComponent,
             Props = new(cells),
             Action = action,
-        };
-
-    /// <summary>An embedded page. The client renders it as a sandboxed iframe.</summary>
-    public static PluginComponent WebView(string id, string entryUrl) =>
-        new()
-        {
-            Id = id,
-            Component = "PluginWebView",
-            Props = new() { ["entryUrl"] = entryUrl },
         };
 
     public static PluginComponent Badge(string id, string label, string variant) =>

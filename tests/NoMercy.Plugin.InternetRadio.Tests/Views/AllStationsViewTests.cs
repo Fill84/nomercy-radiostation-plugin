@@ -54,17 +54,19 @@ public class AllStationsViewTests
         PluginComponent tile = Grid(Build(Station("a", "Alpha FM"))).Items.Single();
 
         tile.Should().BeEquivalentTo(
-            StationCards.Tile(Station("a", "Alpha FM"), isFavourite: false, "all"),
+            StationCards.Tile(Station("a", "Alpha FM"), "all"),
             options => options.Excluding(node => node.Type == typeof(PluginActionIntent)));
     }
 
+    // A card is a RouterLink to the station, exactly as an artist card is: what you can do
+    // with a station lives on its own page.
     [Fact]
-    public void OneClickOpensTheStation()
+    public void ACardOpensTheStation()
     {
-        PluginComponent card = Grid(Build(Station("a", "Alpha FM"))).Items.Single().Items[0];
+        PluginComponent card = Grid(Build(Station("a", "Alpha FM"))).Items.Single();
 
-        card.Action!.Type.Should().Be(PluginActionType.Navigate);
-        card.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
+        ((Dictionary<string, object?>)card.Props["data"]!)["link"]
+            .Should().Be(AppRoutes.Station("a"));
     }
 
     [Fact]

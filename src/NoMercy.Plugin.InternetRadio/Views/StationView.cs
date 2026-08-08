@@ -44,16 +44,11 @@ public static class StationView
             );
         }
 
-        List<PluginComponent> children = [BackButtons];
-
-        // Above the detail, because it is the thing you came for.
-        if (Player(station) is { } player)
-        {
-            children.Add(player);
-        }
-
-        children.Add(
-            Ui.Detail(
+        return PluginViews.Declarative(
+            Ui.Container(
+                "station-root",
+                BackButtons,
+                Ui.Detail(
                     $"station-detail-{station.Id}",
                     station.Name,
                     Description(station),
@@ -64,9 +59,8 @@ public static class StationView
                     Actions(station, state.Favourites.Any(kept => kept.Id == station.Id)),
                     Facts(station)
                 )
-            );
-
-        return PluginViews.Declarative(Ui.Container("station-root", [.. children]));
+            )
+        );
     }
 
     /// <summary>
@@ -104,17 +98,23 @@ public static class StationView
         return sentences.Count > 0 ? string.Join(' ', sentences) : null;
     }
 
-    // Playing happens in an embedded page this plugin serves, not through the dashboard's
-    // player. The dashboard's player cannot play plugin media at all: it derives a track id
-    // from the stream url and then uses that id as a CSS selector, so it throws before
-    // requesting a byte. See PlayerPage, and app-web issue #15.
-    //
-    // Add-to-queue is gone with it - a queue belongs to the player that has one, and
-    // offering a button that only ever raises an error toast is worse than not offering it.
+    // This page is where playing, queueing and keeping a station live.
     private static PluginComponent Actions(RadioStation station, bool isFavourite)
     {
         List<PluginComponent> buttons =
         [
+            // Built by StationCards so the station page and every grid start the same
+            // station the same way. Both go through this plugin's own relay, and neither
+            // passes an artist - the genre used to go there, and the player builds an
+            // artist LINK out of it and then fails to resolve a route for a genre that is
+            // not one.
+            Ui.Button($"station-play-{station.Id}", "Play", StationCards.Play(station), icon: "play"),
+            Ui.Button(
+                $"station-enqueue-{station.Id}",
+                "Add to queue",
+                StationCards.Enqueue(station),
+                icon: "playlistAdd"
+            ),
             // Two states that differ by label and by variant, never by colour alone: a
             // toggle whose only difference is a tint is unreadable to a good share of
             // viewers, and to everyone in a screenshot.
@@ -143,17 +143,6 @@ public static class StationView
 
         return Ui.Row($"station-actions-{station.Id}", [.. buttons]);
     }
-
-    /// <summary>
-    /// The player, or nothing when this server's address is not known yet.
-    ///
-    /// Absent rather than broken: before any request has told the relay where this server
-    /// lives there is no url to point an iframe at, and an empty frame reads as a failure.
-    /// </summary>
-    private static PluginComponent? Player(RadioStation station) =>
-        MediaProxy.Player(station.Id) is { } url
-            ? Ui.WebView($"station-player-{station.Id}", url)
-            : null;
 
     private static PluginComponent Facts(RadioStation station)
     {

@@ -1,36 +1,21 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
-using NoMercy.Design;
 using NoMercy.Plugins.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio;
 
-// One station as a tile, shared by every grid so two screens cannot drift into behaving
-// differently for the same station.
+// One station as a tile, drawn with the components the app draws its own libraries with.
 //
-// Every tile is the same size because every tile asks for the same fraction of the row.
-// That is the whole fix, and the bug it replaces was one value: NmBox.Width is an NMSize,
-// and an NMSize is
+// There is no layout in this file any more, and that is the point. Every earlier attempt -
+// widths, tokens, fractions, a wrapping row - was this plugin trying to reproduce a grid by
+// hand, and the result never quite matched Films or Music because it never could. NMGrid is
+// that grid: two columns on a phone, five to nine as the window widens, six on a
+// television. NMMusicCard is the tile Music already uses.
 //
-//     ^(0|px|\d+(-\d)?|\d+/\d+|auto|full|available|content|min|max|screen)$
-//
-// so "13rem" is not a size. It did not fail loudly - it simply was not a match, so the
-// width was dropped and each tile fell back to sizing itself from its own logo. A station
-// with a 1000px cover drew a 1000px tile beside a 200px one, which is what the grid looked
-// like. `full` was honoured all along, which is exactly why it looked like the field worked
-// and the layout did not.
-//
-// Built from design-system nodes rather than from the client's own PluginGrid and
-// PluginCard, and that is a deliberate exception to what Ui says.
-//
-// The client does have a real grid, and naming it correctly does reach it - but its cards
-// then overlap each other and the content above them, so it lays out worse than this does.
-// The form is the opposite case: named correctly it works and named as a card it cannot
-// work at all. So the form takes the client's component and the tiles keep these, because
-// what matters is which one renders properly, not which one is more principled.
-//
-// Reported upstream with the search-form finding.
+// A card navigates rather than plays, because that is what a card in this app does: it is a
+// RouterLink to its own page, and what you can do with a station lives there. Play, queue
+// and favourite are all on the station page.
 public static class StationCards
 {
     /// <summary>How many stations the browse page's "Popular" grid shows.</summary>
@@ -51,166 +36,29 @@ public static class StationCards
     /// <summary>Shown on the toggle when it is.</summary>
     public const string RemoveFavouriteLabel = "Remove from favourites";
 
-    /// <summary>
-    /// A row of tiles that wraps, each one the same fraction of the row as the last.
-    /// </summary>
+    /// <summary>Stations in the app's own grid.</summary>
     public static PluginComponent Grid(
         string id,
         IEnumerable<RadioStation> stations,
         UserState state,
-        string scope)
-    {
-        // A set built once, not a scan per card. A grid is eighteen tiles and a favourites
-        // list is unbounded, so the naive form is quadratic in the two things here most
-        // likely to grow.
-        HashSet<string> favourites = [.. state.Favourites.Select(favourite => favourite.Id)];
-
-        return new PluginComponent
-        {
-            Id = id,
-            Component = PluginComponentType.Container,
-            Design = new NMCardProps
-            {
-                Box = new NmBox
-                {
-                    Width = "full",
-                    Direction = "row",
-                    Wrap = "wrap",
-                    // Start, not stretch. Stretch was an attempt to even out a row when one
-                    // name wraps onto a second line; what it actually did was give every
-                    // tile the height of the tallest one in the row, and a single tall tile
-                    // then blew the whole row up to several hundred pixels of empty space.
-                    // A slightly ragged bottom edge is a far smaller problem than that.
-                    Align = "start",
-                    Gap = new NmGap { All = "4" },
-                },
-            },
-            Items =
-            [
-                .. stations.Select(station =>
-                    Tile(station, favourites.Contains(station.Id), scope)),
-            ],
-        };
-    }
+        string scope) =>
+        Ui.MediaGrid(id, stations.Select(station => Tile(station, scope)));
 
     /// <summary>
-    /// One station: its cover, what it is, and a control to keep it.
-    ///
-    /// The card carries the play action, so a click anywhere on the cover or the name
-    /// starts the station - one click is listening, which is the entire job. The favourite
-    /// toggle is a SIBLING of that card and not a child of it: nested inside, keeping a
-    /// station also played it, because the click landed on the thing carrying play.
+    /// One station, as the app draws an artist: a square cover, the name under it, and a
+    /// link to its own page.
     /// </summary>
-    public static PluginComponent Tile(RadioStation station, bool isFavourite, string scope = "")
-    {
-        string id = Scoped(scope, station.Id);
-
-        return new PluginComponent
-        {
-            Id = $"station-tile-{id}",
-            Component = PluginComponentType.Container,
-            Design = new NMCardProps
-            {
-                Box = new NmBox
-                {
-                    Width = TileWidth,
-                    Direction = "column",
-                    Gap = new NmGap { All = "2" },
-                },
-            },
-            Items =
-            [
-                Card(station, id),
-                PluginViews.Button(
-                    $"station-favourite-{id}",
-                    isFavourite ? RemoveFavouriteLabel : AddFavouriteLabel,
-                    ToggleFavourite(station),
-                    variant: isFavourite ? "primary" : "secondary"),
-            ],
-        };
-    }
-
-    private static PluginComponent Card(RadioStation station, string id)
-    {
-        List<PluginComponent> children = [];
-
-        // A station with no drawable cover contributes no node at all rather than an empty
-        // frame. What a gap looks like is the design system's call, not this plugin's.
-        if (Cover(station, id) is { } cover)
-        {
-            children.Add(cover);
-        }
-
-        children.Add(PluginViews.Text($"station-card-{id}-title", station.Name, "subtitle"));
-
-        if (Subtitle(station) is { } subtitle)
-        {
-            children.Add(PluginViews.Text($"station-card-{id}-meta", subtitle, "caption"));
-        }
-
-        return new PluginComponent
-        {
-            Id = $"station-card-{id}",
-            Component = PluginComponentType.Card,
-            // Opens the station, which is where the player is. It used to raise PlayMedia
-            // here, and that is what this should go back to the day the dashboard's player
-            // can play plugin media - it cannot today, and a click that only ever produced
-            // an error toast is not one click to listening. See PlayerPage.
-            Action = PluginActionIntent.Navigate(RadioRoutes.Station(station.Id)),
-            Design = new NMCardProps
-            {
-                Padding = "3",
-                Box = new NmBox
-                {
-                    // Fills the tile, which is what has the fraction. A second fraction
-                    // here would be a sixth of a sixth.
-                    Width = "full",
-                    Direction = "column",
-                    Gap = new NmGap { All = "2" },
-                },
-            },
-            Items = children,
-        };
-    }
-
-    /// <summary>
-    /// The cover: as wide as the tile, and square whatever shape the logo is.
-    ///
-    /// `full` against the tile rather than a length of its own - a length is not an NMSize
-    /// and gets dropped, which is how each logo ended up at its natural size. Square and
-    /// cropped so a wide logo and a tall one occupy the same space.
-    /// </summary>
-    private static PluginComponent? Cover(RadioStation station, string id)
-    {
-        if (CoverUrl(station) is not { } direct)
-        {
-            return null;
-        }
-
-        // Same reason as the stream: img-src refuses the station's own host.
-        string url = MediaProxy.Cover(station.Id) ?? direct;
-
-        // Src belongs on the props record, not in the loose bag beside it. Setting
-        // Props["src"] and leaving Design.Src null put the url in the bag and then let the
-        // merge overwrite it with null - PluginComponent.Props applies the design record
-        // last - so every cover reached the browser as an img with an alt and no source.
-        return new PluginComponent
-        {
-            Id = $"station-cover-{id}",
-            Component = PluginComponentType.Image,
-            Design = new NMImageProps
-            {
-                Src = url,
-                Alt = station.Name,
-                AspectRatio = "square",
-                Fit = "cover",
-                Rounded = "lg",
-                Border = false,
-                Shadow = "none",
-                Box = new NmBox { Width = "full" },
-            },
-        };
-    }
+    public static PluginComponent Tile(RadioStation station, string scope = "") =>
+        Ui.MediaCard(
+            $"station-tile-{Scoped(scope, station.Id)}",
+            station.Name,
+            AppRoutes.Station(station.Id),
+            // Null rather than the station's own url when the browser would refuse it: the
+            // card then draws its own placeholder instead of a broken image.
+            CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id),
+            // Same treatment as an artist - a square, framed logo - rather than the album
+            // branch, which draws a record sleeve this is not.
+            type: "artist");
 
     /// <summary>
     /// The key a media intent carries the station's own id under.

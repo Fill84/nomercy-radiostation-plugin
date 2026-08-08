@@ -42,8 +42,10 @@ public class GenreViewTests
     {
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient", UserState.Empty);
 
-        AllNodes(view).Single(node => node.Id == "station-card-genre-a")
-            .Action!.Type.Should().Be(PluginActionType.Navigate);
+        PluginComponent card = AllNodes(view).Single(node => node.Id == "station-tile-genre-a");
+
+        ((Dictionary<string, object?>)card.Props["data"]!)["link"]
+            .Should().Be(AppRoutes.Station("a"));
     }
 
     [Fact]

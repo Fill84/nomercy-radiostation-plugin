@@ -36,19 +36,19 @@ public class BrowseViewTests
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
-    // The whole point of the plugin: one click and it is playing.
+    // A card is a RouterLink to the station, exactly as an artist card is. Playing,
+    // queueing and keeping all live on the page it opens, which is where the app puts them
+    // for its own media too.
     [Fact]
-    public void CardsOpenTheStationWhereThePlayerIs()
+    public void CardsOpenTheStation()
     {
         PluginView view = BrowseView.Build(Catalog(Station("a")), UserState.Empty);
 
-        // The card, not the tile around it: the tile also holds the favourite toggle, and
-        // a toggle inside the thing carrying the action is a toggle that also fires it.
         PluginComponent card = AllNodes(view)
-            .Should().ContainSingle(node => node.Id == "station-card-popular-a").Subject;
+            .Should().ContainSingle(node => node.Id == "station-tile-popular-a").Subject;
 
-        card.Action!.Type.Should().Be(PluginActionType.Navigate);
-        card.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
+        ((Dictionary<string, object?>)card.Props["data"]!)["link"]
+            .Should().Be(AppRoutes.Station("a"));
     }
 
     [Fact]
@@ -185,19 +185,18 @@ public class BrowseViewTests
             .And.NotContain("browse-favourites-heading");
     }
 
-    // The same station cannot read two ways on one screen: kept in the favourites row
-    // and not-kept in the grid below it is the bug this catches.
+    // A station kept in the favourites row and shown again in the grid below it is the
+    // same station, drawn the same way, linking to the same page.
     [Fact]
-    public void ShowsAFavouritedStationAsFavouritedEverywhereItAppears()
+    public void ShowsTheSameStationTheSameWayEverywhereItAppears()
     {
         RadioStation station = Station("a");
 
-        IEnumerable<string?> labels = AllNodes(BrowseView.Build(Catalog(station), With(station)))
-            .Where(node => node.Id.StartsWith("station-favourite-", StringComparison.Ordinal)
-                && node.Id.EndsWith("-a-label", StringComparison.Ordinal))
-            .Select(node => node.Props["text"]?.ToString());
+        IEnumerable<object?> links = AllNodes(BrowseView.Build(Catalog(station), With(station)))
+            .Where(node => node.Id.StartsWith("station-tile-", StringComparison.Ordinal))
+            .Select(node => ((Dictionary<string, object?>)node.Props["data"]!)["link"]);
 
-        labels.Should().NotBeEmpty().And.AllBe(StationCards.RemoveFavouriteLabel);
+        links.Should().HaveCountGreaterThan(1).And.AllBeEquivalentTo(AppRoutes.Station("a"));
     }
 
     // A favourite the sweep no longer returns still has to render - that is the whole

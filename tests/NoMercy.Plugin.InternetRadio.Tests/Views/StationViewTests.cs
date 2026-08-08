@@ -57,11 +57,9 @@ public class StationViewTests
         row.Props.GetValueOrDefault(columnKey)?.ToString() ?? string.Empty;
 
     [Fact]
-    // Sound comes from a page this plugin serves, embedded here - not from the dashboard's
-    // player, which cannot play plugin media at all: it derives a track id from the stream
-    // url and then uses it as a CSS selector, so it throws before requesting a byte. See
-    // PlayerPage and app-web issue #15.
-    public void EmbedsAPlayerThatCanActuallyPlayTheStream()
+    // Through this server, not straight at the station: the dashboard's media-src refuses
+    // the station's own host, so a direct url plays nothing.
+    public void OffersPlayAndEnqueueForTheStream()
     {
         // The relay only learns this server's address from a request, so the test supplies
         // one rather than depending on whichever test ran first.
@@ -69,20 +67,12 @@ public class StationViewTests
 
         PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
-        AllNodes(view).Single(node => node.Id == "station-player-a")
-            .Props["entryUrl"]!.ToString()
-            .Should().StartWith($"https://server.example/api/v1/plugins/{PluginIdentity.Id}/player/a");
-    }
+        PluginComponent play = ActionOfType(view, PluginActionType.PlayMedia)!;
+        play.Action!.Payload["streamUrl"].Should().Be(
+            $"https://server.example/api/v1/plugins/{PluginIdentity.Id}/stream/a");
+        play.Action.Payload["title"].Should().Be("Alpha FM");
 
-    // Nothing that only ever raises an error toast. A queue belongs to the player that has
-    // one, and this page is not it.
-    [Fact]
-    public void DoesNotOfferTheDashboardPlayerItCannotUse()
-    {
-        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
-
-        ActionOfType(view, PluginActionType.PlayMedia).Should().BeNull();
-        ActionOfType(view, PluginActionType.Enqueue).Should().BeNull();
+        ActionOfType(view, PluginActionType.Enqueue).Should().NotBeNull();
     }
 
     [Fact]
@@ -194,7 +184,7 @@ public class StationViewTests
 
         PluginView view = StationView.Build(Catalog(bare), "b", UserState.Empty);
 
-        AllNodes(view).Select(node => node.Id).Should().Contain("station-player-b");
+        ActionOfType(view, PluginActionType.PlayMedia).Should().NotBeNull();
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
 
         // The sentence-builder must not fall back to an empty or whitespace-only

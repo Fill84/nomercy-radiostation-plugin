@@ -123,15 +123,17 @@ public class SearchViewTests
         Node(View("tom"), "search-back").Action!.Payload["route"].Should().Be(RadioRoutes.Browse);
     }
 
-    // A result is the same tile as any grid, so a station cannot behave one way when
-    // browsed and another when searched for.
+    // A result is the same tile as any other grid draws, so a station cannot behave one way
+    // when browsed and another when searched for.
     [Fact]
-    public void AResultKnowsItIsAlreadyAFavourite()
+    public void AResultIsTheSameTileAsAnywhereElse()
     {
-        PluginView view = View(
-            "tom", [Station("found")], state: new UserState { Favourites = [Station("found")] });
+        PluginView view = View("tom", [Station("found")]);
 
-        Node(view, "station-favourite-search-found-label").Props["text"]
-            .Should().Be(StationCards.RemoveFavouriteLabel);
+        PluginComponent tile = Node(view, "station-tile-search-found");
+
+        tile.Component.Should().Be(Ui.MediaCardComponent);
+        ((Dictionary<string, object?>)tile.Props["data"]!)["link"]
+            .Should().Be(AppRoutes.Station("found"));
     }
 }
