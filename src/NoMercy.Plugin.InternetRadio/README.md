@@ -3,14 +3,19 @@
 Browse and play internet radio stations in the NoMercy MediaServer's built-in
 player.
 
-Adds two entries to the dashboard: **Internet Radio** under Music, and a
-read-only status page under plugin settings.
+Adds two entries to the dashboard: **Internet Radio** under Music, and a status
+page under plugin settings.
 
 ## What it does
 
 - Fetches its station catalogue from [radio-browser.info](https://www.radio-browser.info/)
-  — ten curated stations pinned by id, plus the most popular stations in each of
-  seventeen genres.
+  — the most voted stations in each of seventeen genres. Nothing is pinned or
+  curated: no station name, stream URL or logo exists anywhere in this plugin.
+- **Search** every station radio-browser carries, not just the ones the genre sweep
+  brought back. That is how you reach anything outside those seventeen tags.
+- **Favourites**, per user. Your list is yours; another viewer on the same server
+  has their own. A favourite keeps the whole station record, so one you found by
+  searching still works after the catalogue refreshes without it.
 - Browse by genre, or scan every station in one table with bitrate and codec.
 - Selecting a station plays it immediately in the built-in player. A station's own
   page also offers **Add to queue** and a link to its homepage.
@@ -19,11 +24,16 @@ read-only status page under plugin settings.
 
 | Capability | Why |
 | --- | --- |
-| `ui` | The five pages above. |
+| `ui` | The six pages above. |
 | `scheduledTask` | One job, `refresh`, daily at 04:00, which updates the catalogue. |
 | `network` → `*.api.radio-browser.info` | The only host it contacts. Streams are played by your client, not by the server. |
+| `rest` | Two endpoints of its own: one to toggle a favourite, one to submit a search. Nothing else reaches them — a button on its own page is the only caller. |
 
-It declares no `rest`, no `ws`, no library access and no secrets storage.
+It declares no `ws`, no library access and no secrets storage.
+
+Station logos are loaded by your browser directly from wherever the station hosts
+them, exactly as any image on a web page is. The server never fetches them, and the
+network capability above does not cover them.
 
 **You will need to enable it once.** A plugin that declares a network host is not
 auto-enabled however `autoEnabled` is set, so the server starts it disabled until
@@ -64,18 +74,24 @@ Only `name` and `streamUrl` are required. Your file is used exactly as written a
 is **not** filtered, so it is also how you add a station radio-browser does not
 carry. If it cannot be parsed, the plugin logs a warning and fetches as normal.
 
-## There is nothing to configure
+## Where your favourites are kept
 
-The settings page is read-only, and not by choice. When this version was built, a
-plugin could not receive anything from its own UI on this server at all: plugin REST
-routes were mounted unversioned while the dashboard posts to `/api/v1`, and the hub
-was no alternative because plugin hub handlers are never registered.
+In `user-state.json` in the plugin's data folder, beside the catalogue cache — the
+settings page shows the path. It holds one entry per user: their favourites and the
+last thing they searched for.
 
-The REST half was fixed upstream on 2026-07-30
-([media-server issue #26](https://github.com/NoMercy-Entertainment/nomercy-media-server/issues/26)),
-after this version was built. This release therefore ships no REST controller and
-declares `"rest": false`; favourites and station editing become possible in a later
-one. The hub half is still open.
+Deleting the file loses every user's favourites and nothing else; the catalogue
+rebuilds itself on the next refresh either way.
+
+## Upgrading from 1.0.x
+
+Nothing to do. The plugin id has not changed, and consent is recorded against that
+id, so a server that already approved this plugin keeps running it without being
+asked again. Your `stations.json`, if you have one, still replaces the catalogue
+exactly as before.
+
+Note that this version does serve REST endpoints, which 1.0.x did not — see the
+table above for what they are.
 
 ## License
 
