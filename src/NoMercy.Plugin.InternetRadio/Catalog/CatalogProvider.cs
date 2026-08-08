@@ -28,7 +28,7 @@ public sealed class CatalogProvider(
     public static TimeSpan DefaultCacheTtl { get; } = TimeSpan.FromHours(36);
 
     /// <summary>
-    /// The overall wall-clock budget for one sweep (one POST plus seventeen GETs).
+    /// The overall wall-clock budget for one sweep (seventeen genre GETs).
     /// A cold-start view runs this inline on the request thread with no other
     /// deadline, so an unbounded sweep against a hanging mirror is an unbounded
     /// request. ~20s is generous for a healthy radio-browser mirror and still short
@@ -123,31 +123,9 @@ public sealed class CatalogProvider(
         List<RadioStation> collected = [];
         bool anythingFailed = false;
 
-        // Seeds first, so a curated station wins the dedupe against the same station
-        // rediscovered by the genre sweep.
-        try
-        {
-            collected.AddRange(Convert(await client.GetByUuidsAsync(SeedStations.Uuids, fetchCt)));
-        }
-        // An HttpClient timeout raises TaskCanceledException, which derives from
-        // OperationCanceledException but is NOT a caller cancellation - it carries
-        // its own internal token, distinct from ct, and ct.IsCancellationRequested
-        // is false. The same is true when the budget above is what fired: fetchCt is
-        // cancelled but ct is not. Rethrowing unconditionally would let a hanging
-        // mirror (the commonest shape of an outage, well within HttpClient's 100s
-        // default timeout) escape GetAsync entirely and skip the stale-cache
-        // fallback below - worse than the empty grid this design exists to avoid.
-        // Only rethrow when it is genuinely this call's own token that fired.
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            anythingFailed = true;
-            logger.LogWarning(exception, "Internet Radio could not fetch its pinned stations.");
-        }
-
+        // The sweep is the whole catalogue. There is no curated set in front of it any
+        // more: what a viewer browses is what radio-browser's own voters put at the top
+        // of each genre, and anything outside that is reached by searching for it.
         foreach (GenreSection section in GenreMap.Sections)
         {
             ct.ThrowIfCancellationRequested();
@@ -155,11 +133,17 @@ public sealed class CatalogProvider(
             try
             {
                 collected.AddRange(
-                    Convert(await client.SearchByTagAsync(section.Tag, SeedStations.PerGenreLimit, fetchCt)));
+                    Convert(await client.SearchByTagAsync(section.Tag, GenreMap.PerGenreLimit, fetchCt)));
             }
-            // See the identical guard on the seed fetch above: a per-request timeout
-            // - or the overall budget expiring - must be treated as this genre's
-            // failure, not as this call's own cancellation.
+            // An HttpClient timeout raises TaskCanceledException, which derives from
+            // OperationCanceledException but is NOT a caller cancellation - it carries
+            // its own internal token, distinct from ct, and ct.IsCancellationRequested
+            // is false. The same is true when the budget above is what fired: fetchCt is
+            // cancelled but ct is not. Rethrowing unconditionally would let a hanging
+            // mirror (the commonest shape of an outage, well within HttpClient's 100s
+            // default timeout) escape GetAsync entirely and skip the stale-cache
+            // fallback below - worse than the empty grid this design exists to avoid.
+            // Only rethrow when it is genuinely this call's own token that fired.
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
@@ -167,7 +151,7 @@ public sealed class CatalogProvider(
             catch (Exception exception)
             {
                 // One genre failing costs one genre. Letting it abort the sweep would
-                // throw away the seeds and sixteen other sections with it. Once the
+                // throw away the sixteen other sections with it. Once the
                 // budget has expired every remaining request fails the same way,
                 // fast (the token is already cancelled), so this still terminates
                 // promptly rather than hanging - and the settings page still gets an

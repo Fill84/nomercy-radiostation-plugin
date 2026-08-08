@@ -19,6 +19,16 @@ public static class GenreMap
     /// <summary>Where a station lands when it carries no tag this plugin maps.</summary>
     public const string Other = "Other";
 
+    /// <summary>
+    /// How many stations to take per genre. Seventeen sections at five each is an upper
+    /// bound of eighty-five before dedupe, which is a browse page worth scrolling rather
+    /// than one worth searching.
+    ///
+    /// Lives here rather than beside a seed list because the sweep is now the entire
+    /// catalogue: this number and the section list below are its whole shape.
+    /// </summary>
+    public const int PerGenreLimit = 5;
+
     public static IReadOnlyList<GenreSection> Sections { get; } =
         [
             Section("ambient", "Ambient"),

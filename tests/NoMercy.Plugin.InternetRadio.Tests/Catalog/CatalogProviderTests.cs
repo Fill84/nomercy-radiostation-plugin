@@ -66,7 +66,7 @@ public sealed class CatalogProviderTests : IDisposable
     }
 
     // A view is rendered on every navigation. Hitting the API per click would be
-    // roughly eighteen requests a page.
+    // roughly seventeen requests a page.
     [Fact]
     public async Task ServesAFreshCacheWithoutTouchingTheNetwork()
     {
@@ -176,7 +176,7 @@ public sealed class CatalogProviderTests : IDisposable
             .Should().ThrowAsync<OperationCanceledException>();
     }
 
-    // One genre failing must not lose the other sixteen and the seeds with them.
+    // One genre failing must not lose the other sixteen with it.
     [Fact]
     public async Task KeepsWhatSucceededWhenOneGenreQueryFails()
     {
@@ -199,16 +199,16 @@ public sealed class CatalogProviderTests : IDisposable
         StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
 
         catalog.Source.Should().Be(CatalogSource.Fetched);
-        // NotBeEmpty() alone cannot fail if the sweep aborts on the first genre
-        // failure, since the seed request (call 1) already satisfies it - the exact
-        // count is what proves the other sixteen sections were not thrown away too.
-        // 1 seed + every genre section except the one that 500s, each a distinct
-        // station so none collide in Deduplicate.
-        catalog.Stations.Should().HaveCount(1 + GenreMap.Sections.Count - 1);
+        // NotBeEmpty() alone cannot fail if the sweep aborts at the first failing
+        // genre, since the section before it already satisfies that - the exact count
+        // is what proves the remaining fifteen were not thrown away too. Every section
+        // except the one that 500s, each a distinct station so none collide in
+        // Deduplicate.
+        catalog.Stations.Should().HaveCount(GenreMap.Sections.Count - 1);
     }
 
     [Fact]
-    public async Task FlagsAFailedFetchWhenSeedsSucceedButEveryGenreQueryFails()
+    public async Task FlagsAFailedFetchWhenOnlyOneGenreQuerySucceeds()
     {
         int call = 0;
         _handler.RespondPerRequest(_ =>
@@ -218,7 +218,7 @@ public sealed class CatalogProviderTests : IDisposable
                 ? new HttpResponseMessage(HttpStatusCode.OK)
                     {
                         Content = new StringContent(
-                            Payload("u1", "Seed FM", "https://example.com/seed"),
+                            Payload("u1", "First FM", "https://example.com/first"),
                             System.Text.Encoding.UTF8,
                             "application/json"),
                     }
@@ -229,9 +229,9 @@ public sealed class CatalogProviderTests : IDisposable
         StationCatalog catalog = await Provider().GetAsync(CancellationToken.None);
 
         // A clean Fetched with LastFetchFailed == false would tell the settings page
-        // everything is fine while seventeen of eighteen requests just failed, and
-        // this ten-ish-station result would silently overwrite a previously good,
-        // much larger cache that the 36-hour TTL then serves with no indicator.
+        // everything is fine while sixteen of seventeen requests just failed, and this
+        // one-station result would silently overwrite a previously good, much larger
+        // cache that the 36-hour TTL then serves with no indicator.
         catalog.Source.Should().Be(CatalogSource.Fetched);
         catalog.LastFetchFailed.Should().BeTrue();
         catalog.Stations.Should().ContainSingle();
@@ -282,7 +282,7 @@ public sealed class CatalogProviderTests : IDisposable
         // a failed refresh - not the one-station degraded result. But its
         // freshness is renewed to now: skipping the write entirely would leave
         // FetchedAt frozen at cachedAt, so the very next view - once again past a
-        // now-stale TTL - would re-enter this same 18-request sweep, and every
+        // now-stale TTL - would re-enter this same 17-request sweep, and every
         // view after that, forever. Renewing FetchedAt is what makes a degraded
         // refresh cost one sweep per TTL window rather than one sweep per view.
         catalog.Source.Should().Be(CatalogSource.Cache);
@@ -301,7 +301,7 @@ public sealed class CatalogProviderTests : IDisposable
 
     // The actual regression the whole-branch re-review found: skipping the write
     // entirely (the first version of this fix) never reset the TTL, so a second
-    // render after a degraded sweep re-entered the same 18-request sweep instead of
+    // render after a degraded sweep re-entered the same 17-request sweep instead of
     // being served from cache - unbounded repeated load on radio-browser. Pins that
     // a degraded sweep now costs one sweep per TTL window, not one per view.
     [Fact]
@@ -394,8 +394,8 @@ public sealed class CatalogProviderTests : IDisposable
         Task<StationCatalog> first = provider.GetAsync(CancellationToken.None);
         Task<StationCatalog> second = provider.GetAsync(CancellationToken.None);
 
-        // Both calls have reached the network (the seed POST is recorded before the
-        // handler blocks on Gate) but neither has been allowed to finish, so this is
+        // Both calls have reached the network (the first genre query is recorded
+        // before the handler blocks on Gate) but neither has finished, so this is
         // the moment a second, independent sweep would have started if the calls
         // were not single-flighted.
         _handler.Requests.Should().ContainSingle();
@@ -405,10 +405,9 @@ public sealed class CatalogProviderTests : IDisposable
 
         results[0].Source.Should().Be(CatalogSource.Fetched);
         results[1].Source.Should().Be(CatalogSource.Fetched);
-        // 1 seed request + one per genre section - exactly one sweep's worth,
-        // whether or not the second caller happened to join before or after the
-        // first genre query went out.
-        _handler.Requests.Should().HaveCount(1 + GenreMap.Sections.Count);
+        // One per genre section and no more - exactly one sweep's worth, whether or
+        // not the second caller joined before or after the first query went out.
+        _handler.Requests.Should().HaveCount(GenreMap.Sections.Count);
     }
 
     // A hanging mirror must not hold a cold-start view open indefinitely: the sweep
