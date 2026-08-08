@@ -1,9 +1,9 @@
 #!/usr/bin/env pwsh
 # Packs NoMercy.Plugins.Abstractions into a local NuGet feed.
-# See fetch-abstractions.sh for why this exists and why Mvc is not packed.
+# See fetch-abstractions.sh for why this exists and why each project is packed.
 #
 # This is a twin of that script and has to stay one. It drifted once already - still
-# packing two projects after the shell script had moved to three, and applying the
+# packing two projects after the shell script had moved on, and applying the
 # sparse-checkout list only on the initial clone - so a Windows developer got a feed
 # missing NoMercy.Design and a wall of CS0246 that named no file either script owns.
 
@@ -49,12 +49,11 @@ if (-not (Test-Path $server)) {
 git -C $server sparse-checkout list *> $null
 if ($LASTEXITCODE -ne 0) { git -C $server sparse-checkout init --cone }
 
-# `add`, not `set`. This sibling serves every plugin in the workspace and each needs a
-# different slice of it - the torrent plugin also materialises NoMercy.Plugins.Mvc, for
-# the REST base class this plugin has no use for. `set` replaces the whole list, so
-# whichever plugin packed last would strip the others' projects back out.
+# `add`, not `set`. This sibling serves every plugin in the workspace and each needs its
+# own slice of it. `set` replaces the whole list, so whichever plugin packed last would
+# strip the others' projects back out.
 git -C $server sparse-checkout add `
-    src/NoMercy.Plugins.Abstractions src/NoMercy.Events src/NoMercy.Design
+    src/NoMercy.Plugins.Abstractions src/NoMercy.Events src/NoMercy.Design src/NoMercy.Plugins.Mvc
 if ($LASTEXITCODE -ne 0) { throw 'sparse-checkout add failed' }
 
 git -C $server fetch --depth=1 origin $ref
@@ -83,7 +82,7 @@ if (-not (Test-Path $abstractions)) {
 #
 # MSB9008 about a missing NoMercy.Analyzers is expected under a sparse checkout.
 # It is an analyzer reference; the package builds correctly without it.
-foreach ($project in @('NoMercy.Events', 'NoMercy.Design', 'NoMercy.Plugins.Abstractions')) {
+foreach ($project in @('NoMercy.Events', 'NoMercy.Design', 'NoMercy.Plugins.Abstractions', 'NoMercy.Plugins.Mvc')) {
     $csproj = Join-Path $server "src/$project/$project.csproj"
     if (-not (Test-Path $csproj)) {
         Write-Host "skipping $project - not in the tree at $ref"

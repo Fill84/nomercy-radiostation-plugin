@@ -15,7 +15,7 @@
   },
   "capabilities": {
     "hooks": ["ui", "scheduledTask"],
-    "rest": false,
+    "rest": true,
     "ws": false,
     "network": { "hosts": ["*.api.radio-browser.info"] },
     "ui": {

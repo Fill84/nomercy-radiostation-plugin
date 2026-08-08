@@ -43,6 +43,14 @@
             somebody else's package of the same name on nuget.org.
         -->
         <PackageReference Include="NoMercy.Plugins.Abstractions" Version="*" />
+
+        <!--
+            PluginControllerBase, which the favourite toggle and the search submit arrive
+            through. Host-owned exactly like the abstractions: the base class must keep
+            one identity across the load-context boundary, so it must never ship beside
+            the plugin. The CI staging step asserts that.
+        -->
+        <PackageReference Include="NoMercy.Plugins.Mvc" Version="*" />
     </ItemGroup>
 
     <ItemGroup>

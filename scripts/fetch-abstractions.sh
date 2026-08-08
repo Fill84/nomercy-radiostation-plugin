@@ -15,7 +15,12 @@
 # script is what needs updating - the symptom is a wall of CS0246 for a namespace
 # nobody in this repository has ever referenced.
 #
-# NoMercy.Plugins.Mvc is deliberately NOT packed - see the plan's Task 1.
+# NoMercy.Plugins.Mvc holds PluginControllerBase, which this plugin's controller inherits
+# so a favourite toggle and a search field have somewhere to arrive. Its own assembly
+# rather than a type in Abstractions on purpose: the base class must keep one identity
+# across the load-context boundary, so it lives in the host's shared set, and putting it
+# in Abstractions would force a Microsoft.AspNetCore.App FrameworkReference on every
+# plugin - including the ones that never serve a request.
 
 set -eu
 
@@ -67,13 +72,12 @@ git -C "$server" sparse-checkout list >/dev/null 2>&1 \
 # Applied on every run, not only on the initial clone: setting it once means adding
 # a project to the list silently does nothing on a checkout that already exists.
 #
-# `add`, not `set`. This sibling serves every plugin in the workspace and each needs a
-# different slice of it - the torrent plugin also materialises NoMercy.Plugins.Mvc, for
-# the REST base class this plugin has no use for. `set` replaces the whole list, so
-# whichever plugin packed last would strip the others' projects back out, and the next
-# build in that other repo would fail on a path its own script had already asked for.
+# `add`, not `set`. This sibling serves every plugin in the workspace and each needs its
+# own slice of it. `set` replaces the whole list, so whichever plugin packed last would
+# strip the others' projects back out, and the next build in that other repo would fail
+# on a path its own script had already asked for.
 git -C "$server" sparse-checkout add \
-    src/NoMercy.Plugins.Abstractions src/NoMercy.Events src/NoMercy.Design
+    src/NoMercy.Plugins.Abstractions src/NoMercy.Events src/NoMercy.Design src/NoMercy.Plugins.Mvc
 
 git -C "$server" fetch --depth=1 origin "$ref"
 git -C "$server" reset --hard FETCH_HEAD
@@ -101,7 +105,7 @@ fi
 #
 # MSB9008 about a missing NoMercy.Analyzers is expected under a sparse checkout.
 # It is an analyzer reference; the package builds correctly without it.
-for project in NoMercy.Events NoMercy.Design NoMercy.Plugins.Abstractions; do
+for project in NoMercy.Events NoMercy.Design NoMercy.Plugins.Abstractions NoMercy.Plugins.Mvc; do
     csproj="$server/src/$project/$project.csproj"
     if [ ! -f "$csproj" ]; then
         echo "skipping $project - not in the tree at $ref"

@@ -106,15 +106,19 @@ public class ManifestTests
             .Should().NotContain(hook => PluginHookCapability.Elevated.Contains(hook));
     }
 
-    // Both inbound transports are broken upstream (server issue #26 for REST; nothing
-    // registers hub handlers), and nothing in this plugin implements either. Declaring
-    // them would promise a save path that cannot work.
+    // rest is what carries a favourite toggle and a search submit back to the plugin:
+    // CallPlugin reaches a plugin over REST or the hub, and nothing else does. The July
+    // note that both transports were broken upstream is stale - the torrent plugin has
+    // been adding and removing indexers over REST in production.
+    //
+    // ws stays false. Nothing here reports progress, and declaring a transport with no
+    // handler registered is a promise the plugin cannot keep.
     [Fact]
-    public void Manifest_DeclaresNeitherRestNorWs()
+    public void Manifest_DeclaresRestButNotWs()
     {
         PluginCapabilities capabilities = LoadManifest().Capabilities!;
 
-        capabilities.Rest.Should().BeFalse();
+        capabilities.Rest.Should().BeTrue();
         capabilities.Ws.Should().BeFalse();
     }
 

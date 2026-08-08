@@ -227,10 +227,15 @@ jobs:
           cp -r "$PLUGIN_DIR/lang"         "$STAGING/"
 
           # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll,
-          # NoMercy.Events.dll, NoMercy.Design.dll and Newtonsoft.Json.dll. All four
+          # NoMercy.Events.dll, NoMercy.Design.dll, NoMercy.Plugins.Mvc.dll and
+          # Newtonsoft.Json.dll. All five
           # are the host's and live in its shared-assembly set. Shipping a copy gives
           # the load context two incompatible identities of the same types, and the
           # failure looks like an unrelated cast error far from its cause.
+          #
+          # Mvc joined the list when this plugin grew a REST controller: PluginControllerBase
+          # has to resolve to the host's copy or a request routed to the plugin cannot bind
+          # to the base class it was compiled against.
           #
           # Design and Newtonsoft joined that set when the abstractions took a
           # ProjectReference on the design system so a plugin could name all fifty-six
@@ -241,7 +246,7 @@ jobs:
           # Checked against $BIN, not $STAGING: staging holds exactly the five files
           # copied above by name, so neither could ever appear there and the check
           # could never fire.
-          if ls "$BIN" | grep -E '^(NoMercy\.(Plugins\.Abstractions|Events|Design)|Newtonsoft\.Json)\.dll$'; then
+          if ls "$BIN" | grep -E '^(NoMercy\.(Plugins\.(Abstractions|Mvc)|Events|Design)|Newtonsoft\.Json)\.dll$'; then
             echo "::error::a host-owned assembly was copied into the build output" >&2
             echo "see the PackageReference comment in the plugin csproj" >&2
             exit 1
