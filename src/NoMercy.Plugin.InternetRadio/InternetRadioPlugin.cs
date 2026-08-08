@@ -53,6 +53,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private IPluginContext? _context;
     private CatalogProvider? _provider;
+    private UserStateStore? _userState;
     private bool _disposed;
 
     // Field-initialised so Dispose has something to cancel even when the host
@@ -84,6 +85,65 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             Context.DataFolderPath,
             Context.Logger
         );
+
+    private UserStateStore UserState => _userState ??= new UserStateStore(Context.DataFolderPath);
+
+    // === Actions the controller calls ======================================
+
+    /// <summary>
+    /// Adds the station when it is not a favourite, removes it when it is.
+    ///
+    /// Removal needs no resolution - the id alone identifies the entry - so a station
+    /// that has since vanished from radio-browser can still be un-favourited. Only
+    /// adding needs a record, which is what makes the two halves asymmetric.
+    /// </summary>
+    public async Task<PluginActionOutcome> ToggleFavouriteAsync(
+        string? userId, string stationId, CancellationToken ct)
+    {
+        if (userId is null)
+        {
+            return PluginActionOutcome.Failed("Sign in to keep favourites.");
+        }
+
+        if (await UserState.RemoveFavouriteAsync(userId, stationId, ct))
+        {
+            return PluginActionOutcome.Ok("Removed from favourites.");
+        }
+
+        StationCatalog catalog = await Provider.GetAsync(ct);
+        FavouriteResolver resolver = new(catalog, new RadioBrowserClient(Context.HttpClient));
+
+        if (await resolver.ResolveAsync(stationId, ct) is not { } station)
+        {
+            // Deliberately not a success. A toggle that silently stores nothing reads to
+            // the user as a broken button, and to the next reader of the file as data
+            // that went missing on its own.
+            return PluginActionOutcome.Failed("That station could not be found.");
+        }
+
+        await UserState.AddFavouriteAsync(userId, station, ct);
+
+        return PluginActionOutcome.Ok("Added to favourites.");
+    }
+
+    /// <summary>
+    /// Stores the term so the refreshed /search view can run it. Blank clears it, which
+    /// is what returns the page to its "search for a station" state rather than leaving
+    /// it insisting nothing matched an empty query.
+    /// </summary>
+    public async Task<PluginActionOutcome> StoreSearchAsync(
+        string? userId, string? query, CancellationToken ct)
+    {
+        if (userId is null)
+        {
+            return PluginActionOutcome.Failed("Sign in to search.");
+        }
+
+        string? term = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+        await UserState.SetLastSearchAsync(userId, term, ct);
+
+        return PluginActionOutcome.Ok(term is null ? "Search cleared." : $"Searching for {term}.");
+    }
 
     // === IScheduledTaskPlugin ==============================================
 

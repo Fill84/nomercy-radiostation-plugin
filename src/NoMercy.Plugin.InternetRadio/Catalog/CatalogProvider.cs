@@ -133,7 +133,7 @@ public sealed class CatalogProvider(
             try
             {
                 collected.AddRange(
-                    Convert(await client.SearchByTagAsync(section.Tag, GenreMap.PerGenreLimit, fetchCt)));
+                    StationGates.Admitted(await client.SearchByTagAsync(section.Tag, GenreMap.PerGenreLimit, fetchCt)));
             }
             // An HttpClient timeout raises TaskCanceledException, which derives from
             // OperationCanceledException but is NOT a caller cancellation - it carries
@@ -267,42 +267,5 @@ public sealed class CatalogProvider(
         }
 
         return StationCatalog.Empty(lastFetchFailed: anythingFailed);
-    }
-
-    private static IEnumerable<RadioStation> Convert(IEnumerable<RadioBrowserStation> wire)
-    {
-        foreach (RadioBrowserStation station in wire)
-        {
-            if (!StationGates.Admits(station))
-            {
-                continue;
-            }
-
-            // Admits has already rejected a station with no stationuuid or name, but
-            // that gate runs against a different type and the compiler cannot carry
-            // that guarantee across the call - these patterns narrow the two wire
-            // fields RadioStation requires non-null, rather than asserting it with `!`.
-            if (station.StationUuid is not { } uuid || station.Name is not { } name)
-            {
-                continue;
-            }
-
-            yield return new RadioStation
-            {
-                Id = uuid,
-                Name = name.Trim(),
-                StreamUrl = StationGates.EffectiveUrl(station),
-                LogoUrl = string.IsNullOrWhiteSpace(station.Favicon) ? null : station.Favicon,
-                Homepage = string.IsNullOrWhiteSpace(station.Homepage) ? null : station.Homepage,
-                Genre = GenreMap.Resolve(station.Tags),
-                Country = string.IsNullOrWhiteSpace(station.CountryCode) ? null : station.CountryCode,
-                Language = string.IsNullOrWhiteSpace(station.Language) ? null : station.Language,
-                // radio-browser reports 0 for "unknown", which is not the same as a
-                // zero-bitrate stream and must not render as "0 kbps".
-                BitrateKbps = station.Bitrate > 0 ? station.Bitrate : null,
-                Codec = string.IsNullOrWhiteSpace(station.Codec) ? null : station.Codec,
-                Popularity = station.Votes,
-            };
-        }
     }
 }

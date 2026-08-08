@@ -146,4 +146,48 @@ public static class StationGates
         // empty one would collide with every other such station.
         return builder.Length > 0 ? builder.ToString() : "station";
     }
+
+    /// <summary>
+    /// Every wire record that passes <see cref="Admits" />, as the station this plugin
+    /// uses. Lives here rather than in the provider because the sweep is no longer the
+    /// only caller: a search result and a favourite resolved by uuid arrive as the same
+    /// wire shape and must be judged and mapped by the same rules, or a station could
+    /// pass one path and fail another.
+    /// </summary>
+    public static IEnumerable<RadioStation> Admitted(IEnumerable<RadioBrowserStation> wire)
+    {
+        foreach (RadioBrowserStation station in wire)
+        {
+            if (!Admits(station))
+            {
+                continue;
+            }
+
+            // Admits has already rejected a station with no stationuuid or name, but that
+            // gate runs against a different type and the compiler cannot carry that
+            // guarantee across the call - these patterns narrow the two wire fields
+            // RadioStation requires non-null, rather than asserting it with `!`.
+            if (station.StationUuid is not { } uuid || station.Name is not { } name)
+            {
+                continue;
+            }
+
+            yield return new RadioStation
+            {
+                Id = uuid,
+                Name = name.Trim(),
+                StreamUrl = EffectiveUrl(station),
+                LogoUrl = string.IsNullOrWhiteSpace(station.Favicon) ? null : station.Favicon,
+                Homepage = string.IsNullOrWhiteSpace(station.Homepage) ? null : station.Homepage,
+                Genre = GenreMap.Resolve(station.Tags),
+                Country = string.IsNullOrWhiteSpace(station.CountryCode) ? null : station.CountryCode,
+                Language = string.IsNullOrWhiteSpace(station.Language) ? null : station.Language,
+                // radio-browser reports 0 for "unknown", which is not the same as a
+                // zero-bitrate stream and must not render as "0 kbps".
+                BitrateKbps = station.Bitrate > 0 ? station.Bitrate : null,
+                Codec = string.IsNullOrWhiteSpace(station.Codec) ? null : station.Codec,
+                Popularity = station.Votes,
+            };
+        }
+    }
 }
