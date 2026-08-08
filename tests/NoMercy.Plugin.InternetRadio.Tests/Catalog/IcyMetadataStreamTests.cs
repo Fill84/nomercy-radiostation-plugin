@@ -120,3 +120,41 @@ public sealed class IcyMetadataStreamTests
         titles.Should().BeEmpty();
     }
 }
+
+public sealed class NowPlayingTests
+{
+    [Fact]
+    public void OneListenerLeavingDoesNotBlankTheTitleForTheOthers()
+    {
+        NowPlaying nowPlaying = new();
+
+        IDisposable first = nowPlaying.Listen("station");
+        IDisposable second = nowPlaying.Listen("station");
+        nowPlaying.Set("station", "Sounds From The Ground - Blink");
+
+        first.Dispose();
+
+        // Still on air for the listener who stayed. Clearing on every relay end
+        // meant one browser tab closing wiped the title in every other one.
+        nowPlaying.Get("station").Should().Be("Sounds From The Ground - Blink");
+
+        second.Dispose();
+
+        nowPlaying.Get("station").Should().BeNull("nobody is listening to it any more");
+    }
+
+    [Fact]
+    public void ReleasingTwiceCountsOnce()
+    {
+        NowPlaying nowPlaying = new();
+
+        IDisposable first = nowPlaying.Listen("station");
+        using IDisposable second = nowPlaying.Listen("station");
+        nowPlaying.Set("station", "On air");
+
+        first.Dispose();
+        first.Dispose();
+
+        nowPlaying.Get("station").Should().Be("On air");
+    }
+}

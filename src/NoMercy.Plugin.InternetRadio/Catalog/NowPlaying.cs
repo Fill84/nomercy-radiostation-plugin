@@ -26,12 +26,47 @@ public sealed class NowPlaying
     public string? Get(string stationId) =>
         _titles.TryGetValue(stationId, out string? title) ? title : null;
 
+    private readonly ConcurrentDictionary<string, int> _listeners = new();
+
     /// <summary>
-    /// Forgets a station's title. Called when its relay ends, so a station nobody is
-    /// listening to stops reporting a song that stopped playing long ago.
+    /// Marks one listener as being on this station, and returns the handle that
+    /// releases them. The title is forgotten when the last one leaves, so a station
+    /// nobody is listening to stops reporting a song that stopped playing long ago -
+    /// but a second listener leaving does not blank the title for the first, which
+    /// is what clearing on every relay end did.
     /// </summary>
-    public void Clear(string stationId)
+    public IDisposable Listen(string stationId)
     {
+        _listeners.AddOrUpdate(stationId, 1, (_, count) => count + 1);
+
+        return new Listener(this, stationId);
+    }
+
+    private void Release(string stationId)
+    {
+        int remaining = _listeners.AddOrUpdate(stationId, 0, (_, count) => count - 1);
+        if (remaining > 0)
+        {
+            return;
+        }
+
+        _listeners.TryRemove(stationId, out _);
         _titles.TryRemove(stationId, out _);
+    }
+
+    private sealed class Listener(NowPlaying owner, string stationId) : IDisposable
+    {
+        private bool _released;
+
+        public void Dispose()
+        {
+            if (_released)
+            {
+                return;
+            }
+
+            _released = true;
+            owner.Release(stationId);
+        }
     }
 }

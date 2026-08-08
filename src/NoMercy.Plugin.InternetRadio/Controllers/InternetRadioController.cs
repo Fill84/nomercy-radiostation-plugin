@@ -151,17 +151,9 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
                 upstreamBody, interval, title => plugin.NowPlaying.Set(stationId, title))
             : upstreamBody;
 
-        try
-        {
-            await body.CopyToAsync(Response.Body, ct);
-        }
-        finally
-        {
-            if (!cover)
-            {
-                plugin.NowPlaying.Clear(stationId);
-            }
-        }
+        using IDisposable? listener = cover ? null : plugin.NowPlaying.Listen(stationId);
+
+        await body.CopyToAsync(Response.Body, ct);
 
         return new EmptyResult();
     }
