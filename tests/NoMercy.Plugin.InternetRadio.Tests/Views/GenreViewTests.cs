@@ -33,21 +33,17 @@ public class GenreViewTests
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient"), Station("b", "Rock")), "ambient", UserState.Empty);
 
         AllNodes(view).Single(node => node.Id == "genre-grid")
-            .Items.Select(card => card.Id)
-            .Should().BeEquivalentTo(["station-card-genre-a"]);
+            .Items.Select(tile => tile.Id)
+            .Should().BeEquivalentTo(["station-tile-genre-a"]);
     }
 
-    // A card opens the station; the station page is where playing lives. See
-    // BrowseViewTests.CardsOpenTheStationPage for why that is not a preference.
     [Fact]
-    public void CardsOpenTheStationPage()
+    public void CardsPlayImmediately()
     {
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient", UserState.Empty);
 
-        PluginComponent card = AllNodes(view).Single(node => node.Id == "station-card-genre-a");
-
-        ((Dictionary<string, object?>)card.Props["data"]!)["link"]
-            .Should().Be(AppRoutes.Station("a"));
+        AllNodes(view).Single(node => node.Id == "station-card-genre-a")
+            .Action!.Type.Should().Be(PluginActionType.PlayMedia);
     }
 
     [Fact]

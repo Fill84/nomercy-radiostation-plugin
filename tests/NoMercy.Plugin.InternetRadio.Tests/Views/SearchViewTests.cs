@@ -174,8 +174,7 @@ public class SearchViewTests
             [Station("found")],
             state: new UserState { Favourites = [Station("found")] });
 
-        Node(view, "station-card-search-found").Props["data"]
-            .Should().BeOfType<Dictionary<string, object?>>()
-            .Which["favorite"].Should().Be(true);
+        Node(view, "station-favourite-search-found-label")
+            .Props["text"].Should().Be(StationCards.RemoveFavouriteLabel);
     }
 }
