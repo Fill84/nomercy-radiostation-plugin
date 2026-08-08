@@ -5,26 +5,16 @@ using NoMercy.Plugins.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio;
 
-// Every station with its metadata, as a table whose rows lead to the detail page.
+// Every station in the catalogue, as the same tiles every other screen draws.
 //
-// The split is deliberate: the grids play on click, this inspects on click. Putting
-// both affordances on one surface means every station needs two hit targets, and a
-// card is one.
+// It used to be a table of names and bitrates, on the reasoning that the grids play and
+// this one inspects. That split cost more than it bought: it made one screen behave unlike
+// every other, and a name in a row is a poorer way to recognise a station than its logo.
+// The detail page is still there and still reachable - the difference is that this page no
+// longer exists to be the only way in.
 public static class AllStationsView
 {
-    /// <summary>Shown where a value is not known. Never "0", which would be a claim.</summary>
-    private const string Unknown = "—";
-
-    private static IReadOnlyList<PluginTableColumn> Columns { get; } =
-        [
-            new() { Key = "name", Label = "Station" },
-            new() { Key = "genre", Label = "Genre" },
-            new() { Key = "country", Label = "Country" },
-            new() { Key = "bitrate", Label = "Bitrate", Align = "right" },
-            new() { Key = "codec", Label = "Codec" },
-        ];
-
-    public static PluginView Build(StationCatalog catalog)
+    public static PluginView Build(StationCatalog catalog, UserState state)
     {
         if (catalog.IsEmpty)
         {
@@ -34,11 +24,13 @@ public static class AllStationsView
         }
 
         // InvariantCulture, not CurrentCulture: this is the only culture-sensitive
-        // operation in the plugin, and the container's locale must not change row
-        // order between two otherwise-identical deployments.
-        IEnumerable<PluginComponent> rows = catalog
-            .Stations.OrderBy(station => station.Name, StringComparer.InvariantCultureIgnoreCase)
-            .Select(Row);
+        // operation in the plugin, and the container's locale must not change the order
+        // between two otherwise-identical deployments.
+        IReadOnlyList<RadioStation> stations =
+        [
+            .. catalog.Stations.OrderBy(
+                station => station.Name, StringComparer.InvariantCultureIgnoreCase),
+        ];
 
         return PluginViews.Declarative(
             Ui.Container(
@@ -46,31 +38,14 @@ public static class AllStationsView
                 BackToBrowse,
                 Ui.Text("all-title", "All stations", "title"),
                 Ui.Text(
-                    "all-hint",
-                    "Select a station to see its details and play it.",
+                    "all-count",
+                    stations.Count == 1 ? "1 station" : $"{stations.Count} stations",
                     "caption"
                 ),
-                Ui.Table("all-table", Columns, [.. rows], "No stations.")
+                StationCards.Grid("all-grid", stations, state, "all")
             )
         );
     }
-
-    private static PluginComponent Row(RadioStation station) =>
-        Ui.TableRow(
-            $"all-row-{station.Id}",
-            new Dictionary<string, object?>
-            {
-                ["name"] = station.Name,
-                ["genre"] = station.Genre ?? Unknown,
-                ["country"] = station.Country ?? Unknown,
-                // Formatted here rather than sent as a number with a Bytes/Rate cell
-                // type: neither of those means kbps, and both would be relabelled by
-                // the client into something this is not.
-                ["bitrate"] = station.BitrateKbps is { } kbps ? $"{kbps} kbps" : Unknown,
-                ["codec"] = station.Codec ?? Unknown,
-            },
-            PluginActionIntent.Navigate(RadioRoutes.Station(station.Id))
-        );
 
     private static PluginComponent BackToBrowse =>
         Ui.Button(

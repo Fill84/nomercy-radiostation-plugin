@@ -7,6 +7,10 @@ using Xunit;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Views;
 
+// This page used to be a table of names and bitrates, and these tests were about columns
+// and cells. It is the same tiles as every other screen now: recognising a station by its
+// logo beats reading its name out of a row, and one screen behaving unlike all the others
+// was the real cost of the old split.
 public class AllStationsViewTests
 {
     private static RadioStation Station(string id, string name) =>
@@ -24,102 +28,67 @@ public class AllStationsViewTests
     private static StationCatalog Catalog(params RadioStation[] stations) =>
         StationCatalog.Create(stations, CatalogSource.Fetched, DateTimeOffset.UtcNow);
 
-    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
-    {
-        yield return node;
-        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
-        {
-            yield return child;
-        }
-    }
+    private static PluginView Build(params RadioStation[] stations) =>
+        AllStationsView.Build(Catalog(stations), UserState.Empty);
 
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
-        (view.Components ?? []).SelectMany(Flatten);
+        PluginNodes.All(view);
 
-    // A row supplies its cells by column key, so a column the rows never fill renders
-    // as a blank stripe down the table.
-    [Fact]
-    public void EveryColumnIsFilledByEveryRow()
-    {
-        PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
-
-        PluginComponent table = PluginNodes.Table(view);
-
-        // A column no row fills still renders its cell, as empty text: that is exactly
-        // the blank stripe this test exists to catch, so an assertion that the cell
-        // merely exists would no longer catch anything.
-        foreach (PluginComponent row in PluginNodes.Rows(table))
-        {
-            foreach (string column in PluginNodes.Columns(table))
-            {
-                PluginNodes.Value(table, row, column).Should().NotBeEmpty();
-            }
-        }
-    }
-
-    // This table is the browse-by-detail surface: the grids play, this one inspects.
-    [Fact]
-    public void RowsNavigateToTheStationDetailPage()
-    {
-        PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
-
-        PluginComponent row = PluginNodes.Rows(PluginNodes.Table(view))
-            .Should().ContainSingle().Subject;
-
-        row.Action!.Type.Should().Be(PluginActionType.Navigate);
-        row.Action.Payload["route"].Should().Be(RadioRoutes.Station("a"));
-    }
+    private static PluginComponent Grid(PluginView view) =>
+        AllNodes(view).Single(node => node.Id == "all-grid");
 
     [Fact]
     public void ListsEveryStationSortedByName()
     {
-        PluginView view = AllStationsView.Build(
-            Catalog(Station("b", "Zulu FM"), Station("a", "Alpha FM")));
+        PluginView view = Build(Station("c", "Charlie FM"), Station("a", "Alpha FM"), Station("b", "Bravo FM"));
 
-        PluginComponent table = PluginNodes.Table(view);
-
-        PluginNodes.Rows(table)
-            .Select(row => PluginNodes.Value(table, row, "Station"))
-            .Should().Equal("Alpha FM", "Zulu FM");
+        Grid(view).Items.Select(tile => tile.Id)
+            .Should().Equal("station-tile-all-a", "station-tile-all-b", "station-tile-all-c");
     }
 
-    // radio-browser reports 0 for "unknown", which the model stores as null. Rendering
-    // that as "0 kbps" would claim a silent stream.
+    // The same tile as every other screen, so a station cannot behave one way here and
+    // another in a genre grid.
     [Fact]
-    public void ShowsAnUnknownBitrateAsAnEmDashRatherThanZero()
+    public void DrawsTheSameTilesAsEveryOtherScreen()
     {
-        RadioStation unknown = Station("a", "Alpha FM") with { BitrateKbps = null };
+        PluginComponent tile = Grid(Build(Station("a", "Alpha FM"))).Items.Single();
 
-        PluginComponent table = PluginNodes.Table(AllStationsView.Build(Catalog(unknown)));
-
-        PluginNodes.Value(table, PluginNodes.Rows(table).Single(), "Bitrate").Should().Be("—");
+        tile.Should().BeEquivalentTo(
+            StationCards.Tile(Station("a", "Alpha FM"), isFavourite: false, "all"),
+            options => options.Excluding(node => node.Type == typeof(PluginActionIntent)));
     }
 
     [Fact]
-    public void OffersAWayBack()
+    public void OneClickPlays()
     {
-        PluginView view = AllStationsView.Build(Catalog(Station("a", "Alpha FM")));
+        PluginComponent card = Grid(Build(Station("a", "Alpha FM"))).Items.Single().Items[0];
 
-        AllNodes(view).Should().Contain(node =>
-            node.Action != null
-            && node.Action.Type == PluginActionType.Navigate
-            && (string)node.Action.Payload["route"]! == RadioRoutes.Browse);
+        card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
+        card.Action.Payload["title"].Should().Be("Alpha FM");
     }
 
+    [Fact]
+    public void SaysHowManyThereAre()
+    {
+        AllNodes(Build(Station("a", "Alpha FM"), Station("b", "Bravo FM")))
+            .Single(node => node.Id == "all-count")
+            .Props["value"]!.ToString().Should().Contain("2");
+    }
+
+    // An empty catalogue has to explain itself. A blank page reads as a broken plugin.
     [Fact]
     public void ExplainsItselfWhenThereAreNoStations()
     {
-        PluginView view = AllStationsView.Build(StationCatalog.Empty());
+        PluginView view = AllStationsView.Build(StationCatalog.Empty(), UserState.Empty);
 
         AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
     }
 
     [Fact]
-    public void EveryNodeHasAUniqueId()
+    public void OffersAWayBack()
     {
-        PluginView view = AllStationsView.Build(
-            Catalog(Station("a", "Alpha FM"), Station("b", "Bravo FM")));
-
-        AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+        AllNodes(Build(Station("a", "Alpha FM")))
+            .Single(node => node.Id == "all-back")
+            .Action!.Payload["route"].Should().Be(RadioRoutes.Browse);
     }
 }

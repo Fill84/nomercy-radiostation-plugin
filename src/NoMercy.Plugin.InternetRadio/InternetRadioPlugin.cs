@@ -506,7 +506,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
                 RadioRouteKind.Browse => BrowseView.Build(catalog, state),
                 RadioRouteKind.Search => await BuildSearchAsync(route.Value, state, ct),
                 RadioRouteKind.Genre => GenreView.Build(catalog, route.Value, state),
-                RadioRouteKind.AllStations => AllStationsView.Build(catalog),
+                RadioRouteKind.AllStations => AllStationsView.Build(catalog, state),
                 RadioRouteKind.Station => await BuildStationAsync(catalog, route.Value, state, ct),
                 RadioRouteKind.Settings => SettingsView.Build(
                     catalog, context.DataFolderPath, DateTimeOffset.UtcNow, NextRefreshUtc(DateTimeOffset.UtcNow), state),

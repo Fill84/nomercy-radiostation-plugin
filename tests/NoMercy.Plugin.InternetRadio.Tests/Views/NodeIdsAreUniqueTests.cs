@@ -51,7 +51,7 @@ public class NodeIdsAreUniqueTests
             { "browse", BrowseView.Build(catalog, state) },
             { "browse-empty-state", BrowseView.Build(catalog, UserState.Empty) },
             { "genre", GenreView.Build(catalog, "ambient", state) },
-            { "all", AllStationsView.Build(catalog) },
+            { "all", AllStationsView.Build(catalog, UserState.Empty) },
             { "station", StationView.Build(catalog, "a", state) },
             { "settings", SettingsView.Build(catalog, "/data", now, now.AddDays(1), state) },
             { "search-empty-keyboard", SearchView.Build("", [], false, state) },

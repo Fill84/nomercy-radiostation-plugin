@@ -75,7 +75,7 @@ public class EmitPayloadsForRendering
                     Favourites = [Station("groove", "Ambient"), Station("jazz", "Jazz")],
                 }),
             ["radio-genre"] = GenreView.Build(catalog, "ambient", UserState.Empty),
-            ["radio-all"] = AllStationsView.Build(catalog),
+            ["radio-all"] = AllStationsView.Build(catalog, UserState.Empty),
             ["radio-station"] = StationView.Build(catalog, "groove", UserState.Empty),
             ["radio-settings"] = SettingsView.Build(catalog, "/data", now, now.AddDays(1), UserState.Empty),
             // The search states. These are the ones a structural test cannot judge - a
