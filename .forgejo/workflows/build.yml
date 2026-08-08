@@ -219,6 +219,13 @@ jobs:
           cp "$PLUGIN_DIR/README.md"       "$STAGING/"
           cp LICENSE                       "$STAGING/"
 
+          # The manifest declares a translations path, and the server resolves it against
+          # the installed plugin.json. Copied as a directory rather than added to the list
+          # of named files above, so adding a locale is one file and no workflow edit -
+          # the failure the named list would give is a language that silently falls back
+          # to English on every server, with CI green and the file sitting in git.
+          cp -r "$PLUGIN_DIR/lang"         "$STAGING/"
+
           # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll,
           # NoMercy.Events.dll, NoMercy.Design.dll and Newtonsoft.Json.dll. All four
           # are the host's and live in its shared-assembly set. Shipping a copy gives

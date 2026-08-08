@@ -36,47 +36,14 @@ public class BrowseViewTests
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
-    // By id, not by component type. The design system collapsed Container, List, Row,
-    // Grid, Card, Detail, Form and Table onto the single NMCard component, so
-    // PluginComponentType.Card now equals PluginComponentType.Container and selecting
-    // by type returns every container on the page - including ones with no Action,
-    // which is what turned "the first card" into a null dereference.
-    // Stops at the card rather than filtering the flattened tree: a card builds its
-    // face from children whose ids extend its own ("-art", "-heading", "-title"), so a
-    // plain prefix match over every node counts one card four times.
-    private static List<PluginComponent> Cards(PluginView view)
-    {
-        List<PluginComponent> cards = [];
-
-        void Walk(PluginComponent node)
-        {
-            if (node.Id.StartsWith("station-card-", StringComparison.Ordinal))
-            {
-                cards.Add(node);
-                return;
-            }
-
-            foreach (PluginComponent child in node.Items)
-            {
-                Walk(child);
-            }
-        }
-
-        foreach (PluginComponent root in view.Components ?? [])
-        {
-            Walk(root);
-        }
-
-        return cards;
-    }
-
     // The whole point of the plugin: one click and it is playing.
     [Fact]
     public void CardsPlayTheStationRatherThanNavigatingToIt()
     {
         PluginView view = BrowseView.Build(Catalog(Station("a")));
 
-        PluginComponent card = Cards(view).Should().ContainSingle().Subject;
+        PluginComponent card = AllNodes(view)
+            .Should().ContainSingle(node => PluginNodes.IsCard(node)).Subject;
 
         card.Action!.Type.Should().Be(PluginActionType.PlayMedia);
         card.Action.Payload["streamUrl"].Should().Be("https://example.com/a");
@@ -114,7 +81,8 @@ public class BrowseViewTests
         PluginView view = BrowseView.Build(
             Catalog(Station("quiet", "Ambient", 1), Station("loud", "Rock", 99)));
 
-        Cards(view).First().Action!.Payload["title"].Should().Be("Station loud");
+        AllNodes(view).Where(node => PluginNodes.IsCard(node))
+            .First().Action!.Payload["title"].Should().Be("Station loud");
     }
 
     // An empty catalogue has to explain itself. A blank grid reads as a broken plugin.

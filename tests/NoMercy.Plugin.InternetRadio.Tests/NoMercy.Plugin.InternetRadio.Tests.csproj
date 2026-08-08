@@ -12,6 +12,10 @@
     <ItemGroup>
         <PackageReference Include="FluentAssertions" Version="[7.0.0,8.0.0)" />
         <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.*" />
+        <!-- The payload emitter serializes the way the API does, and skips itself
+             unless an output folder is named. -->
+        <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="10.0.7" />
+        <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
         <PackageReference Include="xunit" Version="2.*" />
         <PackageReference Include="xunit.runner.visualstudio" Version="2.*" />
     </ItemGroup>
@@ -23,6 +27,16 @@
     <ItemGroup>
         <None Include="..\..\src\NoMercy.Plugin.InternetRadio\plugin.json"
               Link="plugin.json"
+              CopyToOutputDirectory="PreserveNewest" />
+
+        <!--
+            Linked under lang\ so the layout beside the test binary is the one the server
+            sees beside an installed plugin.json. TranslationTests reads them through the
+            host's own validator, and a flat copy here would let a test pass against a
+            shape no server ever gets.
+        -->
+        <None Include="..\..\src\NoMercy.Plugin.InternetRadio\lang\*.json"
+              Link="lang\%(Filename)%(Extension)"
               CopyToOutputDirectory="PreserveNewest" />
     </ItemGroup>
 

@@ -29,8 +29,6 @@ public sealed class RadioBrowserClient(HttpClient http)
     // a release that bumps the csproj and plugin.json bumps this too - those three
     // are already required to agree (see ManifestTests), and a hand-copied literal
     // here would be a fourth place to remember and the one nothing checks.
-    private static readonly string UserAgent =
-        $"NoMercy.Plugin.InternetRadio/{PluginIdentity.Version} (+https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin)";
 
     private static readonly JsonSerializerOptions JsonOptions =
         new() { PropertyNameCaseInsensitive = true };
@@ -93,10 +91,9 @@ public sealed class RadioBrowserClient(HttpClient http)
     {
         HttpRequestMessage request = new(method, $"{BaseAddress}{path}");
 
-        // Per request, not on DefaultRequestHeaders: the HttpClient belongs to the
-        // host and is shared, so mutating it would put this plugin's identity on
-        // another plugin's traffic.
-        request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+        // No user agent here. The host sets it on the way out: the owner's
+        // configured identity plus this plugin's attribution. A plugin choosing
+        // what a third party sees would be choosing who the owner's server is.
         return request;
     }
 

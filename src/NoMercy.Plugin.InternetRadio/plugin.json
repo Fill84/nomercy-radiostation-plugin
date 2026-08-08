@@ -8,6 +8,11 @@
   "projectUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin",
   "assembly": "NoMercy.Plugin.InternetRadio.dll",
   "autoEnabled": true,
+  "translations": {
+    "source": "en",
+    "locales": ["en", "nl"],
+    "path": "lang"
+  },
   "capabilities": {
     "hooks": ["ui", "scheduledTask"],
     "rest": false,

@@ -25,11 +25,38 @@
             identities of the same types. That surfaces as an unrelated-looking cast error
             far from its cause. The CI packaging step asserts neither assembly ships.
         -->
+        <!--
+            Floating, not pinned. The nm-component-ui branch pinned this to 10.0.114, a
+            version that only existed in a preview feed on the machine it was developed
+            on - nobody else can restore it, and scripts/fetch-abstractions.sh has never
+            produced that number. Packing any dev commit yields 0.1.404, and has all
+            along, so a pin buys nothing and costs everyone else their restore.
+
+            0.1.404 is also why a pin would be false comfort even if it resolved: that
+            one number has named at least three incompatible assemblies - before Ulid,
+            after Ulid, and again once NoMercy.Design joined the shared set. The git SHA
+            the script reports is the only honest identifier, which is what SERVER_REF
+            pins and what a release records.
+
+            packageSourceMapping in nuget.config is what makes floating safe here: it
+            confines NoMercy.* to the local feed, so this cannot silently resolve to
+            somebody else's package of the same name on nuget.org.
+        -->
         <PackageReference Include="NoMercy.Plugins.Abstractions" Version="*" />
     </ItemGroup>
 
     <ItemGroup>
         <None Update="plugin.json">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+
+        <!--
+            PluginManager.ReadTranslationsAsync resolves the translations directory
+            relative to the installed plugin.json, so these have to sit beside it in the
+            output and in the shipped zip - not merely exist in the source tree, which is
+            all they did when the manifest gained no declaration to point at them.
+        -->
+        <None Update="lang\*.json">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
     </ItemGroup>

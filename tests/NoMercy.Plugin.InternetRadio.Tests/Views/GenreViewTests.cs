@@ -27,47 +27,14 @@ public class GenreViewTests
     private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
         (view.Components ?? []).SelectMany(Flatten);
 
-    // By id, not by component type. The design system collapsed Container, List, Row,
-    // Grid, Card, Detail, Form and Table onto the single NMCard component, so
-    // PluginComponentType.Card now equals PluginComponentType.Container and selecting
-    // by type returns every container on the page. That matters most for the empty
-    // genre below: asserting "no Card" by type would fail on the page's own layout.
-    // Stops at the card rather than filtering the flattened tree: a card builds its
-    // face from children whose ids extend its own ("-art", "-heading", "-title"), so a
-    // plain prefix match over every node counts one card four times.
-    private static List<PluginComponent> Cards(PluginView view)
-    {
-        List<PluginComponent> cards = [];
-
-        void Walk(PluginComponent node)
-        {
-            if (node.Id.StartsWith("station-card-", StringComparison.Ordinal))
-            {
-                cards.Add(node);
-                return;
-            }
-
-            foreach (PluginComponent child in node.Items)
-            {
-                Walk(child);
-            }
-        }
-
-        foreach (PluginComponent root in view.Components ?? [])
-        {
-            Walk(root);
-        }
-
-        return cards;
-    }
-
     [Fact]
     public void ShowsOnlyThatGenresStations()
     {
         PluginView view = GenreView.Build(
             Catalog(Station("a", "Ambient"), Station("b", "Rock")), "ambient");
 
-        Cards(view).Should().ContainSingle()
+        AllNodes(view).Where(node => PluginNodes.IsCard(node))
+            .Should().ContainSingle()
             .Which.Action!.Payload["title"].Should().Be("Station a");
     }
 
@@ -76,7 +43,8 @@ public class GenreViewTests
     {
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient");
 
-        Cards(view).Single().Action!.Type.Should().Be(PluginActionType.PlayMedia);
+        AllNodes(view).Single(node => PluginNodes.IsCard(node))
+            .Action!.Type.Should().Be(PluginActionType.PlayMedia);
     }
 
     [Fact]
@@ -97,7 +65,7 @@ public class GenreViewTests
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "no-such-genre");
 
         AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
-        Cards(view).Should().BeEmpty();
+        AllNodes(view).Should().NotContain(node => PluginNodes.IsCard(node));
     }
 
     // A catalogue-level id collision (a real possibility - see StationCatalog) has

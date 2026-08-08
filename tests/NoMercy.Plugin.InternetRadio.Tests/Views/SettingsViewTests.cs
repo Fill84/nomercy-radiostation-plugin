@@ -151,25 +151,15 @@ public class SettingsViewTests
             [Station("a", "Ambient"), Station("b", "Ambient"), Station("c", "Rock")],
             CatalogSource.Fetched, Now);
 
-        // By id, not by component type. The design system collapsed Container, List,
-        // Row, Grid, Card, Detail, Form and Table onto the single NMCard component, so
-        // PluginComponentType.Table now equals PluginComponentType.Container and a
-        // search by type finds the page root first. The id is what still identifies
-        // one particular node, which is what ids are for.
-        PluginComponent table = AllNodes(Build(catalog))
-            .Single(node => node.Id == "settings-genres");
+        PluginComponent table = PluginNodes.Tables(Build(catalog)).First();
 
-        // The table renders a header row ahead of its body rows now, and a body row no
-        // longer carries the authored cells as flat props - each one becomes a Cell
-        // holding the value as text. So this reads the rendered words per row rather
-        // than the dictionary the view handed in, which the renderer no longer keeps.
-        List<string> rows = table.Items.Skip(1)
-            .Select(row => string.Join(" ", Texts(row)))
-            .ToList();
-
-        rows.Should().HaveCount(2);
-        rows.Should().ContainSingle(row => row.Contains("Ambient") && row.Contains("2"));
-        rows.Should().ContainSingle(row => row.Contains("Rock") && row.Contains("1"));
+        PluginNodes.Rows(table).Should().HaveCount(2);
+        PluginNodes.Rows(table).Should().ContainSingle(row =>
+            PluginNodes.Value(table, row, "Genre") == "Ambient"
+            && PluginNodes.Value(table, row, "Stations") == "2");
+        PluginNodes.Rows(table).Should().ContainSingle(row =>
+            PluginNodes.Value(table, row, "Genre") == "Rock"
+            && PluginNodes.Value(table, row, "Stations") == "1");
     }
 
     // A stale catalogue has to explain itself, or it looks like the plugin simply
