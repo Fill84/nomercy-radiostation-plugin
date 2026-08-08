@@ -269,6 +269,59 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     }
 
     /// <summary>
+    /// The bearer token of the viewer this view is being rendered for, or null.
+    ///
+    /// Media elements cannot send a header, so the relay urls carry it as a query
+    /// parameter, which the host's TokenParamAuthMiddleware promotes back to one. Taking it
+    /// from the live request rather than storing one keeps a url valid only for the viewer
+    /// it was built for.
+    /// </summary>
+    private string? CallerBearerToken()
+    {
+        // Wrapped, like PublicBaseUrl: this is a convenience, and a host that mediates
+        // nothing must not cost the viewer the page. Unwrapped it took every route down to
+        // the error view, which six lifecycle tests caught before anyone saw it.
+        try
+        {
+            return ReadCallerBearerToken();
+        }
+        catch (Exception exception)
+        {
+            _context?.Logger.LogWarning(
+                exception, "Internet Radio could not read the caller's token.");
+
+            return null;
+        }
+    }
+
+    private string? ReadCallerBearerToken()
+    {
+        if (_context?.Services.GetService(typeof(IHttpContextAccessor)) is not IHttpContextAccessor accessor)
+        {
+            return null;
+        }
+
+        string? header = accessor.HttpContext?.Request.Headers.Authorization.ToString();
+
+        if (string.IsNullOrWhiteSpace(header))
+        {
+            // Already a query parameter on the request that reached us - the app does this
+            // for its own media, so a view request can arrive that way too.
+            return accessor.HttpContext?.Request.Query
+                .FirstOrDefault(entry => entry.Key is "token" or "access_token").Value.ToString()
+                is { Length: > 0 } fromQuery
+                ? fromQuery
+                : null;
+        }
+
+        const string bearer = "Bearer ";
+
+        return header.StartsWith(bearer, StringComparison.OrdinalIgnoreCase)
+            ? header[bearer.Length..].Trim()
+            : header.Trim();
+    }
+
+    /// <summary>
     /// Scheme and authority of the request currently being served, or null outside one.
     ///
     /// Read through the host's own accessor rather than guessed from configuration: the
@@ -405,7 +458,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             // The server's own public address, learned from the request being served. It
             // is not on IPluginContext and cannot be: the plugin is loaded once and the
             // address is a property of how a client reached it.
-            MediaProxy.Remember(PublicBaseUrl());
+            MediaProxy.Remember(PublicBaseUrl(), CallerBearerToken());
 
             RadioRoute route = RadioRoutes.Parse(request.Route);
             StationCatalog catalog = await Provider.GetAsync(ct);

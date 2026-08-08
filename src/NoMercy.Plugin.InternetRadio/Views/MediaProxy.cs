@@ -21,13 +21,16 @@ namespace NoMercy.Plugin.InternetRadio;
 public static class MediaProxy
 {
     private static string? _base;
+    private static string? _token;
 
-    public static void Remember(string? absoluteBase)
+    public static void Remember(string? absoluteBase, string? bearerToken)
     {
         if (!string.IsNullOrWhiteSpace(absoluteBase))
         {
             _base = absoluteBase.TrimEnd('/');
         }
+
+        _token = string.IsNullOrWhiteSpace(bearerToken) ? null : bearerToken;
     }
 
     /// <summary>Null when nothing has told us where this server lives yet.</summary>
@@ -36,8 +39,26 @@ public static class MediaProxy
     /// <inheritdoc cref="Stream" />
     public static string? Cover(string stationId) => Url(InternetRadioController.CoverMethod, stationId);
 
-    private static string? Url(string method, string stationId) =>
-        _base is null
-            ? null
-            : $"{_base}/api/v1/plugins/{PluginIdentity.Id}/{method}/{Uri.EscapeDataString(stationId)}";
+    // The token travels in the query string, because it has to.
+    //
+    // An <audio> or <img> element cannot send an Authorization header, and the server's
+    // AccessLogMiddleware refuses anything without a user claim before routing ever runs -
+    // so the first version of these urls came back 401 and drew nothing. The host provides
+    // for exactly this: TokenParamAuthMiddleware promotes ?token= and ?access_token= to a
+    // header for every request, which is how the app plays its own library media too.
+    //
+    // It is the calling viewer's own token, read from the request this view is being
+    // rendered for, so a url is never valid for anyone the viewer is not.
+    private static string? Url(string method, string stationId)
+    {
+        if (_base is null)
+        {
+            return null;
+        }
+
+        string url =
+            $"{_base}/api/v1/plugins/{PluginIdentity.Id}/{method}/{Uri.EscapeDataString(stationId)}";
+
+        return _token is null ? url : $"{url}?access_token={Uri.EscapeDataString(_token)}";
+    }
 }
