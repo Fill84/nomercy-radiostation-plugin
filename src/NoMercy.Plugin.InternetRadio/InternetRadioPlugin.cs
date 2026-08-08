@@ -132,8 +132,13 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// is what returns the page to its "search for a station" state rather than leaving
     /// it insisting nothing matched an empty query.
     /// </summary>
+    public Task<PluginActionOutcome> StoreSearchAsync(
+        string? userId, string? query, CancellationToken ct) =>
+        StoreSearchAsync(userId, query, rawBody: null, ct);
+
+    /// <inheritdoc cref="StoreSearchAsync(string?, string?, CancellationToken)" />
     public async Task<PluginActionOutcome> StoreSearchAsync(
-        string? userId, string? query, CancellationToken ct)
+        string? userId, string? query, string? rawBody, CancellationToken ct)
     {
         if (userId is null)
         {
@@ -148,8 +153,9 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         if (term is null)
         {
             _context?.Logger.LogInformation(
-                "Internet Radio cleared the search for {User} - the submitted query was blank.",
-                userId);
+                "Internet Radio cleared the search for {User} - no term in the submitted body: {Body}",
+                userId,
+                rawBody is null ? "(not captured)" : rawBody);
         }
 
         await StateStore.SetLastSearchAsync(userId, term, ct);
