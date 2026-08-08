@@ -28,21 +28,21 @@ dotnet test -c Release --no-build
 | `src/NoMercy.Plugin.InternetRadio/Catalog/` | Fetching, gating and caching the station list |
 | `src/NoMercy.Plugin.InternetRadio/Views/` | Pure `Build(...)` functions returning a `PluginView` |
 | `tests/` | xunit + FluentAssertions; no test touches the network |
-| `scripts/resolve-seeds.py` | Checks the pinned stations still resolve and still answer |
+| `docs/upstream/` | Findings that belong to the server or the client, not here |
 | `docs/superpowers/` | The design spec and this implementation plan |
 
 ## No station data in the source tree
 
-Names, stream URLs, logos, genres and countries are all fetched at runtime. The
-only station data committed here is ten radio-browser UUIDs in
-`Catalog/SeedStations.cs`.
+Not one station name, stream URL, logo, genre or country is committed here. Every
+one of them is fetched from radio-browser at runtime, and the catalogue is
+discovered by querying the most voted stations per genre rather than from a pinned
+list of ids.
 
 That is not tidiness. A hardcoded URL is one nobody re-checks: this repository has
 already had to correct Tomorrowland URLs once, and shipped BBC streams over `http://`
 that could never play in a browser. Anything wrong with a station is now fixed
-upstream at radio-browser, where the fix reaches everyone.
-
-Run `scripts/resolve-seeds.py` before tagging a release.
+upstream at radio-browser, where the fix reaches everyone rather than only whoever
+updates this plugin.
 
 ## Releasing
 

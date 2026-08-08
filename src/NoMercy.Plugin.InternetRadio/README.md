@@ -12,13 +12,30 @@ page under plugin settings.
   — the most voted stations in each of seventeen genres. Nothing is pinned or
   curated: no station name, stream URL or logo exists anywhere in this plugin.
 - **Search** every station radio-browser carries, not just the ones the genre sweep
-  brought back. That is how you reach anything outside those seventeen tags.
+  brought back. That is how you reach anything outside those seventeen tags. You spell
+  the name with on-screen keys rather than typing it into a box — see below for why —
+  and the term lives in the address, so a search can be bookmarked and shared.
 - **Favourites**, per user. Your list is yours; another viewer on the same server
   has their own. A favourite keeps the whole station record, so one you found by
   searching still works after the catalogue refreshes without it.
 - Browse by genre, or scan every station in one table with bitrate and codec.
 - Selecting a station plays it immediately in the built-in player. A station's own
   page also offers **Add to queue** and a link to its homepage.
+
+## Searching, and why it looks like that
+
+There is no text box. A plugin cannot be handed what you type: a plugin form posts an
+empty body, and so does the design system's search field, and giving that field a route
+to follow makes it ignore the route and leave the page. Three mechanisms, three
+different failures, all of them in the client — written up in `docs/upstream/`.
+
+What does work is the address. So the search page offers A–Z and 0–9 as keys, and each
+one takes you to the same page with one more character in it. Two characters is usually
+enough: `to` already finds Tomorrowland. If you would rather type, put the name straight
+in the address bar after `/search/` — it is the same page.
+
+On a TV this is the better control anyway. On a desktop it is a workaround, and it will
+be replaced with a field the moment a client can hand a plugin what was typed.
 
 ## What it declares
 
@@ -27,7 +44,7 @@ page under plugin settings.
 | `ui` | The six pages above. |
 | `scheduledTask` | One job, `refresh`, daily at 04:00, which updates the catalogue. |
 | `network` → `**` | **Any host.** See below — this is the widest grant a plugin can ask for, and it is asked for a reason. |
-| `rest` | Two endpoints of its own: one to toggle a favourite, one to submit a search. Nothing else reaches them — a button on its own page is the only caller. |
+| `rest` | Three endpoints of its own: one to toggle a favourite, and two that relay a station's audio and logo through this server. Nothing else reaches them — this plugin's own pages are the only caller. |
 
 It declares no `ws`, no library access and no secrets storage.
 
@@ -89,8 +106,8 @@ carry. If it cannot be parsed, the plugin logs a warning and fetches as normal.
 ## Where your favourites are kept
 
 In `user-state.json` in the plugin's data folder, beside the catalogue cache — the
-settings page shows the path. It holds one entry per user: their favourites and the
-last thing they searched for.
+settings page shows the path. It holds one entry per user: their favourites, and
+nothing else. What you searched for is not stored — it is in the address bar.
 
 Deleting the file loses every user's favourites and nothing else; the catalogue
 rebuilds itself on the next refresh either way.
