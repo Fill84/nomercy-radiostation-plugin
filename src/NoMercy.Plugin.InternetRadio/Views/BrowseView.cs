@@ -12,7 +12,11 @@ namespace NoMercy.Plugin.InternetRadio;
 // something now", and the genre pages answer "show me all of one kind".
 public static class BrowseView
 {
-    public static PluginView Build(StationCatalog catalog, UserState state)
+    public static PluginView Build(
+        StationCatalog catalog,
+        UserState state,
+        IReadOnlyList<RadioStation>? searchResults = null,
+        bool searchFailed = false)
     {
         if (catalog.IsEmpty)
         {
@@ -25,7 +29,8 @@ public static class BrowseView
 
         List<PluginComponent> children =
         [
-            PluginViews.Text("browse-title", "Internet Radio", "title"),
+            // No title here. The host draws the plugin's name as the page heading already,
+            // and repeating it put "Internet Radio" on screen twice, one line apart.
             PluginViews.Text(
                 "browse-summary",
                 $"{catalog.Count} stations across {catalog.Genres.Count} genres. Pick one and it plays.",
@@ -39,6 +44,13 @@ public static class BrowseView
             SearchView.Field(state.LastSearch),
         ];
 
+        // Results go directly under the field that produced them. They cannot live on a
+        // route of their own: a controller answers with data and cannot navigate, so the
+        // client refreshes the page the form was on - see the comment in SearchView.
+        bool searching = searchFailed || !string.IsNullOrWhiteSpace(state.LastSearch);
+        children.AddRange(
+            SearchView.Results(state.LastSearch, searchResults ?? [], searchFailed, state));
+
         // Absent, not empty. A heading over nothing reads as a screen that failed to
         // load, and everyone's first visit here has no favourites at all.
         if (state.Favourites.Count > 0)
@@ -51,13 +63,19 @@ public static class BrowseView
         }
 
         children.Add(GenreChips(catalog));
-        children.Add(PluginViews.Text("browse-popular-heading", "Popular", "subtitle"));
-        children.Add(PluginViews.Grid(
-            "browse-popular-grid",
-            [.. catalog.Popular(StationCards.PopularCount)
-                .Select(station => StationCards.WithFavourite(
-                    station, favourites.Contains(station.Id), "popular"))]
-        ));
+
+        // Popular steps aside while a search is on screen. Two grids of unrelated stations
+        // under one field is a page where it is not clear which one answered you.
+        if (!searching)
+        {
+            children.Add(PluginViews.Text("browse-popular-heading", "Popular", "subtitle"));
+            children.Add(PluginViews.Grid(
+                "browse-popular-grid",
+                [.. catalog.Popular(StationCards.PopularCount)
+                    .Select(station => StationCards.WithFavourite(
+                        station, favourites.Contains(station.Id), "popular"))]
+            ));
+        }
 
         return PluginViews.Declarative(PluginViews.Container("browse-root", [.. children]));
     }

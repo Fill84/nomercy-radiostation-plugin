@@ -55,7 +55,8 @@ public class NodeIdsAreUniqueTests
             { "all", AllStationsView.Build(catalog) },
             { "station", StationView.Build(catalog, "a", state) },
             { "settings", SettingsView.Build(catalog, "/data", now, now.AddDays(1), state) },
-            { "search", SearchView.Build("x", [Station("a"), Station("z")], false, state) },
+            { "search", BrowseView.Build(catalog, state, [Station("a"), Station("z")]) },
+            { "search-failed", BrowseView.Build(catalog, state, [], searchFailed: true) },
         };
     }
 

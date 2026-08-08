@@ -146,33 +146,31 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     }
 
     /// <summary>
-    /// Runs the stored term live and hands the results to the view.
+    /// The landing page, with the stored search run live if there is one.
     ///
-    /// The network call belongs here rather than in SearchView: views are pure Build
-    /// methods, which is what makes them cheap to test exhaustively and keeps the plugin
-    /// the only thing that touches the wire.
+    /// The query runs here rather than in the view: views are pure Build methods, which is
+    /// what makes them cheap to test exhaustively and keeps this class the only thing that
+    /// touches the wire.
     ///
-    /// A failed query renders as failed, not as "nothing found". The two ask the user to
+    /// A failed query renders as failed, not as "nothing found". The two ask the viewer to
     /// do different things, and reporting an outage as an empty result set has them
     /// retrying a search that was never the problem.
     /// </summary>
-    private async Task<PluginView> BuildSearchAsync(
-        string? userId, UserState state, CancellationToken ct)
+    private async Task<PluginView> BuildBrowseAsync(
+        StationCatalog catalog, UserState state, CancellationToken ct)
     {
-        string? term = state.LastSearch;
-
-        if (string.IsNullOrWhiteSpace(term))
+        if (string.IsNullOrWhiteSpace(state.LastSearch))
         {
-            return SearchView.Build(null, [], queryFailed: false, state);
+            return BrowseView.Build(catalog, state);
         }
 
         try
         {
             RadioBrowserClient client = new(Context.HttpClient);
             IReadOnlyList<RadioBrowserStation> wire =
-                await client.SearchByNameAsync(term, RadioBrowserClient.SearchLimit, ct);
+                await client.SearchByNameAsync(state.LastSearch, RadioBrowserClient.SearchLimit, ct);
 
-            return SearchView.Build(term, [.. StationGates.Admitted(wire)], queryFailed: false, state);
+            return BrowseView.Build(catalog, state, [.. StationGates.Admitted(wire)]);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -180,10 +178,34 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         }
         catch (Exception exception)
         {
-            _context?.Logger.LogWarning(exception, "Internet Radio could not search for {Term}.", term);
+            _context?.Logger.LogWarning(
+                exception, "Internet Radio could not search for {Term}.", state.LastSearch);
 
-            return SearchView.Build(term, [], queryFailed: true, state);
+            return BrowseView.Build(catalog, state, [], searchFailed: true);
         }
+    }
+
+    /// <summary>
+    /// The fallback, and a log line naming the path that reached it.
+    ///
+    /// Without the log this page is a dead end for whoever has to diagnose it: the viewer
+    /// is told there is no page at that address, and nothing anywhere records which
+    /// address that was. That is exactly how /genre/:slug went unnoticed - every test
+    /// passed, because the tests hand Parse the string this plugin builds rather than the
+    /// one a client actually sends.
+    /// </summary>
+    private PluginView UnknownRoute(string? route)
+    {
+        _context?.Logger.LogWarning(
+            "Internet Radio has no page for the route {Route}.", route ?? "(null)");
+
+        return PluginViews.Declarative(
+            PluginViews.EmptyState(
+                "unknown-route",
+                "Nothing here",
+                "This version of Internet Radio has no page at that address."
+            )
+        );
     }
 
     // === IScheduledTaskPlugin ==============================================
@@ -247,6 +269,13 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     // One entry per manifest mount. DiscoveryContractTests asserts the two agree,
     // since PluginUiDescriptorDto prefers this over the manifest and nothing else
     // would catch them drifting.
+    /// <summary>
+    /// The pages this plugin serves. Declaring them is what lets the host list them, pick
+    /// a shell per page, and tell a client that a path is real - none of which it can do
+    /// for a route that exists only as a case in this plugin's own switch.
+    /// </summary>
+    public PluginRouteTable Routes => RadioRoutes.Table;
+
     public IReadOnlyList<PluginNavEntry> NavEntries { get; } =
         [
             new PluginNavEntry
@@ -302,20 +331,17 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
             return route.Kind switch
             {
-                RadioRouteKind.Browse => BrowseView.Build(catalog, state),
+                RadioRouteKind.Browse => await BuildBrowseAsync(catalog, state, ct),
+                // The same page. Results live under the field that produced them, so
+                // /search has nothing of its own to draw - it stays declared and resolves
+                // so an old link is not a dead end.
+                RadioRouteKind.Search => await BuildBrowseAsync(catalog, state, ct),
                 RadioRouteKind.Genre => GenreView.Build(catalog, route.Value, state),
                 RadioRouteKind.AllStations => AllStationsView.Build(catalog),
                 RadioRouteKind.Station => StationView.Build(catalog, route.Value, state),
-                RadioRouteKind.Search => await BuildSearchAsync(request.UserId, state, ct),
                 RadioRouteKind.Settings => SettingsView.Build(
                     catalog, context.DataFolderPath, DateTimeOffset.UtcNow, NextRefreshUtc(DateTimeOffset.UtcNow), state),
-                _ => PluginViews.Declarative(
-                    PluginViews.EmptyState(
-                        "unknown-route",
-                        "Nothing here",
-                        "This version of Internet Radio has no page at that address."
-                    )
-                ),
+                _ => UnknownRoute(request.Route),
             };
         }
         catch (OperationCanceledException)

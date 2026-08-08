@@ -5,26 +5,20 @@ using NoMercy.Plugins.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio;
 
-// Finding a station the genre sweep never returned.
+// The search field and its results, as sections of whatever page draws them.
 //
-// Pure Build, like every view here: the query runs in the plugin, and this renders what
-// came back. A view that reached the network could not be tested exhaustively, and this
-// one has four states that all have to be told apart on sight.
+// Not a page of its own any more. A plugin controller answers with a data envelope and
+// cannot tell the client where to navigate, so a form that submits on one route can only
+// ever be answered on that same route - the client refreshes where it already is. Putting
+// the field on the browse page and the results behind /search meant the results were
+// unreachable by any sequence of clicks: the term was stored, the page came back, and it
+// was still the browse page.
+//
+// So the results render where the field is. /search still resolves, and renders the same
+// page, so an old link is not a dead end.
 public static class SearchView
 {
     public const string FieldName = "query";
-
-    public static PluginView Build(
-        string? term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState? state = null) =>
-        PluginViews.Declarative(
-            PluginViews.Container(
-                "search-root",
-                BackToBrowse,
-                PluginViews.Text("search-title", "Search stations", "title"),
-                Field(term),
-                Body(term, results, queryFailed, state ?? UserState.Empty)
-            )
-        );
 
     /// <summary>
     /// The field, carrying whatever was last searched for. A submitted query that
@@ -45,49 +39,67 @@ public static class SearchView
             }
         );
 
-    // Three ways to have no results, and they must not look alike. "We could not reach
-    // radio-browser" and "there is no such station" ask the user to do different things,
-    // and a single "nothing found" would have them retrying the wrong one.
-    private static PluginComponent Body(
+    /// <summary>
+    /// What a search turned up, or why it turned up nothing.
+    ///
+    /// Three ways to have no results, and they must not look alike: unreachable, nothing
+    /// typed yet, and nothing matched. Reporting an outage as an empty result set has the
+    /// viewer retrying a search that was never the problem.
+    /// </summary>
+    public static IEnumerable<PluginComponent> Results(
         string? term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState state)
     {
         if (queryFailed)
         {
-            return PluginViews.EmptyState(
+            yield return Heading("search-results-heading", "Search");
+            yield return PluginViews.EmptyState(
                 "search-failed",
                 "Search is unavailable",
                 "radio-browser did not answer. Try again in a moment."
             );
+            yield return ClearButton();
+            yield break;
         }
 
         if (string.IsNullOrWhiteSpace(term))
         {
-            return PluginViews.EmptyState(
-                "search-idle",
-                "Search for a station",
-                "Type a name to find stations anywhere in the radio-browser database."
-            );
+            yield break;
         }
+
+        yield return Heading("search-results-heading", $"Results for “{term}”");
 
         if (results.Count == 0)
         {
-            return PluginViews.EmptyState(
+            yield return PluginViews.EmptyState(
                 "search-empty",
                 "Nothing found",
-                $"No playable station matches \"{term}\"."
+                $"No playable station matches “{term}”."
+            );
+        }
+        else
+        {
+            yield return PluginViews.Grid(
+                "search-grid",
+                [.. results.Select(station => StationCards.WithFavourite(
+                    station,
+                    state.Favourites.Any(favourite => favourite.Id == station.Id),
+                    "search"))]
             );
         }
 
-        return PluginViews.Grid("search-grid", [.. results
-            .Select(station => StationCards.WithFavourite(
-                station, state.Favourites.Any(favourite => favourite.Id == station.Id)))]);
+        yield return ClearButton();
     }
 
-    private static PluginComponent BackToBrowse =>
+    private static PluginComponent Heading(string id, string text) =>
+        PluginViews.Text(id, text, "subtitle");
+
+    // A plain button carries nothing but its path, so clearing cannot reuse the form's
+    // submit - it has its own endpoint rather than a magic empty value.
+    private static PluginComponent ClearButton() =>
         PluginViews.Button(
-            "search-back",
-            "Browse",
-            PluginActionIntent.Navigate(RadioRoutes.Browse),
-            icon: "arrowLeft"
+            "search-clear",
+            "Clear search",
+            PluginActionIntent.CallPlugin(InternetRadioController.ClearSearchMethod),
+            variant: "secondary"
         );
 }

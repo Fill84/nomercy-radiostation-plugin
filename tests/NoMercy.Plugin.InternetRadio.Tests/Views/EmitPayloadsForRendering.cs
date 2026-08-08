@@ -79,12 +79,17 @@ public class EmitPayloadsForRendering
             ["radio-all"] = AllStationsView.Build(catalog),
             ["radio-station"] = StationView.Build(catalog, "groove", UserState.Empty),
             ["radio-settings"] = SettingsView.Build(catalog, "/data", now, now.AddDays(1), UserState.Empty),
-            ["radio-search"] = SearchView.Build(
-                "groove", [Station("groove", "Ambient"), Station("jazz", "Jazz")], queryFailed: false),
-            // Emitted too, because the three empty states are the ones a structural test
-            // cannot judge: they have to be told apart by looking at them.
-            ["radio-search-empty"] = SearchView.Build("nothing at all", [], queryFailed: false),
-            ["radio-search-failed"] = SearchView.Build("anything", [], queryFailed: true),
+            // The search states, drawn where they actually appear: on the landing page,
+            // under the field that produced them. These are the ones a structural test
+            // cannot judge - they have to be told apart by looking.
+            ["radio-search"] = BrowseView.Build(
+                catalog,
+                new UserState { LastSearch = "groove" },
+                [Station("groove", "Ambient"), Station("jazz", "Jazz")]),
+            ["radio-search-empty"] = BrowseView.Build(
+                catalog, new UserState { LastSearch = "nothing at all" }, []),
+            ["radio-search-failed"] = BrowseView.Build(
+                catalog, new UserState { LastSearch = "anything" }, [], searchFailed: true),
         };
 
         Directory.CreateDirectory(OutputDirectory);

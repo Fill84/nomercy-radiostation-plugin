@@ -87,9 +87,14 @@ public static class StationCards
     /// <summary>
     /// The play card with a favourite toggle beside it.
     ///
-    /// Beside, not inside: PluginViews.Card takes exactly one action and the card's is
+    /// Under it, not inside: PluginViews.Card takes exactly one action and the card's is
     /// already playMedia. One click has to stay "listen to this", which is the whole job
     /// of the card - so keeping is a second control rather than a mode on the first.
+    ///
+    /// A column, not a row. Row and Grid are the same thing in the contract - a wrapping
+    /// row - so wrapping each tile in a Row put a wrapping row inside a wrapping row, and
+    /// the popular grid drew as one empty box. A tile is a card with its control beneath
+    /// it, which is a shape the grid already knows how to place.
     ///
     /// The two states differ by label, and by variant on top of it - never by colour
     /// alone. A toggle whose only difference is a tint is unreadable to a good share of
@@ -102,7 +107,7 @@ public static class StationCards
     /// </summary>
     public static PluginComponent WithFavourite(
         RadioStation station, bool isFavourite, string scope = "") =>
-        PluginViews.Row(
+        PluginViews.Container(
             $"station-row-{Scoped(scope, station.Id)}",
             Play(station, scope),
             PluginViews.Button(

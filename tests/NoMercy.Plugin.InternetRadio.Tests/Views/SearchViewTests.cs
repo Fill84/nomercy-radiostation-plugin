@@ -8,94 +8,131 @@ using Xunit;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Views;
 
+// Asserted through BrowseView, because that is where a search is actually answered. The
+// previous version of these tests called SearchView.Build directly and passed on a page
+// no sequence of clicks could reach: the form stored the term, the client refreshed the
+// route it was already on, and the results were on a different one. Testing the section in
+// isolation could never have caught that - only testing the page the field lives on can.
 public class SearchViewTests
 {
-    private static RadioStation Station(string id) =>
-        new() { Id = id, Name = $"Station {id}", StreamUrl = $"https://example.com/{id}" };
+    private static RadioStation Station(string id, string genre = "Ambient") =>
+        new()
+        {
+            Id = id,
+            Name = $"Station {id}",
+            StreamUrl = $"https://example.com/{id}",
+            Genre = genre,
+            Popularity = 1,
+        };
+
+    private static StationCatalog Catalog() =>
+        StationCatalog.Create([Station("in-catalogue")], CatalogSource.Fetched, DateTimeOffset.UtcNow);
+
+    private static UserState Searching(string? term) => new() { LastSearch = term };
 
     private static IEnumerable<string> Ids(PluginView view) =>
         PluginNodes.All(view).Select(node => node.Id);
 
-    // The three empty states must be distinguishable. "We could not reach radio-browser"
-    // and "there is no such station" ask the user to do different things, and one shared
-    // "nothing found" has them retrying the search that was never the problem.
+    // The field is on the landing page, and it is where the answer appears.
     [Fact]
-    public void Build_WithNoTerm_InvitesASearch()
+    public void TheFieldIsOnTheLandingPage()
     {
-        Ids(SearchView.Build(null, [], queryFailed: false)).Should().Contain("search-idle");
+        Ids(BrowseView.Build(Catalog(), UserState.Empty)).Should().Contain("search-form");
     }
 
     [Fact]
-    public void Build_WithATermAndNoResults_SaysNothingMatched()
+    public void WithNoTerm_ShowsNoResultsSectionAtAll()
     {
-        Ids(SearchView.Build("nothing", [], queryFailed: false)).Should().Contain("search-empty");
+        IEnumerable<string> ids = Ids(BrowseView.Build(Catalog(), UserState.Empty));
+
+        ids.Should().NotContain("search-results-heading")
+            .And.NotContain("search-empty")
+            .And.NotContain("search-failed");
+    }
+
+    // The bug this whole change exists for: a term produces results on the same page.
+    [Fact]
+    public void WithResults_RendersThemOnTheSamePageAsTheField()
+    {
+        PluginView view = BrowseView.Build(
+            Catalog(), Searching("groove"), [Station("found-a"), Station("found-b")]);
+
+        Ids(view).Should().Contain("search-form")
+            .And.Contain("search-results-heading")
+            .And.Contain("station-card-search-found-a")
+            .And.Contain("station-card-search-found-b");
     }
 
     [Fact]
-    public void Build_WhenTheQueryFailed_SaysSoInsteadOfClaimingNoResults()
+    public void WithATermAndNoResults_SaysNothingMatched()
     {
-        IEnumerable<string> ids = Ids(SearchView.Build("anything", [], queryFailed: true));
+        Ids(BrowseView.Build(Catalog(), Searching("nothing"), []))
+            .Should().Contain("search-empty");
+    }
+
+    // "We could not reach radio-browser" and "there is no such station" ask the viewer to
+    // do different things. Reporting an outage as an empty result set has them retrying
+    // the search that was never the problem.
+    [Fact]
+    public void WhenTheQueryFailed_SaysSoInsteadOfClaimingNoResults()
+    {
+        IEnumerable<string> ids =
+            Ids(BrowseView.Build(Catalog(), Searching("anything"), [], searchFailed: true));
 
         ids.Should().Contain("search-failed").And.NotContain("search-empty");
     }
 
-    // A failed query outranks an empty term: an outage is worth reporting even when
-    // there was nothing to search for, and silently showing the idle state would hide it.
+    // Two grids of unrelated stations under one field is a page where it is not clear
+    // which one answered you.
     [Fact]
-    public void Build_ReportsAFailureEvenWithNoTerm()
+    public void WhileSearching_PopularStepsAside()
     {
-        Ids(SearchView.Build(null, [], queryFailed: true)).Should().Contain("search-failed");
+        Ids(BrowseView.Build(Catalog(), Searching("groove"), [Station("found")]))
+            .Should().NotContain("browse-popular-grid");
+    }
+
+    [Fact]
+    public void WithNoSearch_PopularIsBack()
+    {
+        Ids(BrowseView.Build(Catalog(), UserState.Empty)).Should().Contain("browse-popular-grid");
+    }
+
+    // A search you cannot get out of is a landing page you have lost.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void EverySearchStateOffersAWayToClearIt(bool failed)
+    {
+        Ids(BrowseView.Build(Catalog(), Searching("x"), [], searchFailed: failed))
+            .Should().Contain("search-clear");
+    }
+
+    [Fact]
+    public void ClearingGoesThroughItsOwnEndpoint()
+    {
+        PluginComponent clear = PluginNodes
+            .All(BrowseView.Build(Catalog(), Searching("x"), [Station("a")]))
+            .Single(node => node.Id == "search-clear");
+
+        clear.Action!.Type.Should().Be(PluginActionType.CallPlugin);
+        clear.Action.Payload["method"].Should().Be(InternetRadioController.ClearSearchMethod);
     }
 
     // A submitted query that vanishes from the box reads as a search that was lost.
-    // Asserted on the input's own value rather than on any text on the page, because the
-    // "nothing found" message quotes the term too - and would pass this on its own.
     [Fact]
-    public void Build_KeepsTheTermInTheField()
+    public void TheFieldKeepsTheTerm()
     {
-        PluginComponent input = PluginNodes.All(SearchView.Build("groove salad", [], false))
-            .Single(node => node.Id == "search-form-query");
-
-        input.Props["value"].Should().Be("groove salad");
+        PluginNodes.All(BrowseView.Build(Catalog(), Searching("groove salad"), []))
+            .Single(node => node.Id == "search-form-query")
+            .Props["value"].Should().Be("groove salad");
     }
 
-    [Fact]
-    public void Build_LeavesTheFieldEmptyWhenNothingWasSearchedFor()
-    {
-        PluginComponent input = PluginNodes.All(SearchView.Build(null, [], false))
-            .Single(node => node.Id == "search-form-query");
-
-        input.Props.TryGetValue("value", out object? value);
-        value.Should().BeNull();
-    }
-
-    [Fact]
-    public void Build_RendersEachResultAsACard()
-    {
-        PluginView view = SearchView.Build("x", [Station("a"), Station("b")], false);
-
-        Ids(view).Should().Contain("station-card-a").And.Contain("station-card-b");
-    }
-
-    // Results are the same card the grids use, so a station cannot behave one way when
+    // A result is the same tile as any grid, so a station cannot behave one way when
     // browsed and another when searched for.
     [Fact]
-    public void Build_ResultsPlayOnClickLikeEveryOtherGrid()
+    public void ResultsCarryTheFavouriteToggleLikeEveryOtherTile()
     {
-        PluginComponent card = PluginNodes.All(SearchView.Build("x", [Station("a")], false))
-            .Single(node => node.Id == "station-card-a");
-
-        card.Props.Should().ContainKey("action");
-    }
-
-    // The way back, on every state. A search page with no exit is a dead end when the
-    // query finds nothing.
-    [Theory]
-    [InlineData(null, false)]
-    [InlineData("term", false)]
-    [InlineData("term", true)]
-    public void Build_AlwaysOffersTheWayBack(string? term, bool failed)
-    {
-        Ids(SearchView.Build(term, [], failed)).Should().Contain("search-back");
+        Ids(BrowseView.Build(Catalog(), Searching("x"), [Station("found")]))
+            .Should().Contain("station-favourite-search-found");
     }
 }

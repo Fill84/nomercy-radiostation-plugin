@@ -21,6 +21,7 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public const string ToggleFavouriteRouteTemplate = "favourites/toggle/{stationId}";
     public const string ToggleFavouriteMethod = "favourites/toggle";
     public const string SearchMethod = "search";
+    public const string ClearSearchMethod = "search/clear";
 
     public sealed record SearchRequest(string? Query);
 
@@ -31,6 +32,12 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     [HttpPost(SearchMethod)]
     public Task<IActionResult> Search([FromBody] SearchRequest request, CancellationToken ct) =>
         RespondAsync(plugin => plugin.StoreSearchAsync(CurrentUserId(), request.Query, ct));
+
+    // Its own endpoint rather than the form submitting an empty value: a plain button
+    // carries nothing but its path, and clearing is a button.
+    [HttpPost(ClearSearchMethod)]
+    public Task<IActionResult> ClearSearch(CancellationToken ct) =>
+        RespondAsync(plugin => plugin.StoreSearchAsync(CurrentUserId(), null, ct));
 
     /// <summary>
     /// The same claim the server reads for its own controllers, so a plugin's idea of who

@@ -9,3 +9,6 @@ TestResults/
 .claude/*
 _server/
 _nupkgs/
+
+# Machine-specific: points at a debugging port on this developer's browser.
+.mcp.json
