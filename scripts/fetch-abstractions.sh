@@ -52,10 +52,10 @@ feed="$root/_nupkgs"
 # A release must be rebuildable. SERVER_REF pins the contract to one commit; it
 # defaults to a branch for day-to-day work, but CI sets it to a SHA for a tag
 # build so the artifact is reproducible instead of "whatever dev happened to be".
-ref="${SERVER_REF:-${SERVER_BRANCH:-dev}}"
+ref="${SERVER_REF:-${SERVER_BRANCH:-master}}"
 
 if [ ! -d "$server" ]; then
-    git clone --depth=1 --branch="${SERVER_BRANCH:-dev}" --filter=blob:none --no-checkout \
+    git clone --depth=1 --branch="${SERVER_BRANCH:-master}" --filter=blob:none --no-checkout \
         https://github.com/NoMercy-Entertainment/nomercy-media-server.git "$server"
 fi
 
@@ -78,6 +78,13 @@ git -C "$server" sparse-checkout add \
 git -C "$server" fetch --depth=1 origin "$ref"
 git -C "$server" reset --hard FETCH_HEAD
 
+# Emptied, not topped up. The package version comes from the server's own build props,
+# which master stamps per release and dev leaves at an old number - so packing master
+# after dev leaves 0.1.404 and 0.1.470 side by side in the feed. The plugin's reference
+# floats, NuGet takes the highest, and the answer stops depending on the ref this script
+# was asked for. Switching branches would then silently keep whichever contract happened
+# to be packed first, which is the exact failure this script exists to prevent.
+rm -rf "$feed"
 mkdir -p "$feed"
 
 abstractions="$server/src/NoMercy.Plugins.Abstractions/NoMercy.Plugins.Abstractions.csproj"

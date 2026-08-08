@@ -32,7 +32,7 @@ $root = Split-Path -Parent $PSScriptRoot
 # the clone inside its own disposable workspace.
 $server = if ($env:SERVER_DIR) { $env:SERVER_DIR } else { Join-Path (Split-Path -Parent $root) 'nomercy-media-server' }
 $feed   = Join-Path $root '_nupkgs'
-$branch = if ($env:SERVER_BRANCH) { $env:SERVER_BRANCH } else { 'dev' }
+$branch = if ($env:SERVER_BRANCH) { $env:SERVER_BRANCH } else { 'master' }
 # A release must be rebuildable. SERVER_REF pins the contract to one commit; it defaults
 # to a branch for day-to-day work, but CI sets it to a SHA for a tag build so the
 # artifact is reproducible instead of "whatever dev happened to be".
@@ -62,6 +62,12 @@ if ($LASTEXITCODE -ne 0) { throw "fetching $ref failed" }
 git -C $server reset --hard FETCH_HEAD
 if ($LASTEXITCODE -ne 0) { throw 'resetting the contract checkout failed' }
 
+# Emptied, not topped up. The package version comes from the server's own build props,
+# which master stamps per release and dev leaves at an old number - so packing master
+# after dev leaves 0.1.404 and 0.1.470 side by side in the feed. The plugin's reference
+# floats, NuGet takes the highest, and the answer stops depending on the ref this script
+# was asked for.
+if (Test-Path $feed) { Remove-Item -Recurse -Force $feed }
 New-Item -ItemType Directory -Force $feed | Out-Null
 
 $abstractions = Join-Path $server 'src/NoMercy.Plugins.Abstractions/NoMercy.Plugins.Abstractions.csproj'

@@ -24,7 +24,7 @@ permissions:
 env:
   PLUGIN_NAME: NoMercy.Plugin.InternetRadio
   PLUGIN_DIR: src/NoMercy.Plugin.InternetRadio
-  SERVER_BRANCH: dev
+  SERVER_BRANCH: master
   # fetch-abstractions.sh defaults the contract checkout to a sibling of this repo,
   # which is where a developer keeps one and lets every plugin in the workspace share
   # it. A runner has no siblings worth keeping, so the clone stays inside the workspace
