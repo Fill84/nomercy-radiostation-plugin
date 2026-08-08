@@ -34,8 +34,8 @@ public sealed class RadioBrowserClient(HttpClient http)
         new() { PropertyNameCaseInsensitive = true };
 
     /// <summary>
-    /// The pinned seeds, in one request. A POST because the uuid list is a body
-    /// field, and ten GETs would be ten round trips for one screen.
+    /// Stations by uuid, in one request. A POST because the uuid list is a body
+    /// field, and one GET per station would be a round trip per station.
     /// </summary>
     public async Task<IReadOnlyList<RadioBrowserStation>> GetByUuidsAsync(
         IReadOnlyList<string> uuids,

@@ -231,7 +231,7 @@ public sealed class CatalogProvider(
                 logger.LogWarning(exception, "Internet Radio could not write its catalogue cache.");
             }
 
-            // Some stations came back, but if the seed fetch or a genre query failed
+            // Some stations came back, but if any genre query failed
             // along the way this is a degraded result, not a clean one - the settings
             // page has to say so.
             StationCatalog fetched = StationCatalog.Create(stations, CatalogSource.Fetched, now);
