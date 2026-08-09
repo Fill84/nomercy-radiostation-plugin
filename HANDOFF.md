@@ -19,34 +19,77 @@ play**, and that is the only thing that matters until it does.
 - A radio station **never starts**: the track lands in Now Playing with its cover and queue
   entry, the transport shows `00:00 / 00:00`, and pressing Play (the plugin's button or the
   player's own) changes nothing.
-- **No `/stream/` request ever reaches the server.** So the failure is before the audio
-  element is given a source, not a failure to fetch it.
+- No `/stream/` request ever reached the server — but that observation is from **2026-08-08,
+  before the `TrackLinks` fix landed**, and it had a cause that no longer exists (the mount
+  threw before the transport was reached). It has not been re-taken since, and the
+  conclusion drawn from it — "the failure is before the element is given a source" — is
+  not currently supported by anything. Treat it as unverified.
 - The console shows **no media error at all**. Only `lyrics fetch failed` (a 404 with an
-  empty body, cosmetic) and a repeating `Requested device switch to: 89d548f8-…`.
+  empty body, cosmetic) and a repeating `Requested device switch to: 89d548f8-…`. This
+  rules out nothing: a failed load is silent by design. See below.
 - The old blocker is **gone**: `TrackLinks` no longer throws, and the track id is now
   `plugin:{pluginId}:{stationUuid}` rather than the stream url. Both were fixed upstream and
   are live (see *Landed upstream*).
 
-### Where to look next
+### Ruled out by experiment, 2026-08-09 — do not re-tread
 
-The app's music player is `@nomercy-entertainment/nomercy-music-player`, configured in
-`nomercy-app-web/src/store/audioPlayer.ts` with `backend: 'webaudio'`.
+Both hypotheses this handoff proposed are **wrong**. They were tested against the real
+published player, not reasoned about.
 
-- `node_modules/@nomercy-entertainment/nomercy-music-player/dist/adapters/audio-backend/web-audio.js`
-  — `load(url, opts)` sets `element.crossOrigin = 'anonymous'`, then `element.src = …` and
-  `element.load()`, and **awaits `loadedmetadata`**. Two things worth proving:
-  1. Is `load()` reached at all for a plugin item? Nothing requests the stream, which
-     suggests it is not. Trace `playTrack` → `audioPlayer.item(song, {autoplay:true})` →
-     whatever decides to call the backend. `dist/player/` and `dist/index.js` are the
-     places; the package is public as `nomercy-music-player` if the source reads better.
-  2. If it is reached, a **live stream never fires `loadedmetadata` reliably** and the
-     awaited promise would hang forever with no error — which matches the symptoms exactly.
-     A library track is finite and fires it immediately. That asymmetry is the strongest
-     hypothesis on the table.
-- The plugin's own item differs from a library item in: `url`/`path` is the relay url,
-  there is no duration, no `folder`, no `libraryID`. Compare a working library
-  `PlaylistItem` against the one `toPlaylistItem` builds in
-  `nomercy-app-web/src/lib/plugin/actionInterpreter.ts`.
+The harness: a node relay that pipes a live Icecast stream (SomaFM, 128k mp3) with the
+exact response headers `RelayAsync` sets — status passed through, `Accept-Ranges: bytes`,
+`Access-Control-Allow-Origin: *`, upstream content-type, body piped as it arrives — plus
+the same audio captured once and served as a finite file with a `Content-Length`, as the
+control. Driven in Edge (real codecs) against `nomercy-music-player.iife.js`, unmodified.
+
+| Claim | Result |
+| --- | --- |
+| "A live stream never fires `loadedmetadata`" | **False.** Fires at +1478ms, `duration: Infinity` |
+| "`backend.load()` hangs forever on a stream" | **False.** Resolves in 5ms, reaches `canplay` |
+| "The plugin's item shape is the problem" | **False.** `plugin:{id}:{uuid}` id, `url === path`, no duration/folder/libraryID — plays |
+| Full production path, `queue()` + `item(item, {autoplay:true})` | **Plays.** `playState=playing`, `phase=playing`, position 0.77 → 1.77 → 2.77s |
+
+So the player, the backend, the item shape and live streams as such are all fine. The
+failure is not in the client stack and not in the shape of what the plugin sends.
+
+### What the failure actually looks like
+
+The same harness with the URL answering **401** reproduces every reported symptom exactly:
+
+```
+element event=error readyState=0 networkState=3 err=4
+t=1s  playState=idle phase=ready elCurrentTime=0.00 paused=true
+t=12s playState=idle phase=ready elCurrentTime=0.00 paused=true
+```
+
+Track sits in Now Playing, transport frozen at 00:00, and **not one line in the console** —
+because `item()` swallows the load rejection with `.catch(() => {})` and `load()` never
+emits `error` despite its doc comment saying it does. Written up in
+`docs/upstream/2026-08-09-plugin-media-failure-is-silent.md`.
+
+That means "no media error in the console" is **not evidence of anything**. Any network
+failure — 401, 403, 404, a CSP refusal — looks precisely like this.
+
+### The one thing left to determine
+
+The media request fails at the network layer. Which failure is still open, and it needs one
+look at a real browser rather than more reading. On the music page, with a station clicked:
+
+```js
+const el = document.querySelector('#music-player audio') ?? document.querySelector('audio');
+console.log(el.currentSrc, el.error, el.networkState, el.readyState);
+```
+
+- `currentSrc` with **no `?access_token=`** → `mediaAuthorization()` refused the URL, so the
+  origin of `MediaProxy.Stream()` does not equal the origin of `currentServer.serverBaseUrl`.
+  Confirmed independently: the server answers **401** to a token-less request on that
+  route. `MediaProxy.Cover()` carries its own token, which is why covers load and audio
+  does not — that asymmetry is deliberate and is the prime suspect.
+- `currentSrc` pointing at the **station's own url** rather than this server → `PublicBaseUrl()`
+  returned null and the fallback in `StationCards.PlayIntent` was taken; that url is
+  http and/or off-origin, so CSP or mixed content blocks it before any request.
+- `currentSrc` correct **with** a token → the relay itself is answering badly; take it from
+  the Network tab.
 
 Fix belongs upstream (player package or app-web), on a branch, with a PR — same as the two
 that already landed.
