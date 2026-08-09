@@ -1,11 +1,35 @@
 # Handoff — Internet Radio plugin
 
-Written 2026-08-09. Say "ga door" and start from **Priority 1**.
+Written 2026-08-09, rewritten the same day once the cause was found.
 
 ## The one-line state
 
-The plugin looks and behaves like the rest of the app now; **radio audio still does not
-play**, and that is the only thing that matters until it does.
+Radio was silent for **two independent reasons**, both now fixed and both written up. The
+relay fix is deployed and verified; the client fix is committed on a branch in
+`nomercy-app-web` and **still needs to be deployed before anyone hears anything**.
+
+## What was actually wrong
+
+| | |
+| --- | --- |
+| **The relay never flushed** | `CopyToAsync` to `Response.Body` and nothing else. A response that is never started and never flushed is delivered when the body completes — for a cover, instantly; for a live stream, never. Fixed in `6247bf2`, deployed to beast-unit, bytes verified reaching the client |
+| **Connect swallowed the play** | With Connect on, a user's play is cancelled locally and routed to the MusicHub, which then echoes an authoritative frame back. The hub has never heard of a plugin's stream, so nothing echoes and the play is lost. Fixed on `fix/plugin-track-not-routed-to-hub` (`ab9e237` + tests `3c11ad4`) — **not deployed** |
+
+The second one is why the browser reported `readyState 4`, `err: null`, `vol: 1`,
+`muted: false` — fully loaded, ready, unmuted — and `paused: true` at `t: 0`.
+
+Both are written up in `docs/upstream/`, along with the reason this took days: every
+failure on this path is silent. See `2026-08-09-plugin-media-failure-is-silent.md` and
+`2026-08-09-connect-swallows-plugin-playback.md`.
+
+## Also fixed on the way
+
+`/music/plugins/{id}` rendered a blank shell while `/plugins/{id}` rendered fine, which
+read as a routing fault for hours. It is a timeout: `PluginScreen` fetched the view with
+`serverClient(5)` — five seconds — while `Host` passes none, and a plugin resolving a
+station against radio-browser on a cold cache does not make it. Branch
+`fix/plugin-view-timeout` (`8bb1c0e`) in `nomercy-app-web`, **also not deployed**. Every
+station card links to that route, so until it ships, cards lead to an empty page.
 
 ---
 
