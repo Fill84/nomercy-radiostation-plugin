@@ -45,7 +45,15 @@ public static class BrowseView
             SearchView.Field(state.LastSearch ?? string.Empty, state),
         ];
 
-        bool searching = searchFailed || !string.IsNullOrWhiteSpace(state.LastSearch);
+        // Every axis, not just the name. A search by genre or country left this
+        // false, so Popular stayed on screen under the results - two grids of
+        // unrelated stations under one box, which is what this flag exists to
+        // prevent and what it stopped preventing the moment filters arrived.
+        bool searching = searchFailed
+            || !string.IsNullOrWhiteSpace(state.LastSearch)
+            || !string.IsNullOrWhiteSpace(state.LastGenre)
+            || !string.IsNullOrWhiteSpace(state.LastCountry)
+            || !string.IsNullOrWhiteSpace(state.LastLanguage);
 
         children.AddRange(
             SearchView.Results(state.LastSearch ?? string.Empty, searchResults ?? [], searchFailed, state));
