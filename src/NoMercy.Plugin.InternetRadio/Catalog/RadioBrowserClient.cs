@@ -156,6 +156,42 @@ public sealed class RadioBrowserClient(HttpClient http)
         return await SendAsync(request, ct);
     }
 
+    /// <summary>
+    /// The lists radio-browser publishes for the fields it indexes on.
+    ///
+    /// Asked for rather than typed: a listener cannot be expected to guess that the
+    /// tag is "drum and bass" and not "drum &amp; bass", or that the country is
+    /// "The Netherlands" and not "Netherlands". A free-text filter against a
+    /// controlled vocabulary is a filter that silently matches nothing.
+    ///
+    /// Ordered by how many stations carry each, and capped: the tag list alone runs
+    /// to tens of thousands, most of them used once, and a select with that many
+    /// entries is unusable on a pointer and impossible on a remote.
+    /// </summary>
+    public async Task<IReadOnlyList<RadioBrowserFacet>> GetFacetAsync(
+        string facet,
+        int limit,
+        CancellationToken ct
+    )
+    {
+        using HttpRequestMessage request = Request(
+            HttpMethod.Get,
+            $"/json/{facet}?order=stationcount&reverse=true&hidebroken=true"
+        );
+
+        using HttpResponseMessage response = await http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+
+        List<RadioBrowserFacet>? all = await response.Content.ReadFromJsonAsync<
+            List<RadioBrowserFacet>>(JsonOptions, ct);
+
+        return all is null
+            ? []
+            : [.. all
+                .Where(entry => !string.IsNullOrWhiteSpace(entry.Name) && entry.StationCount > 0)
+                .Take(limit)];
+    }
+
     private static HttpRequestMessage Request(HttpMethod method, string path)
     {
         HttpRequestMessage request = new(method, $"{BaseAddress}{path}");

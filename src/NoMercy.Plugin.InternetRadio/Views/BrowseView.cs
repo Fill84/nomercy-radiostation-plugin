@@ -16,7 +16,8 @@ public static class BrowseView
         StationCatalog catalog,
         UserState state,
         IReadOnlyList<RadioStation>? searchResults = null,
-        bool searchFailed = false)
+        bool searchFailed = false,
+        SearchFacets? facets = null)
     {
         if (catalog.IsEmpty)
         {
@@ -42,7 +43,7 @@ public static class BrowseView
             // with data and cannot navigate, so after a submit the client refreshes the
             // route it is already on. Answering on a different route would mean submitting
             // here and the answer appearing on a page nothing takes you to.
-            SearchView.Field(state.LastSearch ?? string.Empty, state),
+            SearchView.Field(state.LastSearch ?? string.Empty, state, facets ?? new SearchFacets()),
         ];
 
         // Every axis, not just the name. A search by genre or country left this

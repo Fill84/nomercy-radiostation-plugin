@@ -156,6 +156,14 @@ public static class StationGates
     /// </summary>
     public static IEnumerable<RadioStation> Admitted(IEnumerable<RadioBrowserStation> wire)
     {
+        // radio-browser is community-edited and the same broadcast is submitted more
+        // than once - a rename, a second entry for the https url, a duplicate from
+        // another contributor. Each carries its own uuid, so nothing upstream treats
+        // them as one, and a page of results reads as the same three stations over
+        // and over. Kept on the stream url, which is what actually plays: two
+        // entries pointing at one stream are one station however they are spelled.
+        HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+
         foreach (RadioBrowserStation station in wire)
         {
             if (!Admits(station))
@@ -172,11 +180,20 @@ public static class StationGates
                 continue;
             }
 
+            string stream = EffectiveUrl(station);
+
+            // The first one wins. The answer is already ordered by votes, so the
+            // duplicate that is dropped is the one fewer people vouched for.
+            if (!seen.Add(stream))
+            {
+                continue;
+            }
+
             yield return new RadioStation
             {
                 Id = uuid,
                 Name = name.Trim(),
-                StreamUrl = EffectiveUrl(station),
+                StreamUrl = stream,
                 LogoUrl = string.IsNullOrWhiteSpace(station.Favicon) ? null : station.Favicon,
                 Homepage = string.IsNullOrWhiteSpace(station.Homepage) ? null : station.Homepage,
                 Genre = GenreMap.Resolve(station.Tags),

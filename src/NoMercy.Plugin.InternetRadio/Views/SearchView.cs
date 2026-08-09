@@ -31,7 +31,8 @@ public static class SearchView
         string term,
         IReadOnlyList<RadioStation> results,
         bool queryFailed,
-        UserState state)
+        UserState state,
+        SearchFacets? facets = null)
     {
         List<PluginComponent> children =
         [
@@ -41,7 +42,7 @@ public static class SearchView
                 PluginActionIntent.Navigate(RadioRoutes.Browse),
                 icon: "arrowLeft"),
 
-            Field(term, state),
+            Field(term, state, facets ?? new SearchFacets()),
         ];
 
         children.AddRange(Results(term, results, queryFailed, state));
@@ -69,6 +70,17 @@ public static class SearchView
     /// four ways to narrow rather than four things to fill in.
     /// </summary>
     public static PluginComponent Field(string term, UserState state) =>
+        Field(term, state, new SearchFacets());
+
+    /// <summary>
+    /// The same form, offering the choices radio-browser actually has.
+    ///
+    /// A select when the list arrived, a text box when it did not. Typing a genre
+    /// against a controlled vocabulary is guessing at spelling - "drum and bass"
+    /// rather than "drum &amp; bass", "The Netherlands" rather than "Netherlands" -
+    /// and a filter that silently matches nothing reads as an empty database.
+    /// </summary>
+    public static PluginComponent Field(string term, UserState state, SearchFacets facets) =>
         Ui.Form(
             "search-form",
             "Search",
@@ -81,30 +93,45 @@ public static class SearchView
                 Value = term,
                 Placeholder = "Any name",
             },
-            new PluginFormField
+            Choice(GenreFieldName, "Genre", state.LastGenre, facets.Genres, "ambient, jazz, anime"),
+            Choice(CountryFieldName, "Country", state.LastCountry, facets.Countries, "Japan"),
+            Choice(LanguageFieldName, "Language", state.LastLanguage, facets.Languages, "japanese"));
+
+    /// <summary>
+    /// One filter, as a list when there is a list and as a box when there is not.
+    ///
+    /// The blank first entry is what "not filtered" looks like in a select, and it
+    /// has to be there: without it the first real choice is pre-selected and every
+    /// search silently carries a filter nobody picked.
+    /// </summary>
+    private static PluginFormField Choice(
+        string name,
+        string label,
+        string? current,
+        IReadOnlyList<string> choices,
+        string placeholder
+    ) =>
+        choices.Count == 0
+            ? new PluginFormField
             {
-                Name = GenreFieldName,
-                Label = "Genre",
+                Name = name,
+                Label = label,
                 Type = PluginFormFieldType.Text,
-                Value = state.LastGenre ?? string.Empty,
-                Placeholder = "ambient, jazz, anime",
-            },
-            new PluginFormField
+                Value = current ?? string.Empty,
+                Placeholder = placeholder,
+            }
+            : new PluginFormField
             {
-                Name = CountryFieldName,
-                Label = "Country",
-                Type = PluginFormFieldType.Text,
-                Value = state.LastCountry ?? string.Empty,
-                Placeholder = "Japan",
-            },
-            new PluginFormField
-            {
-                Name = LanguageFieldName,
-                Label = "Language",
-                Type = PluginFormFieldType.Text,
-                Value = state.LastLanguage ?? string.Empty,
-                Placeholder = "japanese",
-            });
+                Name = name,
+                Label = label,
+                Type = PluginFormFieldType.Select,
+                Value = current ?? string.Empty,
+                Options =
+                [
+                    new PluginFormOption { Value = string.Empty, Label = $"Any {label.ToLowerInvariant()}" },
+                    .. choices.Select(choice => new PluginFormOption { Value = choice, Label = choice }),
+                ],
+            };
 
     /// <summary>
     /// What a search turned up, or why it turned up nothing.

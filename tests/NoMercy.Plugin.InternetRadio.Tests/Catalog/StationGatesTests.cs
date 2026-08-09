@@ -224,4 +224,30 @@ public class StationGatesTests
     {
         StationGates.IsSafeExternalUrl(url).Should().BeFalse();
     }
+
+    // radio-browser is community-edited and one broadcast is submitted more than
+    // once, each entry with its own uuid, so nothing upstream treats them as one.
+    // A page of results then reads as the same three stations over and over.
+    [Fact]
+    public void OneBroadcastIsOneStationHoweverManyTimesItWasSubmitted()
+    {
+        RadioBrowserStation[] wire =
+        [
+            Wire(name: "Classic Vinyl HD"),
+            Wire(name: "Classic Vinyl HD (128k)"),
+            Wire(url: "https://example.com/other.mp3", name: "Adroit Jazz"),
+        ];
+
+        StationGates.Admitted(wire).Select(station => station.Name)
+            .Should().Equal("Classic Vinyl HD", "Adroit Jazz");
+    }
+
+    [Fact]
+    public void TheEntryMorePeopleVouchedForIsTheOneKept()
+    {
+        // The answer arrives ordered by votes, so first-wins keeps the better one.
+        RadioBrowserStation[] wire = [Wire(name: "Most voted"), Wire(name: "Also submitted")];
+
+        StationGates.Admitted(wire).Single().Name.Should().Be("Most voted");
+    }
 }

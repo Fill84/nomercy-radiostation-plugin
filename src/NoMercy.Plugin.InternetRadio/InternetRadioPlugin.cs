@@ -89,6 +89,39 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private UserStateStore StateStore => _userState ??= new UserStateStore(Context.DataFolderPath);
 
+    /// <summary>The choices the search form offers, as radio-browser publishes them.</summary>
+    private readonly SearchFacets _facets = new();
+
+    /// <summary>
+    /// The lists, refreshed when they have aged out.
+    ///
+    /// Failure is swallowed: an unreachable radio-browser costs the selects their
+    /// options and the form falls back to text boxes, which is a smaller loss than
+    /// a page that will not draw at all.
+    /// </summary>
+    private async Task<SearchFacets> FacetsAsync(CancellationToken ct)
+    {
+        if (_facets.IsStale(DateTimeOffset.UtcNow))
+        {
+            try
+            {
+                await _facets.RefreshAsync(
+                    new RadioBrowserClient(Context.HttpClient), DateTimeOffset.UtcNow, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                _context?.Logger.LogWarning(
+                    exception, "Internet Radio could not read radio-browser's own lists.");
+            }
+        }
+
+        return _facets;
+    }
+
     /// <summary>What each station is playing right now, as it last announced.</summary>
     public NowPlaying NowPlaying { get; } = new();
 
@@ -213,12 +246,13 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         StationQuery stored = StoredQuery(state);
         if (!IsAsking(stored))
         {
-            return BrowseView.Build(catalog, state);
+            return BrowseView.Build(catalog, state, facets: await FacetsAsync(ct));
         }
 
         try
         {
-            return BrowseView.Build(catalog, state, await SearchAsync(stored, ct));
+            return BrowseView.Build(
+                catalog, state, await SearchAsync(stored, ct), facets: await FacetsAsync(ct));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -229,7 +263,8 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             _context?.Logger.LogWarning(
                 exception, "Internet Radio could not search for {Term}.", state.LastSearch);
 
-            return BrowseView.Build(catalog, state, [], searchFailed: true);
+            return BrowseView.Build(
+                catalog, state, [], searchFailed: true, facets: await FacetsAsync(ct));
         }
     }
 
@@ -267,14 +302,14 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
         if (term.Length is > 0 and < SearchTerms.MinLength || !IsAsking(query))
         {
-            return SearchView.Build(term, [], queryFailed: false, state);
+            return SearchView.Build(term, [], queryFailed: false, state, await FacetsAsync(ct));
         }
 
         try
         {
             IReadOnlyList<RadioStation> found = await SearchAsync(query, ct);
 
-            return SearchView.Build(term, found, queryFailed: false, state);
+            return SearchView.Build(term, found, queryFailed: false, state, await FacetsAsync(ct));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -285,7 +320,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             _context?.Logger.LogWarning(
                 exception, "Internet Radio could not search for {Term}.", term);
 
-            return SearchView.Build(term, [], queryFailed: true, state);
+            return SearchView.Build(term, [], queryFailed: true, state, await FacetsAsync(ct));
         }
     }
 
