@@ -26,6 +26,24 @@ public class StationCardsTests
     private static Dictionary<string, object?> Data(PluginComponent card) =>
         card.Props["data"].Should().BeOfType<Dictionary<string, object?>>().Subject;
 
+    // A station is not an artist. Left to its own music vocabulary the card read
+    // "Artist" under every station on the shelf, with a bare bullet after it.
+    [Fact]
+    public void Tile_SaysWhereTheStationBroadcastsFromAndWhatItPlays()
+    {
+        Dictionary<string, object?> data = Data(StationCards.Tile(Station()));
+
+        data["description"].Should().Be("NL • Ambient");
+    }
+
+    [Fact]
+    public void Tile_LeavesTheLineOutWhenAStationSaysNeither()
+    {
+        RadioStation bare = Station() with { Country = null, Genre = null };
+
+        Data(StationCards.Tile(bare))["description"].Should().Be(string.Empty);
+    }
+
     // The grid Films, Series and Music are laid out with. A plugin cannot express its
     // responsive column counts and should not try: the point is that it is the same shelf.
     [Fact]

@@ -58,7 +58,24 @@ public static class StationCards
             CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id),
             // Same treatment as an artist - a square, framed logo - rather than the album
             // branch, which draws a record sleeve this is not.
-            type: "artist");
+            type: "artist",
+            description: StationSubtitle(station));
+
+    /// <summary>
+    /// The line under a station's name: where it broadcasts from and what it plays.
+    /// A station has no track count and no year, and the card's own music vocabulary
+    /// has nothing true to say about one.
+    /// </summary>
+    private static string StationSubtitle(RadioStation station)
+    {
+        string[] parts =
+        [
+            station.Country ?? string.Empty,
+            station.Genre ?? string.Empty,
+        ];
+
+        return string.Join(" • ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
+    }
 
     /// <summary>
     /// The key a media intent carries the station's own id under.

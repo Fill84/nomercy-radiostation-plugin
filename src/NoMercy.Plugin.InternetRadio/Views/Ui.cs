@@ -82,7 +82,8 @@ public static class Ui
         string name,
         string link,
         string? cover,
-        string? type = null) =>
+        string? type = null,
+        string? description = null) =>
         new()
         {
             Id = id,
@@ -101,6 +102,10 @@ public static class Ui
                     ["link"] = link,
                     ["cover"] = cover,
                     ["type"] = type,
+                    // The line under the name. Without it the card falls back to
+                    // its own music vocabulary and labels a radio station an
+                    // artist, which is neither true nor useful.
+                    ["description"] = description,
                 },
             },
         };
