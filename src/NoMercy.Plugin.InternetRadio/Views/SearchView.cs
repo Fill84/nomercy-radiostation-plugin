@@ -116,7 +116,18 @@ public static class SearchView
     public static IEnumerable<PluginComponent> Results(
         string term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState state)
     {
-        if (term.Length == 0)
+        // Whether anything was asked for, not whether a name was typed. Keying on
+        // the name alone meant a search by genre or country - which needs no name
+        // at all - rendered as "nothing typed yet" while the stations it found sat
+        // in the argument list unused.
+        bool asked = term.Length > 0
+            || queryFailed
+            || results.Count > 0
+            || !string.IsNullOrWhiteSpace(state.LastGenre)
+            || !string.IsNullOrWhiteSpace(state.LastCountry)
+            || !string.IsNullOrWhiteSpace(state.LastLanguage);
+
+        if (!asked)
         {
             yield break;
         }
@@ -136,7 +147,9 @@ public static class SearchView
             yield return Ui.EmptyState(
                 "search-empty",
                 "Nothing found",
-                $"No playable station matches “{term}”.");
+                term.Length > 0
+                    ? $"No playable station matches “{term}”."
+                    : "No playable station matches those filters.");
 
             yield break;
         }
