@@ -59,7 +59,16 @@ public static class Ui
     /// and should not try - the whole point is that a plugin's shelf is the same shelf.
     /// </summary>
     public static PluginComponent MediaGrid(string id, IEnumerable<PluginComponent> items) =>
-        new() { Id = id, Component = MediaGridComponent, Items = [.. items] };
+        new()
+        {
+            Id = id,
+            Component = MediaGridComponent,
+            // On the props as well as the envelope, for the same reason the card
+            // carries it: the app's NMGrid requires it there, and without it the
+            // shelf fails to decode and draws nothing at all.
+            Props = new() { ["id"] = id },
+            Items = [.. items],
+        };
 
     /// <summary>
     /// One tile in that grid, drawn exactly as an artist or an album is.
@@ -80,6 +89,11 @@ public static class Ui
             Component = MediaCardComponent,
             Props = new()
             {
+                // The id belongs on the props as well as inside data. The app's
+                // NMMusicCard requires it there, and a card without it fails the
+                // whole shelf's decode - the grid then arrives with no items,
+                // draws nothing, and reports nothing anywhere.
+                ["id"] = id,
                 ["data"] = new Dictionary<string, object?>
                 {
                     ["id"] = id,

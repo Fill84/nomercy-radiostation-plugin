@@ -125,6 +125,23 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// <summary>What each station is playing right now, as it last announced.</summary>
     public NowPlaying NowPlaying { get; } = new();
 
+    /// <summary>
+    /// Every station this process has already shown, by id.
+    ///
+    /// Held for the same reason the titles are: a station the viewer is looking at
+    /// is one this plugin already fetched, and asking the network again for what
+    /// it just handed out turns a service outage into a dead page.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, RadioStation> _seen = new();
+
+    private void Remember(IEnumerable<RadioStation> stations)
+    {
+        foreach (RadioStation station in stations)
+        {
+            _seen[station.Id] = station;
+        }
+    }
+
     // === Actions the controller calls ======================================
 
     /// <summary>
@@ -308,6 +325,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         try
         {
             IReadOnlyList<RadioStation> found = await SearchAsync(query, ct);
+            Remember(found);
 
             return SearchView.Build(term, found, queryFailed: false, state, await FacetsAsync(ct));
         }
@@ -337,6 +355,15 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         if (catalog.ById(id) is { } known)
         {
             return StationView.Build(known, state, NowPlaying.Get(id));
+        }
+
+        // A station this session already put on screen. Opening a search result
+        // asked radio-browser for it a second time, so the page said "Station not
+        // found" whenever that service was unreachable - about a station whose
+        // name and stream url were in the very list the viewer just tapped.
+        if (_seen.TryGetValue(id, out RadioStation? recent))
+        {
+            return StationView.Build(recent, state, NowPlaying.Get(id));
         }
 
         try
@@ -397,6 +424,11 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         if (catalog.ById(stationId) is { } known)
         {
             return known;
+        }
+
+        if (_seen.TryGetValue(stationId, out RadioStation? recent))
+        {
+            return recent;
         }
 
         FavouriteResolver resolver = new(catalog, new RadioBrowserClient(Context.HttpClient));
