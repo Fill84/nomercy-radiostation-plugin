@@ -97,7 +97,17 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
             return NotFound();
         }
 
-        return Status<object>(new { title = plugin.NowPlaying.Get(stationId) });
+        string? announced = plugin.NowPlaying.Get(stationId);
+        StreamTitle? parsed = announced is null ? null : StreamTitle.Parse(announced);
+
+        // `title` stays the whole announced line so a client written against the
+        // earlier shape keeps working; artist and track are additions beside it.
+        return Status<object>(new
+        {
+            title = announced,
+            artist = parsed?.Artist,
+            track = parsed?.Track
+        });
     }
 
     /// <summary>

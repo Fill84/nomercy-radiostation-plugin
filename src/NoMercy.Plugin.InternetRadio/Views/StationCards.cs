@@ -85,7 +85,39 @@ public static class StationCards
     /// The play intent for a station, so every screen starts the same station the same way.
     /// </summary>
     public static PluginActionIntent Play(RadioStation station) =>
-        WithStationId(PlayIntent(station), station);
+        WithNowPlaying(WithStationId(PlayIntent(station), station));
+
+    /// <summary>The payload key a client reads to learn that this item announces its track.</summary>
+    public const string NowPlayingKey = "nowPlaying";
+
+    /// <summary>
+    /// How often, in seconds, a client should ask what is on air - and, before the first
+    /// answer, how soon to ask again.
+    /// </summary>
+    private const int SettledSeconds = 15;
+
+    private const int FirstSeconds = 2;
+
+    /// <summary>
+    /// Says that this item's track changes while it plays, and how often to ask.
+    ///
+    /// Declared by the plugin rather than assumed by the client. A client that polls
+    /// every plugin item it is handed is deciding a plugin's behaviour for it, and it
+    /// picks the interval for a stream it knows nothing about. A station announces its
+    /// track, so this station's item says so; an item that does not carry this block is
+    /// never asked.
+    /// </summary>
+    private static PluginActionIntent WithNowPlaying(PluginActionIntent intent)
+    {
+        intent.Payload[NowPlayingKey] = new Dictionary<string, object>
+        {
+            ["method"] = InternetRadioController.NowPlayingMethod,
+            ["intervalSeconds"] = SettledSeconds,
+            ["firstIntervalSeconds"] = FirstSeconds
+        };
+
+        return intent;
+    }
 
     private static PluginActionIntent PlayIntent(RadioStation station) =>
         PluginActionIntent.PlayMedia(
@@ -107,13 +139,14 @@ public static class StationCards
 
     /// <summary>Queueing a station, built from the same relayed urls as <see cref="Play"/>.</summary>
     public static PluginActionIntent Enqueue(RadioStation station) =>
-        WithStationId(
-            PluginActionIntent.Enqueue(
-                MediaProxy.Stream(station.Id) ?? station.StreamUrl,
-                station.Name,
-                null,
-                CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id)),
-            station);
+        WithNowPlaying(
+            WithStationId(
+                PluginActionIntent.Enqueue(
+                    MediaProxy.Stream(station.Id) ?? station.StreamUrl,
+                    station.Name,
+                    null,
+                    CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id)),
+                station));
 
     // Written into the payload after the factory built it rather than by hand-rolling the
     // intent here: the factory owns which keys a media intent carries and what they are
