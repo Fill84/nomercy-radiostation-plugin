@@ -20,6 +20,13 @@ public static class SearchView
 {
     public const string FieldName = "query";
 
+    // One name per axis, read by the form here and by SearchRequest on the way
+    // back in. A field whose name the controller does not bind arrives as null and
+    // silently narrows nothing, which looks exactly like a filter that matched.
+    public const string GenreFieldName = "genre";
+    public const string CountryFieldName = "country";
+    public const string LanguageFieldName = "language";
+
     public static PluginView Build(
         string term,
         IReadOnlyList<RadioStation> results,
@@ -34,7 +41,7 @@ public static class SearchView
                 PluginActionIntent.Navigate(RadioRoutes.Browse),
                 icon: "arrowLeft"),
 
-            Field(term),
+            Field(term, state),
         ];
 
         children.AddRange(Results(term, results, queryFailed, state));
@@ -48,7 +55,20 @@ public static class SearchView
     /// Carries whatever is being searched for, so arriving on a search does not read as one
     /// that was thrown away, and correcting a typo means editing rather than retyping.
     /// </summary>
-    public static PluginComponent Field(string term) =>
+    public static PluginComponent Field(string term) => Field(term, UserState.Empty);
+
+    /// <summary>
+    /// The whole form, carrying whatever this viewer last asked for.
+    ///
+    /// Four fields rather than one box: the database is indexed on all of them and
+    /// combines them, and a name-only search means a listener can only find a
+    /// station they could already name. Nobody can name a station in a database
+    /// this size - they know they want ambient, or something Japanese.
+    ///
+    /// Every field is optional and blank means "not filtered", so the form reads as
+    /// four ways to narrow rather than four things to fill in.
+    /// </summary>
+    public static PluginComponent Field(string term, UserState state) =>
         Ui.Form(
             "search-form",
             "Search",
@@ -59,7 +79,31 @@ public static class SearchView
                 Label = "Station name",
                 Type = PluginFormFieldType.Text,
                 Value = term,
-                Placeholder = "Search every station on radio-browser",
+                Placeholder = "Any name",
+            },
+            new PluginFormField
+            {
+                Name = GenreFieldName,
+                Label = "Genre",
+                Type = PluginFormFieldType.Text,
+                Value = state.LastGenre ?? string.Empty,
+                Placeholder = "ambient, jazz, anime",
+            },
+            new PluginFormField
+            {
+                Name = CountryFieldName,
+                Label = "Country",
+                Type = PluginFormFieldType.Text,
+                Value = state.LastCountry ?? string.Empty,
+                Placeholder = "Japan",
+            },
+            new PluginFormField
+            {
+                Name = LanguageFieldName,
+                Label = "Language",
+                Type = PluginFormFieldType.Text,
+                Value = state.LastLanguage ?? string.Empty,
+                Placeholder = "japanese",
             });
 
     /// <summary>

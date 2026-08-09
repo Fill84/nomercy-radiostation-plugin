@@ -31,5 +31,22 @@ public sealed record UserState
     [JsonPropertyName("lastSearch")]
     public string? LastSearch { get; init; }
 
+    /// <summary>
+    /// The rest of what was asked for, beside the name.
+    ///
+    /// Optional and defaulted, so a state file written before these existed still
+    /// reads: a self-hosted owner must never lose their favourites to a plugin
+    /// update. Absent means the filter was not filled in, which is not the same as
+    /// an empty one - see StationQuery.
+    /// </summary>
+    [JsonPropertyName("lastGenre")]
+    public string? LastGenre { get; init; }
+
+    [JsonPropertyName("lastCountry")]
+    public string? LastCountry { get; init; }
+
+    [JsonPropertyName("lastLanguage")]
+    public string? LastLanguage { get; init; }
+
     public static UserState Empty { get; } = new();
 }

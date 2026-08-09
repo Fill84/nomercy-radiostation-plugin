@@ -37,8 +37,38 @@ public class SearchViewTests
     private static PluginComponent Node(PluginView view, string id) =>
         PluginNodes.All(view).Single(node => node.Id == id);
 
-    private static PluginFormField TheField(PluginView view) =>
-        ((PluginFormField[])Node(view, "search-form").Props["fields"]!).Single();
+    private static PluginFormField[] TheFields(PluginView view) =>
+        (PluginFormField[])Node(view, "search-form").Props["fields"]!;
+
+    // Named rather than assumed to be the only one: the form carries a field per
+    // axis the database is indexed on, and a helper that takes whichever field
+    // happens to be first would keep passing while pointing at the wrong one.
+    private static PluginFormField TheField(PluginView view, string? name = null) =>
+        TheFields(view).Single(field => field.Name == (name ?? SearchView.FieldName));
+
+    [Fact]
+    public void EveryAxisTheDatabaseIndexesHasAFieldToNarrowOn()
+    {
+        // A name-only form means a listener can only find a station they could
+        // already name, which nobody can in a database this size.
+        TheFields(View(string.Empty)).Select(field => field.Name).Should().BeEquivalentTo(
+            [
+                SearchView.FieldName,
+                SearchView.GenreFieldName,
+                SearchView.CountryFieldName,
+                SearchView.LanguageFieldName,
+            ]);
+    }
+
+    [Fact]
+    public void AFilterThatWasSetComesBackInItsOwnBox()
+    {
+        UserState asked = UserState.Empty with { LastGenre = "ambient", LastCountry = "Japan" };
+        PluginView view = SearchView.Build(string.Empty, [], queryFailed: false, asked);
+
+        TheField(view, SearchView.GenreFieldName).Value.Should().Be("ambient");
+        TheField(view, SearchView.CountryFieldName).Value.Should().Be("Japan");
+    }
 
     [Fact]
     public void TheFormIsTheOneTheClientCanActuallySubmit()

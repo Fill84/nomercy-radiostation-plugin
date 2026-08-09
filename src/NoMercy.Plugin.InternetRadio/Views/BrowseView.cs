@@ -42,7 +42,7 @@ public static class BrowseView
             // with data and cannot navigate, so after a submit the client refreshes the
             // route it is already on. Answering on a different route would mean submitting
             // here and the answer appearing on a page nothing takes you to.
-            SearchView.Field(state.LastSearch ?? string.Empty),
+            SearchView.Field(state.LastSearch ?? string.Empty, state),
         ];
 
         bool searching = searchFailed || !string.IsNullOrWhiteSpace(state.LastSearch);

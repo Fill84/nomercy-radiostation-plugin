@@ -44,12 +44,31 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     /// </summary>
     [HttpPost(SearchMethod)]
     public Task<IActionResult> Search([FromBody] SearchRequest? request, CancellationToken ct) =>
-        RespondAsync(plugin => plugin.StoreSearchAsync(CurrentUserId(), request?.Query, ct));
+        RespondAsync(plugin =>
+            plugin.StoreSearchAsync(
+                CurrentUserId(),
+                request?.Query,
+                request?.Genre,
+                request?.Country,
+                request?.Language,
+                ct
+            ));
 
     /// <summary>The one field the search form carries.</summary>
     public sealed class SearchRequest
     {
         public string? Query { get; init; }
+
+        /// <summary>
+        /// The rest of the form. Each is optional and they combine, so a listener
+        /// can ask for a genre from a country without naming a station at all -
+        /// which is most of what anyone wants from a database of this size.
+        /// </summary>
+        public string? Genre { get; init; }
+
+        public string? Country { get; init; }
+
+        public string? Language { get; init; }
     }
 
     /// <summary>

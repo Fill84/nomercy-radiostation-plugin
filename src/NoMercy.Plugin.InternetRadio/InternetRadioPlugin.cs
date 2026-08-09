@@ -137,19 +137,68 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// than leaving it insisting that nothing matched an empty query.
     /// </summary>
     public async Task<PluginActionOutcome> StoreSearchAsync(
-        string? userId, string? query, CancellationToken ct)
+        string? userId,
+        string? query,
+        string? genre,
+        string? country,
+        string? language,
+        CancellationToken ct
+    )
     {
         if (userId is null)
         {
             return PluginActionOutcome.Failed("Sign in to search.");
         }
 
-        string? term = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+        string? term = Clean(query);
+        string? tag = Clean(genre);
+        string? where = Clean(country);
+        string? spoken = Clean(language);
 
-        await StateStore.SetLastSearchAsync(userId, term, ct);
+        await StateStore.SetLastSearchAsync(userId, term, tag, where, spoken, ct);
 
-        return PluginActionOutcome.Ok(term is null ? "Search cleared." : $"Searching for {term}.");
+        // Named back so the viewer can see the search was understood. A form with
+        // four fields and one flat "Searching." leaves them guessing which of the
+        // four the server actually took.
+        string?[] said =
+        [
+            term is null ? null : $"\"{term}\"",
+            tag,
+            where,
+            spoken,
+        ];
+
+        string summary = string.Join(", ", said.Where(part => part is not null));
+
+        return PluginActionOutcome.Ok(
+            summary.Length == 0 ? "Search cleared." : $"Searching for {summary}.");
     }
+
+    /// <summary>What this viewer last asked for, on every axis.</summary>
+    private static StationQuery StoredQuery(UserState state) =>
+        new()
+        {
+            Name = Clean(state.LastSearch),
+            Tag = Clean(state.LastGenre),
+            Country = Clean(state.LastCountry),
+            Language = Clean(state.LastLanguage),
+        };
+
+    /// <summary>
+    /// Whether a query asks for anything at all.
+    ///
+    /// An empty one is not a search for nothing - it is the most-voted stations
+    /// everywhere, which is the browse page's own content and not a result set to
+    /// draw underneath it.
+    /// </summary>
+    private static bool IsAsking(StationQuery query) =>
+        query.Name is not null
+        || query.Tag is not null
+        || query.Country is not null
+        || query.Language is not null;
+
+    private static string? Clean(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     /// <summary>
     /// The landing page, with the box's own results under it when there are any.
@@ -161,14 +210,15 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     private async Task<PluginView> BuildBrowseAsync(
         StationCatalog catalog, UserState state, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(state.LastSearch))
+        StationQuery stored = StoredQuery(state);
+        if (!IsAsking(stored))
         {
             return BrowseView.Build(catalog, state);
         }
 
         try
         {
-            return BrowseView.Build(catalog, state, await SearchAsync(state.LastSearch, ct));
+            return BrowseView.Build(catalog, state, await SearchAsync(stored, ct));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -183,12 +233,13 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         }
     }
 
-    private async Task<IReadOnlyList<RadioStation>> SearchAsync(string term, CancellationToken ct)
+    private async Task<IReadOnlyList<RadioStation>> SearchAsync(
+        StationQuery query, CancellationToken ct)
     {
         RadioBrowserClient client = new(Context.HttpClient);
 
         return [.. StationGates.Admitted(
-            await client.SearchByNameAsync(term, RadioBrowserClient.SearchLimit, ct))];
+            await client.SearchAsync(query, RadioBrowserClient.SearchLimit, ct))];
     }
 
     /// <summary>
@@ -209,18 +260,21 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         // a shared link does not show somebody else's last search.
         term = SearchTerms.Sanitise(term.Length > 0 ? term : state.LastSearch);
 
-        if (term.Length < SearchTerms.MinLength)
+        // A genre or a country is a search on its own. Requiring a name as well
+        // made every filter useless without one, which is backwards for a database
+        // nobody knows the station names in.
+        StationQuery query = StoredQuery(state) with { Name = term.Length > 0 ? term : null };
+
+        if (term.Length is > 0 and < SearchTerms.MinLength || !IsAsking(query))
         {
             return SearchView.Build(term, [], queryFailed: false, state);
         }
 
         try
         {
-            RadioBrowserClient client = new(Context.HttpClient);
-            IReadOnlyList<RadioBrowserStation> wire =
-                await client.SearchByNameAsync(term, RadioBrowserClient.SearchLimit, ct);
+            IReadOnlyList<RadioStation> found = await SearchAsync(query, ct);
 
-            return SearchView.Build(term, [.. StationGates.Admitted(wire)], queryFailed: false, state);
+            return SearchView.Build(term, found, queryFailed: false, state);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

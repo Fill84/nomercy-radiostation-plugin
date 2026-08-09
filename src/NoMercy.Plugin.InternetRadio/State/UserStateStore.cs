@@ -67,7 +67,38 @@ public sealed class UserStateStore(string dataFolderPath)
 
     /// <summary>Remembers what was searched for, so a refresh can run it again.</summary>
     public Task SetLastSearchAsync(string userId, string? term, CancellationToken ct) =>
-        MutateAsync(userId, state => (state with { LastSearch = term }, true), ct);
+        SetLastSearchAsync(userId, term, null, null, null, ct);
+
+    /// <summary>
+    /// The whole search, written in one go.
+    ///
+    /// One mutation rather than one per field: the file is read, changed and
+    /// rewritten under a gate, so four writes for one submitted form is four
+    /// rewrites and three chances for a half-applied search to be what a reader
+    /// sees.
+    /// </summary>
+    public Task SetLastSearchAsync(
+        string userId,
+        string? term,
+        string? genre,
+        string? country,
+        string? language,
+        CancellationToken ct
+    ) =>
+        MutateAsync(
+            userId,
+            state => (
+                state with
+                {
+                    LastSearch = term,
+                    LastGenre = genre,
+                    LastCountry = country,
+                    LastLanguage = language,
+                },
+                true
+            ),
+            ct
+        );
 
     private async Task<bool> MutateAsync(
         string userId,
