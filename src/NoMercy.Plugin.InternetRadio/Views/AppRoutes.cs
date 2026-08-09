@@ -12,8 +12,16 @@ namespace NoMercy.Plugin.InternetRadio;
 // app's router, which knows nothing about that context and needs the whole path.
 public static class AppRoutes
 {
-    /// <summary>Where the host mounts every plugin's pages.</summary>
-    public const string Mount = "/plugins";
+    /// <summary>
+    /// Where the host mounts this plugin's pages.
+    ///
+    /// A plugin placed by its kind lives under its section, not under the bare /plugins
+    /// path: this one declares PluginUiSection.Music, so it is mounted at
+    /// /music/plugins/{id} and that is where its own links have to point. Linking to
+    /// /plugins/{id} lands on a route the section navigation does not know, which renders
+    /// an empty page - the plugin is there, and nothing is drawn.
+    /// </summary>
+    public const string Mount = "/music/plugins";
 
     /// <summary>
     /// <paramref name="pluginRoute"/> as an absolute app path.
