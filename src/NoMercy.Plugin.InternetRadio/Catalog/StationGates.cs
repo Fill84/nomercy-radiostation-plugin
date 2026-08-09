@@ -154,6 +154,26 @@ public static class StationGates
     /// wire shape and must be judged and mapped by the same rules, or a station could
     /// pass one path and fail another.
     /// </summary>
+    /// <summary>
+    /// The key two entries for one broadcast share.
+    ///
+    /// The same stream is submitted with http and https, with and without a
+    /// trailing slash, and with a listener-id or cache-buster in the query - all of
+    /// which are the same audio and none of which match as plain strings. Host and
+    /// path only, so those collapse, while two genuinely different streams that
+    /// merely share a name stay apart: a name is not a key, and merging on one
+    /// would hide a station behind another that happens to be called the same.
+    /// </summary>
+    private static string SameBroadcast(string stream)
+    {
+        if (!Uri.TryCreate(stream, UriKind.Absolute, out Uri? parsed))
+        {
+            return stream;
+        }
+
+        return $"{parsed.Host}{parsed.AbsolutePath.TrimEnd('/')}";
+    }
+
     public static IEnumerable<RadioStation> Admitted(IEnumerable<RadioBrowserStation> wire)
     {
         // radio-browser is community-edited and the same broadcast is submitted more
@@ -184,7 +204,7 @@ public static class StationGates
 
             // The first one wins. The answer is already ordered by votes, so the
             // duplicate that is dropped is the one fewer people vouched for.
-            if (!seen.Add(stream))
+            if (!seen.Add(SameBroadcast(stream)))
             {
                 continue;
             }
