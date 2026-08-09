@@ -4,6 +4,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using NoMercy.Plugins.Abstractions;
 using NoMercy.Plugins.Mvc;
 
@@ -104,8 +105,53 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
             upstream.Content.Headers.ContentType?.ToString()
             ?? (cover ? "application/octet-stream" : "audio/mpeg");
 
+        // A live stream has no end, and a response that is only ever written to - never
+        // started, never flushed - is delivered when the body completes. For a cover that
+        // is the same instant. For a stream it is never: the browser holds an open request
+        // that yields no headers and no bytes, so the audio element sits at readyState 0
+        // with no metadata, no duration and - this is the cruel part - no error either.
+        // On screen that is a station in Now Playing stuck at 00:00 / 00:00 in silence,
+        // which is indistinguishable from a dozen other faults and was read as all of
+        // them in turn. Starting the response sends the headers now.
+        await Response.StartAsync(ct);
+
         await using Stream body = await upstream.Content.ReadAsStreamAsync(ct);
-        await body.CopyToAsync(Response.Body, ct);
+
+        // 8 KB, not CopyToAsync's 80 KB. At 128 kbps a full 80 KB buffer is five seconds
+        // of audio withheld before the first byte moves, and the element wants frames
+        // sooner than that to call the source playable.
+        byte[] buffer = new byte[8192];
+        long relayed = 0;
+
+        try
+        {
+            int read;
+            while ((read = await body.ReadAsync(buffer, ct)) > 0)
+            {
+                await Response.Body.WriteAsync(buffer.AsMemory(0, read), ct);
+
+                // Per chunk, because the point of a relay is that the listener hears the
+                // stream now rather than whenever a buffer somewhere upstream fills.
+                await Response.Body.FlushAsync(ct);
+
+                if (relayed == 0)
+                {
+                    plugin.RelayLogger.LogInformation(
+                        "Internet Radio relay: {Kind} for {StationId} - first {Bytes} bytes reached the client.",
+                        cover ? "cover" : "stream", stationId, read);
+                }
+
+                relayed += read;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // The listener pressed stop or navigated away. Ordinary, not a fault: a live
+            // stream only ever ends because someone stopped listening.
+            plugin.RelayLogger.LogInformation(
+                "Internet Radio relay: {Kind} for {StationId} - listener disconnected after {Bytes} bytes.",
+                cover ? "cover" : "stream", stationId, relayed);
+        }
 
         return new EmptyResult();
     }
