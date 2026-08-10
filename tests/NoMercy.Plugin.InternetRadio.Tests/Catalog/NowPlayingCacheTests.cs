@@ -66,13 +66,13 @@ public class NowPlayingCacheTests
     {
         (NowPlayingCache cache, _) = Build(TimeSpan.FromSeconds(25));
         cache.Set("a", ("Air", "La Femme d'Argent"));
-        cache.Set("b", (null, "The Breakfast Show"));
+        cache.Set("b", ("The Breakfast Show", "The Breakfast Show"));
 
         cache.TryGet("a", out (string? Artist, string Track)? first).Should().BeTrue();
         cache.TryGet("b", out (string? Artist, string Track)? second).Should().BeTrue();
 
         first!.Value.Track.Should().Be("La Femme d'Argent");
-        second!.Value.Artist.Should().BeNull();
+        second!.Value.Artist.Should().Be("The Breakfast Show");
         second.Value.Track.Should().Be("The Breakfast Show");
     }
 

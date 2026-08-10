@@ -94,14 +94,10 @@ public static class StationCards
             // url is a fallback that plays nothing - kept only so a view still renders.
             MediaProxy.Stream(station.Id) ?? station.StreamUrl,
             station.Name,
-            // No artist. The player does not merely print this - it builds an artist LINK
-            // from it, resolves a route for it, and derives a DOM id from the track id to
-            // anchor it. A live stream has no artist, and putting the genre there made the
-            // app try to route to a genre that does not exist ("Cannot read properties of
-            // undefined (reading 'path')") and then build the selector
-            // "#trackLink-artists-plugin:<id>:https://…/stream/…" - invalid, because a url
-            // has colons and slashes in it. Those two were every "Something went wrong"
-            // toast on the page.
+            // No artist here, and the distinction matters: an artist on the PLAY intent
+            // is what raises "A component error occurred" on every track change. The same
+            // artist arriving later on the now-playing route is drawn without complaint.
+            // Measured both ways against a running server before it was written down.
             null,
             CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id));
 
@@ -156,15 +152,15 @@ public static class StationCards
             ["firstIntervalSeconds"] = NowPlayingFirstIntervalSeconds,
         };
 
-        return intent;
+        return Ui.WithoutEmpties(intent);
     }
 
     /// <summary>
     /// Adding or removing this station, as the toggle every tile and the station page draw.
     /// </summary>
     public static PluginActionIntent ToggleFavourite(RadioStation station) =>
-        PluginActionIntent.CallPlugin(
-            $"{InternetRadioController.ToggleFavouriteMethod}/{Uri.EscapeDataString(station.Id)}");
+        Ui.WithoutEmpties(PluginActionIntent.CallPlugin(
+            $"{InternetRadioController.ToggleFavouriteMethod}/{Uri.EscapeDataString(station.Id)}"));
 
     /// <summary>
     /// A node id, qualified by the section it is drawn in.
@@ -178,13 +174,18 @@ public static class StationCards
         string.IsNullOrEmpty(scope) ? stationId : $"{scope}-{stationId}";
 
     /// <summary>
-    /// The station's logo, or null when the browser could not draw it anyway.
+    /// The station's logo, whatever scheme it is on, or null when it has none.
     ///
-    /// The same judgement StationGates makes about a stream, for the same reason: the
-    /// dashboard is served over https, so an http image is blocked as mixed content and
-    /// renders as a broken icon — which reads as this plugin being broken rather than as a
-    /// station's logo having rotted. Six of them had already rotted to 404, 403 or an HTML
-    /// page, so this is the ordinary case and not the exotic one.
+    /// This used to refuse anything that was not https, on the grounds that the dashboard
+    /// is served over https and an http image is blocked as mixed content. That reasoning
+    /// applied to a url the browser fetches itself - and the browser never sees this one.
+    /// It is handed the relay on this server's own origin, and the server fetches the
+    /// logo, http or not. Refusing here only emptied a field the client draws, which is
+    /// the one thing this plugin must not do.
+    ///
+    /// Still null for a station that genuinely has no logo: there is nothing to point at,
+    /// and pointing at a relay that will answer 404 is a broken image rather than the
+    /// placeholder the card draws for itself.
     /// </summary>
     public static string? CoverUrl(RadioStation station)
     {
@@ -194,7 +195,7 @@ public static class StationCards
         }
 
         return Uri.TryCreate(station.LogoUrl, UriKind.Absolute, out Uri? parsed)
-            && parsed.Scheme == Uri.UriSchemeHttps
+            && (parsed.Scheme == Uri.UriSchemeHttps || parsed.Scheme == Uri.UriSchemeHttp)
             ? station.LogoUrl
             : null;
     }

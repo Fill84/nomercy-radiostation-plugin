@@ -52,7 +52,7 @@ public static class SearchView
         Ui.Form(
             "search-form",
             "Search",
-            PluginActionIntent.CallPlugin(InternetRadioController.SearchMethod),
+            Ui.WithoutEmpties(PluginActionIntent.CallPlugin(InternetRadioController.SearchMethod)),
             new PluginFormField
             {
                 Name = FieldName,

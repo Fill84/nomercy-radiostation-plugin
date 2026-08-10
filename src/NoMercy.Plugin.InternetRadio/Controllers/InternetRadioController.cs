@@ -92,10 +92,16 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
             return Status<object?>(null);
         }
 
+        // `title` is the whole announced line, `artist` and `track` its two halves. The
+        // client reads `track ?? title`, so a station that announces one line still gets a
+        // title, and one that names an artist gets both on their own lines.
         return Status(new
         {
-            track = announced.Track,
+            title = announced.Artist is null
+                ? announced.Track
+                : $"{announced.Artist} - {announced.Track}",
             artist = announced.Artist,
+            track = announced.Track,
         });
     }
 

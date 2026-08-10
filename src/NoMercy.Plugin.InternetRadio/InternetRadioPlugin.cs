@@ -335,8 +335,10 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// this asks separately, which costs one short connection per poll and keeps the audio
     /// path exactly as it was.
     ///
-    /// Null for every ordinary disappointment: a station that does not support metadata,
-    /// one between announcements, one that did not answer. None of those is a fault.
+    /// The artist is whatever the station named, or nothing when it named one line. The
+    /// client draws the artist beside the track when there is one and leaves the line out
+    /// when there is not - which is the shape it already handles, and the shape that does
+    /// not raise anything.
     /// </summary>
     public async Task<(string? Artist, string Track)?> NowPlayingAsync(
         string stationId, CancellationToken ct)
@@ -359,14 +361,20 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             string? title = await IcyMetadata.ReadStreamTitleAsync(
                 Context.HttpClient, station.StreamUrl, ct);
 
-            (string? Artist, string Track)? announced = title is null
-                ? null
+            // The station's own name only when it announced nothing at all: the title
+            // still has to say something. A line without a separator is all track and no
+            // artist, which the client draws as a track with no artist line.
+            (string? Artist, string Track) announced = title is null
+                ? (null, station.Name)
                 : IcyMetadata.Split(title);
 
-            // Stored even when it is nothing: a station that announces nothing is the
-            // ordinary case, and asking it again on every poll is the traffic this cache
-            // exists to avoid.
+            // Stored either way: a station that announces nothing is the ordinary case,
+            // and asking it again on every poll is the traffic this cache exists to avoid.
             _nowPlaying.Set(stationId, announced);
+
+            Context.Logger.LogInformation(
+                "Internet Radio: {StationId} announces {Artist} - {Track}.",
+                stationId, announced.Artist ?? "no artist", announced.Track);
 
             return announced;
         }
@@ -376,7 +384,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
                 exception,
                 "Internet Radio could not read what {StationId} is announcing.", stationId);
 
-            return null;
+            return (null, station.Name);
         }
     }
 

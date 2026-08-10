@@ -34,6 +34,57 @@ namespace NoMercy.Plugin.InternetRadio;
 // names, this file is the one place that has to change.
 public static class Ui
 {
+    /// <summary>
+    /// The props that actually have something to say.
+    ///
+    /// An optional prop written as `null` is not the same as one that was left out. Left
+    /// out means the component decides, and every component in the client has a default
+    /// for what it was not given. Null means "here is your value, and it is nothing" - and
+    /// the client takes it at its word: a null cover becomes an image source, a null
+    /// variant becomes a class name. Some of that ends up in code that reads a property
+    /// off what it was handed, which throws while drawing and reaches the viewer as
+    /// "A component error occurred" with nothing attached to say where.
+    ///
+    /// C# has no way to leave an entry out of an object initialiser, which is why every
+    /// factory below used to write the nulls in. This drops them on the way in instead.
+    /// </summary>
+    private static Dictionary<string, object?> Only(params (string Key, object? Value)[] props)
+    {
+        Dictionary<string, object?> kept = [];
+
+        foreach ((string key, object? value) in props)
+        {
+            if (value is not null)
+            {
+                kept[key] = value;
+            }
+        }
+
+        return kept;
+    }
+
+    /// <summary>
+    /// The same intent, with the empty entries its factory wrote in taken back out.
+    ///
+    /// The factories take every optional argument and put it in the payload whether or not
+    /// it was given, so a play with no cover ships `"cover": null` and a call with no body
+    /// ships `"payload": null`. Same problem as a null prop: absent lets the receiver
+    /// decide, present-and-empty makes it work with nothing.
+    /// </summary>
+    public static PluginActionIntent WithoutEmpties(PluginActionIntent intent)
+    {
+        // Collected first: a dictionary cannot be written to while it is being read.
+        List<string> empties =
+            [.. intent.Payload.Where(entry => entry.Value is null).Select(entry => entry.Key)];
+
+        foreach (string key in empties)
+        {
+            intent.Payload.Remove(key);
+        }
+
+        return intent;
+    }
+
     public const string ContainerComponent = "PluginContainer";
     public const string TextComponent = "PluginText";
     public const string ImageComponent = "PluginImage";
@@ -80,14 +131,12 @@ public static class Ui
             Component = MediaCardComponent,
             Props = new()
             {
-                ["data"] = new Dictionary<string, object?>
-                {
-                    ["id"] = id,
-                    ["name"] = name,
-                    ["link"] = link,
-                    ["cover"] = cover,
-                    ["type"] = type,
-                },
+                ["data"] = Only(
+                    ("id", (object?)id),
+                    ("name", name),
+                    ("link", link),
+                    ("cover", cover),
+                    ("type", type)),
             },
         };
 
@@ -120,7 +169,7 @@ public static class Ui
         {
             Id = id,
             Component = TextComponent,
-            Props = new() { ["value"] = value, ["variant"] = variant },
+            Props = Only(("value", (object?)value), ("variant", (object?)variant)),
         };
 
     /// <summary>`url`, not `src`.</summary>
@@ -129,7 +178,7 @@ public static class Ui
         {
             Id = id,
             Component = ImageComponent,
-            Props = new() { ["url"] = url, ["alt"] = alt },
+            Props = Only(("url", (object?)url), ("alt", (object?)alt)),
         };
 
     public static PluginComponent Button(
@@ -142,7 +191,7 @@ public static class Ui
         {
             Id = id,
             Component = ButtonComponent,
-            Props = new() { ["label"] = label, ["icon"] = icon, ["variant"] = variant },
+            Props = Only(("label", (object?)label), ("icon", (object?)icon), ("variant", (object?)variant)),
             Action = action,
         };
 
@@ -160,7 +209,7 @@ public static class Ui
         {
             Id = id,
             Component = CardComponent,
-            Props = new() { ["title"] = title, ["subtitle"] = subtitle, ["image"] = image },
+            Props = Only(("title", (object?)title), ("subtitle", (object?)subtitle), ("image", (object?)image)),
             Action = action,
         };
 
@@ -174,7 +223,7 @@ public static class Ui
         {
             Id = id,
             Component = DetailComponent,
-            Props = new() { ["title"] = title, ["description"] = description, ["image"] = image },
+            Props = Only(("title", (object?)title), ("description", (object?)description), ("image", (object?)image)),
             Items = [.. items],
         };
 
@@ -191,7 +240,7 @@ public static class Ui
         {
             Id = id,
             Component = FormComponent,
-            Props = new() { ["submitLabel"] = submitLabel, ["fields"] = fields },
+            Props = Only(("submitLabel", (object?)submitLabel), ("fields", (object?)fields)),
             Action = action,
         };
 
@@ -200,7 +249,7 @@ public static class Ui
         {
             Id = id,
             Component = EmptyStateComponent,
-            Props = new() { ["title"] = title, ["message"] = message },
+            Props = Only(("title", (object?)title), ("message", (object?)message)),
         };
 
     public static PluginComponent Table(
@@ -212,7 +261,7 @@ public static class Ui
         {
             Id = id,
             Component = TableComponent,
-            Props = new() { ["columns"] = columns, ["emptyMessage"] = emptyMessage },
+            Props = Only(("columns", (object?)columns), ("emptyMessage", (object?)emptyMessage)),
             Items = [.. rows],
         };
 
@@ -234,6 +283,6 @@ public static class Ui
         {
             Id = id,
             Component = BadgeComponent,
-            Props = new() { ["label"] = label, ["variant"] = variant },
+            Props = Only(("label", (object?)label), ("variant", (object?)variant)),
         };
 }
