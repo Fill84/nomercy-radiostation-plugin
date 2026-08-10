@@ -117,11 +117,11 @@ public static class StationCards
     /// <summary>
     /// How long between asking a station what is on air, once it has told us once.
     ///
-    /// A poll is a short second connection to the station, so this is a courtesy to them
-    /// as much as a cost to us. Half a minute is finer-grained than most stations announce
-    /// anyway.
+    /// Fifteen seconds rather than the half-minute this used to be, because the answer no
+    /// longer costs a connection to the station: the relay hears every announcement as it
+    /// passes and a poll is now a read of what this server already knows.
     /// </summary>
-    public const int NowPlayingIntervalSeconds = 30;
+    public const int NowPlayingIntervalSeconds = 15;
 
     /// <summary>
     /// How long between asking before the first answer arrives.
@@ -131,7 +131,7 @@ public static class StationCards
     /// player that knows what it is playing and one that does not. Stations announce
     /// shortly after a listener joins, so asking again soon usually settles it.
     /// </summary>
-    public const int NowPlayingFirstIntervalSeconds = 5;
+    public const int NowPlayingFirstIntervalSeconds = 2;
 
     // Written into the payload after the factory built it rather than by hand-rolling the
     // intent here: the factory owns which keys a media intent carries and what they are

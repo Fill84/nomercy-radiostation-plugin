@@ -36,22 +36,39 @@ station against radio-browser on a cold cache does not make it. Fixed upstream i
 `nomercy-app-web`, alongside a `PluginNode` renderer fix of Stoney's that landed
 independently. Station cards reach their page.
 
+## Now playing comes out of the relay
+
+Taken over from `stoney/nm-component-ui`, and it is better than what was here: the relay
+asks `Icy-MetaData: 1`, `IcyMetadataStream` lifts the titles out of the body as it passes
+and hands the browser audio only, and `NowPlaying` keeps the last title per station with a
+listener count. One connection per station instead of one per poll, and the title is
+current the moment it changes - on screen inside a second rather than after a poll.
+
+Gone with it: `IcyMetadata.cs` and `NowPlayingCache.cs`, which opened a second connection
+per poll and had to cache to make that bearable.
+
 ## The artist: measured, not reasoned
 
 Sending an artist **on the play intent** raises "A component error occurred" on every
 track change. Sending the same artist **afterwards, on the now-playing route**, draws
 without complaint. Both were run against a live server; the difference is not theory.
 
-So `StationCards.Play`/`Enqueue` carry no artist, and `NowPlaying` answers with `title`
-(the whole announced line), `artist` and `track`. A station announcing one line with no
-separator gives a track and no artist, which the client draws as a track on its own —
-the shape it already handles.
+So `StationCards.Play`/`Enqueue` carry no artist. `NowPlaying` answers with `title`,
+`artist` and `track` — the shape `stoney/nm-component-ui` uses, adopted verbatim.
 
-A false start worth remembering: an earlier round removed the artist from **both** places
-at once and concluded that `TrackLinks.vue` was at fault. It was not. `app-dev` runs
-byte-identical `TrackLinks.vue`, `actionInterpreter.ts` and `pluginNowPlaying.ts` and shows
-the artist with no toast. One measurement, two variables, wrong conclusion — and an issue
-filed against somebody else's repo on the strength of it, since deleted.
+**The toast is upstream and no plugin can avoid it.** With that shape deployed, an
+announced artist still raises it, with `TypeError: … (reading 'path')` at `router.resolve`
+in the console. `pluginNowPlaying.ts` builds the artist entry itself as `{ name }` with no
+`link`, and `TrackLinks.vue` renders `<RouterLink :to="item.link">` for it unguarded.
+`QueueTrackItem.vue` guards the same data with `?? '#'`, which is why Now Playing draws the
+artist and the bar does not. Written up in
+`docs/upstream/2026-08-10-plugin-artist-cannot-be-drawn.md`.
+
+Two wrong turns worth remembering. The first removed the artist from **both** the play
+intent and the announcement at once and pinned the result on one of them. The second
+"refuted" the TrackLinks diagnosis by comparing Vite's compiled dev output against raw
+source files — two things that were never comparable — and an issue filed upstream was
+deleted on the strength of it. The diagnosis was right.
 
 ---
 

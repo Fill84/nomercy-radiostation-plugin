@@ -80,29 +80,39 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     /// the console every thirty seconds for something that is working correctly.
     /// </summary>
     [HttpGet(NowPlayingRouteTemplate)]
-    public async Task<IActionResult> NowPlaying(string stationId, CancellationToken ct)
+    public IActionResult NowPlaying(string stationId)
     {
         if (pluginManager.GetPluginInstance(PluginId) is not InternetRadioPlugin plugin)
         {
             return NotFound();
         }
 
-        if (await plugin.NowPlayingAsync(stationId, ct) is not { } announced)
+        string? announced = plugin.NowPlaying.Get(stationId);
+        StreamTitle? parsed = announced is null ? null : StreamTitle.Parse(announced);
+
+        // `title` stays the whole announced line so a client written against the
+        // earlier shape keeps working; artist and track are additions beside it.
+        return Status<object>(new
         {
-            return Status<object?>(null);
+            title = announced,
+            artist = parsed?.Artist,
+            track = parsed?.Track
+        });
+    }
+
+    /// <summary>
+    /// The station's own <c>icy-metaint</c>, when it agreed to send metadata.
+    /// </summary>
+    private static int? MetaInterval(HttpResponseMessage upstream)
+    {
+        if (!upstream.Headers.TryGetValues("icy-metaint", out IEnumerable<string>? values))
+        {
+            return null;
         }
 
-        // `title` is the whole announced line, `artist` and `track` its two halves. The
-        // client reads `track ?? title`, so a station that announces one line still gets a
-        // title, and one that names an artist gets both on their own lines.
-        return Status(new
-        {
-            title = announced.Artist is null
-                ? announced.Track
-                : $"{announced.Artist} - {announced.Track}",
-            artist = announced.Artist,
-            track = announced.Track,
-        });
+        return int.TryParse(values.FirstOrDefault(), out int interval) && interval > 0
+            ? interval
+            : null;
     }
 
     private async Task<IActionResult> RelayAsync(string stationId, bool cover, CancellationToken ct)
@@ -154,7 +164,18 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
         // them in turn. Starting the response sends the headers now.
         await Response.StartAsync(ct);
 
-        await using Stream body = await upstream.Content.ReadAsStreamAsync(ct);
+        await using Stream upstreamBody = await upstream.Content.ReadAsStreamAsync(ct);
+
+        // A station that answered our Icy-MetaData ask splices its current track into
+        // the audio every icy-metaint bytes. The browser must never see those bytes -
+        // they are not audio - so they come out here, and the title they carry is
+        // remembered for whoever asks what is playing.
+        Stream body = MetaInterval(upstream) is { } interval
+            ? new IcyMetadataStream(
+                upstreamBody, interval, title => plugin.NowPlaying.Set(stationId, title))
+            : upstreamBody;
+
+        using IDisposable? listener = cover ? null : plugin.NowPlaying.Listen(stationId);
 
         // 8 KB, not CopyToAsync's 80 KB. At 128 kbps a full 80 KB buffer is five seconds
         // of audio withheld before the first byte moves, and the element wants frames

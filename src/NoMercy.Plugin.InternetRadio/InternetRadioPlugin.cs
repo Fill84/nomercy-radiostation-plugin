@@ -99,10 +99,6 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private UserStateStore StateStore => _userState ??= new UserStateStore(Context.DataFolderPath);
 
-    // One per plugin instance, so every listener on a station shares one read of it.
-    private readonly NowPlayingCache _nowPlaying =
-        new(NowPlayingCache.DefaultLifetime, () => DateTimeOffset.UtcNow);
-
     // === Actions the controller calls ======================================
 
     /// <summary>
@@ -326,67 +322,15 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     }
 
     /// <summary>
-    /// What a station is announcing right now, or null when it announces nothing.
+    /// What each station is playing right now, as it last announced over ICY.
     ///
-    /// Asked on a second connection rather than read out of the relay, and deliberately so.
-    /// A station only interleaves its titles for a listener who sends <c>Icy-MetaData: 1</c>,
-    /// and the browser is not that listener - it would receive those blocks in the middle
-    /// of the audio and decode them as noise. So the relay stays silent about metadata and
-    /// this asks separately, which costs one short connection per poll and keeps the audio
-    /// path exactly as it was.
-    ///
-    /// The artist is whatever the station named, or nothing when it named one line. The
-    /// client draws the artist beside the track when there is one and leaves the line out
-    /// when there is not - which is the shape it already handles, and the shape that does
-    /// not raise anything.
+    /// Read out of the relay itself rather than over a second connection: a station only
+    /// interleaves its titles for a listener who asked for them, and the relay is already
+    /// that listener. One connection per station instead of one per poll, the title is
+    /// current the moment it changes rather than up to a poll late, and IcyMetadataStream
+    /// takes the blocks back out so the browser is handed audio and nothing else.
     /// </summary>
-    public async Task<(string? Artist, string Track)?> NowPlayingAsync(
-        string stationId, CancellationToken ct)
-    {
-        // Shared across every device listening to the same station, so a household does
-        // not open one connection per screen to somebody else's server.
-        if (_nowPlaying.TryGet(stationId, out (string? Artist, string Track)? remembered))
-        {
-            return remembered;
-        }
-
-        if (await ResolveStationAsync(stationId, ct) is not { } station
-            || string.IsNullOrWhiteSpace(station.StreamUrl))
-        {
-            return null;
-        }
-
-        try
-        {
-            string? title = await IcyMetadata.ReadStreamTitleAsync(
-                Context.HttpClient, station.StreamUrl, ct);
-
-            // The station's own name only when it announced nothing at all: the title
-            // still has to say something. A line without a separator is all track and no
-            // artist, which the client draws as a track with no artist line.
-            (string? Artist, string Track) announced = title is null
-                ? (null, station.Name)
-                : IcyMetadata.Split(title);
-
-            // Stored either way: a station that announces nothing is the ordinary case,
-            // and asking it again on every poll is the traffic this cache exists to avoid.
-            _nowPlaying.Set(stationId, announced);
-
-            Context.Logger.LogInformation(
-                "Internet Radio: {StationId} announces {Artist} - {Track}.",
-                stationId, announced.Artist ?? "no artist", announced.Track);
-
-            return announced;
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            Context.Logger.LogWarning(
-                exception,
-                "Internet Radio could not read what {StationId} is announcing.", stationId);
-
-            return (null, station.Name);
-        }
-    }
+    public NowPlaying NowPlaying { get; } = new();
 
     /// <summary>
     /// Fetches a station's stream or cover, so the browser never talks to the station.
@@ -439,6 +383,14 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         }
 
         HttpRequestMessage request = new(HttpMethod.Get, url);
+
+        // Asking a station to interleave its titles. Only for the stream: a logo has none,
+        // and asking for them there would splice blocks into an image. The blocks are
+        // taken out before the browser sees them; see IcyMetadataStream.
+        if (!cover)
+        {
+            request.Headers.TryAddWithoutValidation("Icy-MetaData", "1");
+        }
 
         // Forwarded verbatim so seeking and buffering keep working: a player asks for a
         // byte range and expects a 206 back. Swallowing the header would turn every
