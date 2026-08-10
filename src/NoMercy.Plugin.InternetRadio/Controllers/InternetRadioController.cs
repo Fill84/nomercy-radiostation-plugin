@@ -99,34 +99,15 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
         }
 
         string? announced = plugin.NowPlaying.Get(stationId);
+        StreamTitle? parsed = announced is null ? null : StreamTitle.Parse(announced);
 
-        // The whole announced line under both keys, and deliberately no `artist` - even
-        // though StreamTitle.Parse has the split ready and the field exists to carry it.
-        //
-        // Sending the artist raises "A component error occurred" on every track change,
-        // and the plugin cannot dress it up to avoid that. The client does not take our
-        // artist object; it takes a string and builds its own, as `{ name }` with no
-        // `link` (pluginNowPlaying.ts). TrackLinks.vue then renders
-        // `<RouterLink :to="item.link">` for it with no guard, so `router.resolve` is
-        // handed undefined and throws - the `reading 'path'` TypeError in the console.
-        // QueueTrackItem.vue guards the same data with `?? '#'`, which is exactly why the
-        // Now Playing panel drew the artist while the player bar stayed empty.
-        //
-        // Measured, not reasoned: with the artist sent, the toast is there on every
-        // change; without it, it is gone and the title still updates. That held for our
-        // own now-playing implementation and again after taking nm-component-ui wholesale,
-        // so it is not a difference between the two plugins.
-        //
-        // So the artist rides in the line instead. The listener reads
-        // "ZERB, RITA ORA - If It's Not Love" where the track goes, which is what the
-        // station announced, and nothing throws. One line to revert - put
-        // `artist = parsed?.Artist, track = parsed?.Track` back, with the StreamTitle
-        // parse above it - the day TrackLinks stops linking an entry that has nowhere to
-        // go. See docs/upstream/2026-08-10-plugin-artist-cannot-be-drawn.md.
+        // `title` stays the whole announced line so a client written against the
+        // earlier shape keeps working; artist and track are additions beside it.
         return Status<object>(new
         {
             title = announced,
-            track = announced
+            artist = parsed?.Artist,
+            track = parsed?.Track
         });
     }
 
