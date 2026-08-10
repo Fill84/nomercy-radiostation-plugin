@@ -58,7 +58,24 @@ public static class StationCards
             CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id),
             // Same treatment as an artist - a square, framed logo - rather than the album
             // branch, which draws a record sleeve this is not.
-            type: "artist");
+            type: "artist",
+            description: StationSubtitle(station));
+
+    /// <summary>
+    /// The line under a station's name: where it broadcasts from and what it plays.
+    /// A station has no track count and no year, and the card's own music vocabulary
+    /// has nothing true to say about one.
+    /// </summary>
+    private static string StationSubtitle(RadioStation station)
+    {
+        string[] parts =
+        [
+            station.Country ?? string.Empty,
+            station.Genre ?? string.Empty,
+        ];
+
+        return string.Join(" • ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
+    }
 
     /// <summary>
     /// The key a media intent carries the station's own id under.
@@ -85,7 +102,39 @@ public static class StationCards
     /// The play intent for a station, so every screen starts the same station the same way.
     /// </summary>
     public static PluginActionIntent Play(RadioStation station) =>
-        WithStationId(PlayIntent(station), station);
+        WithNowPlaying(WithStationId(PlayIntent(station), station));
+
+    /// <summary>The payload key a client reads to learn that this item announces its track.</summary>
+    public const string NowPlayingKey = "nowPlaying";
+
+    /// <summary>
+    /// How often, in seconds, a client should ask what is on air - and, before the first
+    /// answer, how soon to ask again.
+    /// </summary>
+    private const int SettledSeconds = 15;
+
+    private const int FirstSeconds = 2;
+
+    /// <summary>
+    /// Says that this item's track changes while it plays, and how often to ask.
+    ///
+    /// Declared by the plugin rather than assumed by the client. A client that polls
+    /// every plugin item it is handed is deciding a plugin's behaviour for it, and it
+    /// picks the interval for a stream it knows nothing about. A station announces its
+    /// track, so this station's item says so; an item that does not carry this block is
+    /// never asked.
+    /// </summary>
+    private static PluginActionIntent WithNowPlaying(PluginActionIntent intent)
+    {
+        intent.Payload[NowPlayingKey] = new Dictionary<string, object>
+        {
+            ["method"] = InternetRadioController.NowPlayingMethod,
+            ["intervalSeconds"] = SettledSeconds,
+            ["firstIntervalSeconds"] = FirstSeconds
+        };
+
+        return intent;
+    }
 
     private static PluginActionIntent PlayIntent(RadioStation station) =>
         PluginActionIntent.PlayMedia(
@@ -94,44 +143,27 @@ public static class StationCards
             // url is a fallback that plays nothing - kept only so a view still renders.
             MediaProxy.Stream(station.Id) ?? station.StreamUrl,
             station.Name,
-            // No artist here, and the distinction matters: an artist on the PLAY intent
-            // is what raises "A component error occurred" on every track change. The same
-            // artist arriving later on the now-playing route is drawn without complaint.
-            // Measured both ways against a running server before it was written down.
+            // No artist. The player does not merely print this - it builds an artist LINK
+            // from it, resolves a route for it, and derives a DOM id from the track id to
+            // anchor it. A live stream has no artist, and putting the genre there made the
+            // app try to route to a genre that does not exist ("Cannot read properties of
+            // undefined (reading 'path')") and then build the selector
+            // "#trackLink-artists-plugin:<id>:https://…/stream/…" - invalid, because a url
+            // has colons and slashes in it. Those two were every "Something went wrong"
+            // toast on the page.
             null,
             CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id));
 
     /// <summary>Queueing a station, built from the same relayed urls as <see cref="Play"/>.</summary>
     public static PluginActionIntent Enqueue(RadioStation station) =>
-        WithStationId(
-            PluginActionIntent.Enqueue(
-                MediaProxy.Stream(station.Id) ?? station.StreamUrl,
-                station.Name,
-                null,
-                CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id)),
-            station);
-
-    /// <summary>The key a media intent carries its now-playing declaration under.</summary>
-    public const string NowPlayingKey = "nowPlaying";
-
-    /// <summary>
-    /// How long between asking a station what is on air, once it has told us once.
-    ///
-    /// Fifteen seconds rather than the half-minute this used to be, because the answer no
-    /// longer costs a connection to the station: the relay hears every announcement as it
-    /// passes and a poll is now a read of what this server already knows.
-    /// </summary>
-    public const int NowPlayingIntervalSeconds = 15;
-
-    /// <summary>
-    /// How long between asking before the first answer arrives.
-    ///
-    /// A listener who has just tuned in is looking at the station's own name where a track
-    /// title belongs, and waiting half a minute to replace it is the difference between a
-    /// player that knows what it is playing and one that does not. Stations announce
-    /// shortly after a listener joins, so asking again soon usually settles it.
-    /// </summary>
-    public const int NowPlayingFirstIntervalSeconds = 2;
+        WithNowPlaying(
+            WithStationId(
+                PluginActionIntent.Enqueue(
+                    MediaProxy.Stream(station.Id) ?? station.StreamUrl,
+                    station.Name,
+                    null,
+                    CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id)),
+                station));
 
     // Written into the payload after the factory built it rather than by hand-rolling the
     // intent here: the factory owns which keys a media intent carries and what they are
@@ -141,26 +173,15 @@ public static class StationCards
     {
         intent.Payload[StationIdKey] = station.Id;
 
-        // A statement about this item, not a request for a feature. The client asks
-        // nothing of an item that says nothing here, which is the right default: a track
-        // with a fixed title must not be polled, and only the plugin knows which of its
-        // media changes under its own name.
-        intent.Payload[NowPlayingKey] = new Dictionary<string, object>
-        {
-            ["method"] = InternetRadioController.NowPlayingMethod,
-            ["intervalSeconds"] = NowPlayingIntervalSeconds,
-            ["firstIntervalSeconds"] = NowPlayingFirstIntervalSeconds,
-        };
-
-        return Ui.WithoutEmpties(intent);
+        return intent;
     }
 
     /// <summary>
     /// Adding or removing this station, as the toggle every tile and the station page draw.
     /// </summary>
     public static PluginActionIntent ToggleFavourite(RadioStation station) =>
-        Ui.WithoutEmpties(PluginActionIntent.CallPlugin(
-            $"{InternetRadioController.ToggleFavouriteMethod}/{Uri.EscapeDataString(station.Id)}"));
+        PluginActionIntent.CallPlugin(
+            $"{InternetRadioController.ToggleFavouriteMethod}/{Uri.EscapeDataString(station.Id)}");
 
     /// <summary>
     /// A node id, qualified by the section it is drawn in.
@@ -174,18 +195,13 @@ public static class StationCards
         string.IsNullOrEmpty(scope) ? stationId : $"{scope}-{stationId}";
 
     /// <summary>
-    /// The station's logo, whatever scheme it is on, or null when it has none.
+    /// The station's logo, or null when the browser could not draw it anyway.
     ///
-    /// This used to refuse anything that was not https, on the grounds that the dashboard
-    /// is served over https and an http image is blocked as mixed content. That reasoning
-    /// applied to a url the browser fetches itself - and the browser never sees this one.
-    /// It is handed the relay on this server's own origin, and the server fetches the
-    /// logo, http or not. Refusing here only emptied a field the client draws, which is
-    /// the one thing this plugin must not do.
-    ///
-    /// Still null for a station that genuinely has no logo: there is nothing to point at,
-    /// and pointing at a relay that will answer 404 is a broken image rather than the
-    /// placeholder the card draws for itself.
+    /// The same judgement StationGates makes about a stream, for the same reason: the
+    /// dashboard is served over https, so an http image is blocked as mixed content and
+    /// renders as a broken icon — which reads as this plugin being broken rather than as a
+    /// station's logo having rotted. Six of them had already rotted to 404, 403 or an HTML
+    /// page, so this is the ordinary case and not the exotic one.
     /// </summary>
     public static string? CoverUrl(RadioStation station)
     {
@@ -195,7 +211,7 @@ public static class StationCards
         }
 
         return Uri.TryCreate(station.LogoUrl, UriKind.Absolute, out Uri? parsed)
-            && (parsed.Scheme == Uri.UriSchemeHttps || parsed.Scheme == Uri.UriSchemeHttp)
+            && parsed.Scheme == Uri.UriSchemeHttps
             ? station.LogoUrl
             : null;
     }

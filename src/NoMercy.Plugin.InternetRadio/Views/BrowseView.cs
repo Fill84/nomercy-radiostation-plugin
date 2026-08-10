@@ -16,7 +16,8 @@ public static class BrowseView
         StationCatalog catalog,
         UserState state,
         IReadOnlyList<RadioStation>? searchResults = null,
-        bool searchFailed = false)
+        bool searchFailed = false,
+        SearchFacets? facets = null)
     {
         if (catalog.IsEmpty)
         {
@@ -42,10 +43,18 @@ public static class BrowseView
             // with data and cannot navigate, so after a submit the client refreshes the
             // route it is already on. Answering on a different route would mean submitting
             // here and the answer appearing on a page nothing takes you to.
-            SearchView.Field(state.LastSearch ?? string.Empty),
+            SearchView.Field(state.LastSearch ?? string.Empty, state, facets ?? new SearchFacets()),
         ];
 
-        bool searching = searchFailed || !string.IsNullOrWhiteSpace(state.LastSearch);
+        // Every axis, not just the name. A search by genre or country left this
+        // false, so Popular stayed on screen under the results - two grids of
+        // unrelated stations under one box, which is what this flag exists to
+        // prevent and what it stopped preventing the moment filters arrived.
+        bool searching = searchFailed
+            || !string.IsNullOrWhiteSpace(state.LastSearch)
+            || !string.IsNullOrWhiteSpace(state.LastGenre)
+            || !string.IsNullOrWhiteSpace(state.LastCountry)
+            || !string.IsNullOrWhiteSpace(state.LastLanguage);
 
         children.AddRange(
             SearchView.Results(state.LastSearch ?? string.Empty, searchResults ?? [], searchFailed, state));

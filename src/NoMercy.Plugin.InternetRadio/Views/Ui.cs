@@ -34,57 +34,6 @@ namespace NoMercy.Plugin.InternetRadio;
 // names, this file is the one place that has to change.
 public static class Ui
 {
-    /// <summary>
-    /// The props that actually have something to say.
-    ///
-    /// An optional prop written as `null` is not the same as one that was left out. Left
-    /// out means the component decides, and every component in the client has a default
-    /// for what it was not given. Null means "here is your value, and it is nothing" - and
-    /// the client takes it at its word: a null cover becomes an image source, a null
-    /// variant becomes a class name. Some of that ends up in code that reads a property
-    /// off what it was handed, which throws while drawing and reaches the viewer as
-    /// "A component error occurred" with nothing attached to say where.
-    ///
-    /// C# has no way to leave an entry out of an object initialiser, which is why every
-    /// factory below used to write the nulls in. This drops them on the way in instead.
-    /// </summary>
-    private static Dictionary<string, object?> Only(params (string Key, object? Value)[] props)
-    {
-        Dictionary<string, object?> kept = [];
-
-        foreach ((string key, object? value) in props)
-        {
-            if (value is not null)
-            {
-                kept[key] = value;
-            }
-        }
-
-        return kept;
-    }
-
-    /// <summary>
-    /// The same intent, with the empty entries its factory wrote in taken back out.
-    ///
-    /// The factories take every optional argument and put it in the payload whether or not
-    /// it was given, so a play with no cover ships `"cover": null` and a call with no body
-    /// ships `"payload": null`. Same problem as a null prop: absent lets the receiver
-    /// decide, present-and-empty makes it work with nothing.
-    /// </summary>
-    public static PluginActionIntent WithoutEmpties(PluginActionIntent intent)
-    {
-        // Collected first: a dictionary cannot be written to while it is being read.
-        List<string> empties =
-            [.. intent.Payload.Where(entry => entry.Value is null).Select(entry => entry.Key)];
-
-        foreach (string key in empties)
-        {
-            intent.Payload.Remove(key);
-        }
-
-        return intent;
-    }
-
     public const string ContainerComponent = "PluginContainer";
     public const string TextComponent = "PluginText";
     public const string ImageComponent = "PluginImage";
@@ -110,7 +59,16 @@ public static class Ui
     /// and should not try - the whole point is that a plugin's shelf is the same shelf.
     /// </summary>
     public static PluginComponent MediaGrid(string id, IEnumerable<PluginComponent> items) =>
-        new() { Id = id, Component = MediaGridComponent, Items = [.. items] };
+        new()
+        {
+            Id = id,
+            Component = MediaGridComponent,
+            // On the props as well as the envelope, for the same reason the card
+            // carries it: the app's NMGrid requires it there, and without it the
+            // shelf fails to decode and draws nothing at all.
+            Props = new() { ["id"] = id },
+            Items = [.. items],
+        };
 
     /// <summary>
     /// One tile in that grid, drawn exactly as an artist or an album is.
@@ -124,19 +82,31 @@ public static class Ui
         string name,
         string link,
         string? cover,
-        string? type = null) =>
+        string? type = null,
+        string? description = null) =>
         new()
         {
             Id = id,
             Component = MediaCardComponent,
             Props = new()
             {
-                ["data"] = Only(
-                    ("id", (object?)id),
-                    ("name", name),
-                    ("link", link),
-                    ("cover", cover),
-                    ("type", type)),
+                // The id belongs on the props as well as inside data. The app's
+                // NMMusicCard requires it there, and a card without it fails the
+                // whole shelf's decode - the grid then arrives with no items,
+                // draws nothing, and reports nothing anywhere.
+                ["id"] = id,
+                ["data"] = new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["name"] = name,
+                    ["link"] = link,
+                    ["cover"] = cover,
+                    ["type"] = type,
+                    // The line under the name. Without it the card falls back to
+                    // its own music vocabulary and labels a radio station an
+                    // artist, which is neither true nor useful.
+                    ["description"] = description,
+                },
             },
         };
 
@@ -169,7 +139,7 @@ public static class Ui
         {
             Id = id,
             Component = TextComponent,
-            Props = Only(("value", (object?)value), ("variant", (object?)variant)),
+            Props = new() { ["value"] = value, ["variant"] = variant },
         };
 
     /// <summary>`url`, not `src`.</summary>
@@ -178,7 +148,7 @@ public static class Ui
         {
             Id = id,
             Component = ImageComponent,
-            Props = Only(("url", (object?)url), ("alt", (object?)alt)),
+            Props = new() { ["url"] = url, ["alt"] = alt },
         };
 
     public static PluginComponent Button(
@@ -191,7 +161,7 @@ public static class Ui
         {
             Id = id,
             Component = ButtonComponent,
-            Props = Only(("label", (object?)label), ("icon", (object?)icon), ("variant", (object?)variant)),
+            Props = new() { ["label"] = label, ["icon"] = icon, ["variant"] = variant },
             Action = action,
         };
 
@@ -209,7 +179,7 @@ public static class Ui
         {
             Id = id,
             Component = CardComponent,
-            Props = Only(("title", (object?)title), ("subtitle", (object?)subtitle), ("image", (object?)image)),
+            Props = new() { ["title"] = title, ["subtitle"] = subtitle, ["image"] = image },
             Action = action,
         };
 
@@ -223,7 +193,7 @@ public static class Ui
         {
             Id = id,
             Component = DetailComponent,
-            Props = Only(("title", (object?)title), ("description", (object?)description), ("image", (object?)image)),
+            Props = new() { ["title"] = title, ["description"] = description, ["image"] = image },
             Items = [.. items],
         };
 
@@ -240,7 +210,7 @@ public static class Ui
         {
             Id = id,
             Component = FormComponent,
-            Props = Only(("submitLabel", (object?)submitLabel), ("fields", (object?)fields)),
+            Props = new() { ["submitLabel"] = submitLabel, ["fields"] = fields },
             Action = action,
         };
 
@@ -249,7 +219,7 @@ public static class Ui
         {
             Id = id,
             Component = EmptyStateComponent,
-            Props = Only(("title", (object?)title), ("message", (object?)message)),
+            Props = new() { ["title"] = title, ["message"] = message },
         };
 
     public static PluginComponent Table(
@@ -261,7 +231,7 @@ public static class Ui
         {
             Id = id,
             Component = TableComponent,
-            Props = Only(("columns", (object?)columns), ("emptyMessage", (object?)emptyMessage)),
+            Props = new() { ["columns"] = columns, ["emptyMessage"] = emptyMessage },
             Items = [.. rows],
         };
 
@@ -283,6 +253,6 @@ public static class Ui
         {
             Id = id,
             Component = BadgeComponent,
-            Props = Only(("label", (object?)label), ("variant", (object?)variant)),
+            Props = new() { ["label"] = label, ["variant"] = variant },
         };
 }

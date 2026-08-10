@@ -26,8 +26,6 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public const string StreamMethod = "stream";
     public const string CoverRouteTemplate = "cover/{stationId}";
     public const string CoverMethod = "cover";
-    public const string NowPlayingRouteTemplate = "nowplaying/{stationId}";
-    public const string NowPlayingMethod = "nowplaying";
 
 
     [HttpPost(ToggleFavouriteRouteTemplate)]
@@ -47,12 +45,31 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     /// </summary>
     [HttpPost(SearchMethod)]
     public Task<IActionResult> Search([FromBody] SearchRequest? request, CancellationToken ct) =>
-        RespondAsync(plugin => plugin.StoreSearchAsync(CurrentUserId(), request?.Query, ct));
+        RespondAsync(plugin =>
+            plugin.StoreSearchAsync(
+                CurrentUserId(),
+                request?.Query,
+                request?.Genre,
+                request?.Country,
+                request?.Language,
+                ct
+            ));
 
     /// <summary>The one field the search form carries.</summary>
     public sealed class SearchRequest
     {
         public string? Query { get; init; }
+
+        /// <summary>
+        /// The rest of the form. Each is optional and they combine, so a listener
+        /// can ask for a genre from a country without naming a station at all -
+        /// which is most of what anyone wants from a database of this size.
+        /// </summary>
+        public string? Genre { get; init; }
+
+        public string? Country { get; init; }
+
+        public string? Language { get; init; }
     }
 
     /// <summary>
@@ -63,21 +80,15 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public Task<IActionResult> Stream(string stationId, CancellationToken ct) =>
         RelayAsync(stationId, cover: false, ct);
 
-    /// <summary>The station's logo, relayed for the same reason.</summary>
-    [HttpGet(CoverRouteTemplate)]
-    public Task<IActionResult> Cover(string stationId, CancellationToken ct) =>
-        RelayAsync(stationId, cover: true, ct);
+    public const string NowPlayingRouteTemplate = "nowplaying/{stationId}";
+    public const string NowPlayingMethod = "nowplaying";
 
     /// <summary>
-    /// What this station is announcing right now.
+    /// What the station is playing right now, as it last announced over ICY.
     ///
-    /// The client polls this only because the play intent told it to, and only while the
-    /// station is the item on air. The route shape - method then resource id - is the
-    /// client's, not ours: it builds the url from the item's own id.
-    ///
-    /// Answers 200 with no data rather than 404 when the station is announcing nothing.
-    /// A station between tracks is the ordinary case, and a 404 for it puts a red line in
-    /// the console every thirty seconds for something that is working correctly.
+    /// Null title rather than a 404 when nothing has been announced: a station that
+    /// sends no metadata, and a station whose next block has not arrived yet, are the
+    /// same thing to a listener, and neither is an error to draw.
     /// </summary>
     [HttpGet(NowPlayingRouteTemplate)]
     public IActionResult NowPlaying(string stationId)
@@ -114,6 +125,11 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
             ? interval
             : null;
     }
+
+    /// <summary>The station's logo, relayed for the same reason.</summary>
+    [HttpGet(CoverRouteTemplate)]
+    public Task<IActionResult> Cover(string stationId, CancellationToken ct) =>
+        RelayAsync(stationId, cover: true, ct);
 
     private async Task<IActionResult> RelayAsync(string stationId, bool cover, CancellationToken ct)
     {

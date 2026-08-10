@@ -224,4 +224,57 @@ public class StationGatesTests
     {
         StationGates.IsSafeExternalUrl(url).Should().BeFalse();
     }
+
+    // radio-browser is community-edited and one broadcast is submitted more than
+    // once, each entry with its own uuid, so nothing upstream treats them as one.
+    // A page of results then reads as the same three stations over and over.
+    [Fact]
+    public void OneBroadcastIsOneStationHoweverManyTimesItWasSubmitted()
+    {
+        RadioBrowserStation[] wire =
+        [
+            Wire(name: "Classic Vinyl HD"),
+            Wire(name: "Classic Vinyl HD (128k)"),
+            Wire(url: "https://example.com/other.mp3", name: "Adroit Jazz"),
+        ];
+
+        StationGates.Admitted(wire).Select(station => station.Name)
+            .Should().Equal("Classic Vinyl HD", "Adroit Jazz");
+    }
+
+    [Fact]
+    public void TheEntryMorePeopleVouchedForIsTheOneKept()
+    {
+        // The answer arrives ordered by votes, so first-wins keeps the better one.
+        RadioBrowserStation[] wire = [Wire(name: "Most voted"), Wire(name: "Also submitted")];
+
+        StationGates.Admitted(wire).Single().Name.Should().Be("Most voted");
+    }
+
+    [Fact]
+    public void OneStreamSubmittedTwoWaysIsStillOneStation()
+    {
+        // The same audio, spelled differently: a trailing slash and a listener-id
+        // in the query are not a second broadcast.
+        RadioBrowserStation[] wire =
+        [
+            Wire(url: "https://example.com/stream.mp3", name: "Kept"),
+            Wire(url: "https://example.com/stream.mp3/?listenerid=7", name: "Duplicate"),
+        ];
+
+        StationGates.Admitted(wire).Single().Name.Should().Be("Kept");
+    }
+
+    [Fact]
+    public void TwoStationsThatMerelyShareANameStayApart()
+    {
+        // A name is not a key. Merging on one hides a station behind another.
+        RadioBrowserStation[] wire =
+        [
+            Wire(url: "https://one.example/stream.mp3", name: "Jazz FM"),
+            Wire(url: "https://two.example/stream.mp3", name: "Jazz FM"),
+        ];
+
+        StationGates.Admitted(wire).Should().HaveCount(2);
+    }
 }

@@ -25,7 +25,8 @@ public static class StationView
     /// radio-browser and was never cached. Looking it up needs the network, and views here
     /// are pure Build methods on purpose.
     /// </summary>
-    public static PluginView Build(RadioStation? station, UserState state)
+    public static PluginView Build(
+        RadioStation? station, UserState state, string? nowPlaying = null)
     {
         if (station is null)
         {
@@ -57,7 +58,7 @@ public static class StationView
                     // broken icon.
                     StationCards.CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id),
                     Actions(station, state.Favourites.Any(kept => kept.Id == station.Id)),
-                    Facts(station)
+                    Facts(station, nowPlaying)
                 )
             )
         );
@@ -144,10 +145,16 @@ public static class StationView
         return Ui.Row($"station-actions-{station.Id}", [.. buttons]);
     }
 
-    private static PluginComponent Facts(RadioStation station)
+    private static PluginComponent Facts(RadioStation station, string? nowPlaying)
     {
         List<(string Field, string? Value)> facts =
         [
+            // First, and above the station's own attributes: it is the one line that
+            // changes while the page is open, and the one a listener came to read.
+            // Absent until the station announces something, which the row filter below
+            // already handles - a station that sends no metadata simply has no row
+            // rather than one saying it does not know.
+            ("Now playing", nowPlaying),
             ("Genre", station.Genre),
             ("Country", station.Country),
             ("Language", station.Language),

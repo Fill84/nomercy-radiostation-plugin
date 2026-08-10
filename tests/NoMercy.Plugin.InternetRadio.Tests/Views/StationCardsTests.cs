@@ -26,6 +26,24 @@ public class StationCardsTests
     private static Dictionary<string, object?> Data(PluginComponent card) =>
         card.Props["data"].Should().BeOfType<Dictionary<string, object?>>().Subject;
 
+    // A station is not an artist. Left to its own music vocabulary the card read
+    // "Artist" under every station on the shelf, with a bare bullet after it.
+    [Fact]
+    public void Tile_SaysWhereTheStationBroadcastsFromAndWhatItPlays()
+    {
+        Dictionary<string, object?> data = Data(StationCards.Tile(Station()));
+
+        data["description"].Should().Be("NL • Ambient");
+    }
+
+    [Fact]
+    public void Tile_LeavesTheLineOutWhenAStationSaysNeither()
+    {
+        RadioStation bare = Station() with { Country = null, Genre = null };
+
+        Data(StationCards.Tile(bare))["description"].Should().Be(string.Empty);
+    }
+
     // The grid Films, Series and Music are laid out with. A plugin cannot express its
     // responsive column counts and should not try: the point is that it is the same shelf.
     [Fact]
@@ -85,17 +103,11 @@ public class StationCardsTests
             .Should().Be("https://cdn.example.com/logo.png");
     }
 
-    // An http logo is fine: the browser never fetches it. It is handed this server's relay,
-    // and the server fetches the logo whatever scheme it is on. Refusing it here only left
-    // the client with an empty field to draw.
-    [Fact]
-    public void CoverUrl_KeepsAnHttpLogoBecauseTheRelayFetchesIt()
-    {
-        StationCards.CoverUrl(Station("http://cdn.example.com/logo.png"))
-            .Should().Be("http://cdn.example.com/logo.png");
-    }
-
+    // An http image on an https dashboard is blocked as mixed content and draws as a broken
+    // icon, which reads as this plugin being broken rather than as a station's logo having
+    // rotted. Same judgement the stream gates make, for the same reason.
     [Theory]
+    [InlineData("http://cdn.example.com/logo.png")]
     [InlineData("/relative/logo.png")]
     [InlineData("not a url")]
     [InlineData("")]
@@ -107,30 +119,23 @@ public class StationCardsTests
     }
 
     // A rejected logo must not reach the card, or the grid draws the broken icon the gate
-    // just refused. The card has a placeholder of its own for that - and it reaches for it
-    // when the key is ABSENT, not when it is present and empty. A null there is a value
-    // the card takes at its word and hands to whatever draws an image.
+    // just refused. The card has a placeholder of its own for that.
     [Fact]
-    public void Tile_SendsNoCoverWhenTheStationHasNoLogoAtAll()
+    public void Tile_SendsNoCoverWhenTheLogoIsOneTheBrowserWouldRefuse()
     {
-        Data(StationCards.Tile(Station(null)))
-            .Should().NotContainKey("cover");
+        Data(StationCards.Tile(Station("http://cdn.example.com/l.png")))["cover"]
+            .Should().BeNull();
     }
 
     [Fact]
     public void Play_DoesNotHandARejectedCoverToThePlayer()
     {
-        // Absent, not present-and-empty. The factory writes every optional argument into
-        // the payload whether or not it was given, and a null there is a value the player
-        // takes at its word rather than a signal to use its own placeholder.
-        StationCards.Play(Station(null))
-            .Payload.Should().NotContainKey("cover");
+        StationCards.Play(Station("http://cdn.example.com/logo.png"))
+            .Payload["cover"].Should().BeNull();
     }
 
-    // An artist on the play intent is what raises "A component error occurred" on every
-    // track change; the same artist arriving afterwards on the now-playing route is drawn
-    // without complaint. Both were measured against a running server. So the artist is the
-    // announcement's to supply, and the intent that starts the station carries none.
+    // The player builds an artist link and a route from this. A live stream has no artist,
+    // and a genre there made the app route to something that is not one.
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -139,7 +144,7 @@ public class StationCardsTests
         PluginActionIntent intent =
             enqueue ? StationCards.Enqueue(Station()) : StationCards.Play(Station());
 
-        intent.Payload.Should().NotContainKey("artist");
+        intent.Payload["artist"].Should().BeNull();
     }
 
     // Without an id of its own the client builds a track id out of the stream url, and that
