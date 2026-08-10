@@ -26,6 +26,8 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     public const string StreamMethod = "stream";
     public const string CoverRouteTemplate = "cover/{stationId}";
     public const string CoverMethod = "cover";
+    public const string NowPlayingRouteTemplate = "nowplaying/{stationId}";
+    public const string NowPlayingMethod = "nowplaying";
 
 
     [HttpPost(ToggleFavouriteRouteTemplate)]
@@ -65,6 +67,37 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     [HttpGet(CoverRouteTemplate)]
     public Task<IActionResult> Cover(string stationId, CancellationToken ct) =>
         RelayAsync(stationId, cover: true, ct);
+
+    /// <summary>
+    /// What this station is announcing right now.
+    ///
+    /// The client polls this only because the play intent told it to, and only while the
+    /// station is the item on air. The route shape - method then resource id - is the
+    /// client's, not ours: it builds the url from the item's own id.
+    ///
+    /// Answers 200 with no data rather than 404 when the station is announcing nothing.
+    /// A station between tracks is the ordinary case, and a 404 for it puts a red line in
+    /// the console every thirty seconds for something that is working correctly.
+    /// </summary>
+    [HttpGet(NowPlayingRouteTemplate)]
+    public async Task<IActionResult> NowPlaying(string stationId, CancellationToken ct)
+    {
+        if (pluginManager.GetPluginInstance(PluginId) is not InternetRadioPlugin plugin)
+        {
+            return NotFound();
+        }
+
+        if (await plugin.NowPlayingAsync(stationId, ct) is not { } announced)
+        {
+            return Status<object?>(null);
+        }
+
+        return Status(new
+        {
+            track = announced.Track,
+            artist = announced.Artist,
+        });
+    }
 
     private async Task<IActionResult> RelayAsync(string stationId, bool cover, CancellationToken ct)
     {

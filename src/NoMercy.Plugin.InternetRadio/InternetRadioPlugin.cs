@@ -99,6 +99,10 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private UserStateStore StateStore => _userState ??= new UserStateStore(Context.DataFolderPath);
 
+    // One per plugin instance, so every listener on a station shares one read of it.
+    private readonly NowPlayingCache _nowPlaying =
+        new(NowPlayingCache.DefaultLifetime, () => DateTimeOffset.UtcNow);
+
     // === Actions the controller calls ======================================
 
     /// <summary>
@@ -319,6 +323,61 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         FavouriteResolver resolver = new(catalog, new RadioBrowserClient(Context.HttpClient));
 
         return await resolver.ResolveAsync(stationId, ct);
+    }
+
+    /// <summary>
+    /// What a station is announcing right now, or null when it announces nothing.
+    ///
+    /// Asked on a second connection rather than read out of the relay, and deliberately so.
+    /// A station only interleaves its titles for a listener who sends <c>Icy-MetaData: 1</c>,
+    /// and the browser is not that listener - it would receive those blocks in the middle
+    /// of the audio and decode them as noise. So the relay stays silent about metadata and
+    /// this asks separately, which costs one short connection per poll and keeps the audio
+    /// path exactly as it was.
+    ///
+    /// Null for every ordinary disappointment: a station that does not support metadata,
+    /// one between announcements, one that did not answer. None of those is a fault.
+    /// </summary>
+    public async Task<(string? Artist, string Track)?> NowPlayingAsync(
+        string stationId, CancellationToken ct)
+    {
+        // Shared across every device listening to the same station, so a household does
+        // not open one connection per screen to somebody else's server.
+        if (_nowPlaying.TryGet(stationId, out (string? Artist, string Track)? remembered))
+        {
+            return remembered;
+        }
+
+        if (await ResolveStationAsync(stationId, ct) is not { } station
+            || string.IsNullOrWhiteSpace(station.StreamUrl))
+        {
+            return null;
+        }
+
+        try
+        {
+            string? title = await IcyMetadata.ReadStreamTitleAsync(
+                Context.HttpClient, station.StreamUrl, ct);
+
+            (string? Artist, string Track)? announced = title is null
+                ? null
+                : IcyMetadata.Split(title);
+
+            // Stored even when it is nothing: a station that announces nothing is the
+            // ordinary case, and asking it again on every poll is the traffic this cache
+            // exists to avoid.
+            _nowPlaying.Set(stationId, announced);
+
+            return announced;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            Context.Logger.LogWarning(
+                exception,
+                "Internet Radio could not read what {StationId} is announcing.", stationId);
+
+            return null;
+        }
     }
 
     /// <summary>

@@ -115,6 +115,28 @@ public static class StationCards
                 CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id)),
             station);
 
+    /// <summary>The key a media intent carries its now-playing declaration under.</summary>
+    public const string NowPlayingKey = "nowPlaying";
+
+    /// <summary>
+    /// How long between asking a station what is on air, once it has told us once.
+    ///
+    /// A poll is a short second connection to the station, so this is a courtesy to them
+    /// as much as a cost to us. Half a minute is finer-grained than most stations announce
+    /// anyway.
+    /// </summary>
+    public const int NowPlayingIntervalSeconds = 30;
+
+    /// <summary>
+    /// How long between asking before the first answer arrives.
+    ///
+    /// A listener who has just tuned in is looking at the station's own name where a track
+    /// title belongs, and waiting half a minute to replace it is the difference between a
+    /// player that knows what it is playing and one that does not. Stations announce
+    /// shortly after a listener joins, so asking again soon usually settles it.
+    /// </summary>
+    public const int NowPlayingFirstIntervalSeconds = 5;
+
     // Written into the payload after the factory built it rather than by hand-rolling the
     // intent here: the factory owns which keys a media intent carries and what they are
     // called, and a copy of that here would drift the first time it gains one.
@@ -122,6 +144,17 @@ public static class StationCards
         PluginActionIntent intent, RadioStation station)
     {
         intent.Payload[StationIdKey] = station.Id;
+
+        // A statement about this item, not a request for a feature. The client asks
+        // nothing of an item that says nothing here, which is the right default: a track
+        // with a fixed title must not be polled, and only the plugin knows which of its
+        // media changes under its own name.
+        intent.Payload[NowPlayingKey] = new Dictionary<string, object>
+        {
+            ["method"] = InternetRadioController.NowPlayingMethod,
+            ["intervalSeconds"] = NowPlayingIntervalSeconds,
+            ["firstIntervalSeconds"] = NowPlayingFirstIntervalSeconds,
+        };
 
         return intent;
     }
