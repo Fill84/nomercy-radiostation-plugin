@@ -81,7 +81,7 @@ public class StationCardsTests
     public void TheCardLinksThroughTheAppsRouter()
     {
         Data(StationCards.Tile(Station()))["link"]
-            .Should().Be($"/plugins/{PluginIdentity.Id}/station/a")
+            .Should().Be($"/music/plugins/{PluginIdentity.Id}/station/a")
             .And.NotBe(RadioRoutes.Station("a"));
     }
 

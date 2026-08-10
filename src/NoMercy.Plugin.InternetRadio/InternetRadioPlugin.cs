@@ -79,6 +79,16 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     private IPluginContext Context =>
         _context ?? throw new InvalidOperationException("the plugin was used before Initialize");
 
+    /// <summary>
+    /// The host's logger, for the controller.
+    ///
+    /// The relay's two halves live apart - fetching upstream is the plugin's, writing the
+    /// response is the controller's - and only one of them could say anything. A relay
+    /// that narrates the fetch but goes silent the moment it starts writing tells you
+    /// exactly half of what you need when no audio comes out.
+    /// </summary>
+    public ILogger RelayLogger => Context.Logger;
+
     private CatalogProvider Provider =>
         _provider ??= new CatalogProvider(
             new RadioBrowserClient(Context.HttpClient),
@@ -452,18 +462,37 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     public async Task<HttpResponseMessage?> FetchStationMediaAsync(
         string stationId, bool cover, string? range, CancellationToken ct)
     {
+        string kind = cover ? "cover" : "stream";
+
+        // Said out loud, every time, because the host's access log only records
+        // requests it REFUSED. An accepted one leaves no trace anywhere, so
+        // "the server never saw it" was indistinguishable from "the server saw
+        // it and answered fine" - and days went into that gap. A relay that
+        // narrates what it relayed costs one line and closes it.
+        Context.Logger.LogInformation(
+            "Internet Radio relay: {Kind} for {StationId} requested (range: {Range}).",
+            kind, stationId, string.IsNullOrWhiteSpace(range) ? "none" : range);
+
         StationCatalog catalog = await Provider.GetAsync(ct);
         RadioBrowserClient client = new(Context.HttpClient);
         FavouriteResolver resolver = new(catalog, client);
 
         if (await resolver.ResolveAsync(stationId, ct) is not { } station)
         {
+            Context.Logger.LogWarning(
+                "Internet Radio relay: {Kind} for {StationId} - no such station, answering 404.",
+                kind, stationId);
+
             return null;
         }
 
         string? url = cover ? StationCards.CoverUrl(station) : station.StreamUrl;
         if (string.IsNullOrWhiteSpace(url))
         {
+            Context.Logger.LogWarning(
+                "Internet Radio relay: {Kind} for {StationId} - station has no {Kind} url, answering 404.",
+                kind, stationId, kind);
+
             return null;
         }
 
@@ -488,10 +517,33 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             request.Headers.TryAddWithoutValidation("Range", range);
         }
 
-        // ResponseHeadersRead, not the default: this must start relaying as soon as the
-        // headers arrive rather than buffering a live stream into memory first.
-        return await Context.HttpClient.SendAsync(
-            request, HttpCompletionOption.ResponseHeadersRead, ct);
+        try
+        {
+            // ResponseHeadersRead, not the default: this must start relaying as soon as the
+            // headers arrive rather than buffering a live stream into memory first.
+            HttpResponseMessage upstream = await Context.HttpClient.SendAsync(
+                request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            Context.Logger.LogInformation(
+                "Internet Radio relay: {Kind} for {StationId} - upstream answered {Status} {ContentType}.",
+                kind, stationId, (int)upstream.StatusCode,
+                upstream.Content.Headers.ContentType?.ToString() ?? "no content-type");
+
+            return upstream;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Swallowed into a 404 rather than left to become a 500. An unhandled
+            // exception here takes the whole request down with a stack trace the
+            // browser reads as a broken media file, and the reason it broke is
+            // upstream's, not this server's - so it is said here, where it is known.
+            Context.Logger.LogWarning(
+                exception,
+                "Internet Radio relay: {Kind} for {StationId} - upstream fetch of {Url} failed.",
+                kind, stationId, url);
+
+            return null;
+        }
     }
 
     /// <summary>
