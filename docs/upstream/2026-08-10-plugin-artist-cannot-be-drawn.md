@@ -2,7 +2,8 @@
 
 **Repo:** `nomercy-app-web`
 **Found:** 2026-08-10, against `master` at `7a58104` and the build on `app.nomercy.tv`.
-**Fixed:** branch `fix/plugin-artist-without-link`, commit `21229a7`. Not deployed.
+**Raised:** NoMercy-Entertainment/nomercy-app-web#23. Open — the fix belongs to that repo
+and its owner, not here.
 
 ## What happens
 
@@ -88,31 +89,38 @@ reproduction impossible and every dev-mode observation misleading.
 So the same code, run locally, warns quietly and draws the artist. Anyone comparing a dev
 build against the deployed app is comparing two different programs.
 
-## The fix
+## What would fix it
 
-`TrackLinks.vue` now renders an entry with no `link` as text rather than as a link — the
-component already had that branch for its `noLink` prop, so the change is the condition:
+Reported on the issue, for that repo to decide and implement:
+
+`TrackLinks.vue` already has a text-only branch for its `noLink` prop, so the smallest fix
+is the condition on it — an entry with no destination is text:
 
 ```vue
 <span v-if="noLink || !item.link" …>
 ```
 
-One place instead of two construction sites, and it holds for any consumer. Covered by
-`src/components/MusicPlayer/components/TrackLinks.spec.ts`, which mounts an entry that
-carries no link and asserts no `<a>` is drawn. That spec needs a DOM and the Vue plugin, so
-it joins the `vitest.nm.config.ts` project.
+One place instead of two construction sites, and it holds for any consumer. The alternative
+is to give the constructed entries a `link` in `actionInterpreter.ts` and
+`pluginNowPlaying.ts` — both files already know the plugin id — but that leaves the
+component able to throw on the next caller that forgets.
 
-Verified: `vue-tsc --noEmit` clean, 268 tests in the nm project pass, 472 in the node
-project. `src/store/audioPlayerVisualizer.test.ts` fails on this branch and on a clean
-checkout of `master` alike — pre-existing, unrelated.
+A regression test wants a DOM and the Vue plugin, so a spec under
+`src/components/MusicPlayer/` needs that path in `vitest.nm.config.ts`'s `include` and in
+the node project's `exclude`, plus the `@icons` alias the player store reaches through.
+Tried locally against `7a58104` before the issue was written: `vue-tsc --noEmit` clean, 268
+nm tests and 472 node tests pass, and the mounted component stops asking the router to
+resolve `undefined`. `src/store/audioPlayerVisualizer.test.ts` fails with and without the
+change alike — pre-existing, unrelated.
 
 ## What this means for the plugin
 
-Nothing to change. `InternetRadioController.NowPlaying` answers with `title`, `artist` and
-`track`, `StreamTitle.Parse` supplies the split, and once this branch is deployed the
-artist draws as text under the title with no toast. Until it is deployed, a plugin sending
-an `artist` still raises the toast on the built client — the only workaround available to
-the plugin is to send no `artist` and let the whole announced line ride in `track`.
+Nothing to change here, and nothing this repository can do about it. The plugin's
+`NowPlaying` answers with `title`, `artist` and `track`, `StreamTitle.Parse` supplies the
+split, and the shape is correct. Until the client stops linking an entry that has nowhere
+to go, an announced artist raises the toast on the built app; the only lever the plugin has
+is to send no `artist` at all and let the whole announced line ride in `track`, which trades
+the toast for a worse-looking Now Playing and hides a real client bug. Not taken.
 
 ## A wrong turn worth recording
 
