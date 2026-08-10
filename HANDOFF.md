@@ -4,21 +4,16 @@ Written 2026-08-09, rewritten the same day once the cause was found.
 
 ## The one-line state
 
-**Radio plays.** Confirmed in the browser on 2026-08-10: audio out of the relay, the
-station's own cover, "Live" instead of a countdown, and the track on air named in the
-player bar — `Refracted Light`, which SomaFM was announcing at that moment as
-`Puff Dragon - Refracted Light`.
-
-It was silent for **two independent reasons**, both fixed, both written up in
-`docs/upstream/`. Everything below is kept because the eliminations are worth more than
-the conclusion: twelve dead ends nobody should walk again.
+Radio was silent for **two independent reasons**, both now fixed and both written up. The
+relay fix is deployed and verified; the client fix is committed on a branch in
+`nomercy-app-web` and **still needs to be deployed before anyone hears anything**.
 
 ## What was actually wrong
 
 | | |
 | --- | --- |
 | **The relay never flushed** | `CopyToAsync` to `Response.Body` and nothing else. A response that is never started and never flushed is delivered when the body completes — for a cover, instantly; for a live stream, never. Fixed in `6247bf2`, deployed to beast-unit, bytes verified reaching the client |
-| **Connect swallowed the play** | With Connect on, a user's play is cancelled locally and routed to the MusicHub, which then echoes an authoritative frame back. The hub has never heard of a plugin's stream, so nothing echoes and the play is lost. Reported and fixed upstream in `nomercy-app-web`; Stoney generalised the fix beyond our branch |
+| **Connect swallowed the play** | With Connect on, a user's play is cancelled locally and routed to the MusicHub, which then echoes an authoritative frame back. The hub has never heard of a plugin's stream, so nothing echoes and the play is lost. Fixed on `fix/plugin-track-not-routed-to-hub` (`ab9e237` + tests `3c11ad4`) — **not deployed** |
 
 The second one is why the browser reported `readyState 4`, `err: null`, `vol: 1`,
 `muted: false` — fully loaded, ready, unmuted — and `paused: true` at `t: 0`.
@@ -32,43 +27,9 @@ failure on this path is silent. See `2026-08-09-plugin-media-failure-is-silent.m
 `/music/plugins/{id}` rendered a blank shell while `/plugins/{id}` rendered fine, which
 read as a routing fault for hours. It is a timeout: `PluginScreen` fetched the view with
 `serverClient(5)` — five seconds — while `Host` passes none, and a plugin resolving a
-station against radio-browser on a cold cache does not make it. Fixed upstream in
-`nomercy-app-web`, alongside a `PluginNode` renderer fix of Stoney's that landed
-independently. Station cards reach their page.
-
-## Now playing comes out of the relay
-
-Taken over from `stoney/nm-component-ui`, and it is better than what was here: the relay
-asks `Icy-MetaData: 1`, `IcyMetadataStream` lifts the titles out of the body as it passes
-and hands the browser audio only, and `NowPlaying` keeps the last title per station with a
-listener count. One connection per station instead of one per poll, and the title is
-current the moment it changes - on screen inside a second rather than after a poll.
-
-Gone with it: `IcyMetadata.cs` and `NowPlayingCache.cs`, which opened a second connection
-per poll and had to cache to make that bearable.
-
-## The artist: measured, not reasoned
-
-Sending an artist **on the play intent** raises "A component error occurred" on every
-track change. Sending the same artist **afterwards, on the now-playing route**, draws
-without complaint. Both were run against a live server; the difference is not theory.
-
-So `StationCards.Play`/`Enqueue` carry no artist. `NowPlaying` answers with `title`,
-`artist` and `track` — the shape `stoney/nm-component-ui` uses, adopted verbatim.
-
-**The toast is upstream and no plugin can avoid it.** With that shape deployed, an
-announced artist still raises it, with `TypeError: … (reading 'path')` at `router.resolve`
-in the console. `pluginNowPlaying.ts` builds the artist entry itself as `{ name }` with no
-`link`, and `TrackLinks.vue` renders `<RouterLink :to="item.link">` for it unguarded.
-`QueueTrackItem.vue` guards the same data with `?? '#'`, which is why Now Playing draws the
-artist and the bar does not. Written up in
-`docs/upstream/2026-08-10-plugin-artist-cannot-be-drawn.md`.
-
-Two wrong turns worth remembering. The first removed the artist from **both** the play
-intent and the announcement at once and pinned the result on one of them. The second
-"refuted" the TrackLinks diagnosis by comparing Vite's compiled dev output against raw
-source files — two things that were never comparable — and an issue filed upstream was
-deleted on the strength of it. The diagnosis was right.
+station against radio-browser on a cold cache does not make it. Branch
+`fix/plugin-view-timeout` (`8bb1c0e`) in `nomercy-app-web`, **also not deployed**. Every
+station card links to that route, so until it ships, cards lead to an empty page.
 
 ---
 
