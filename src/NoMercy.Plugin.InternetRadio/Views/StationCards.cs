@@ -148,9 +148,14 @@ public static class StationCards
             // anchor it. A live stream has no artist, and putting the genre there made the
             // app try to route to a genre that does not exist ("Cannot read properties of
             // undefined (reading 'path')") and then build the selector
-            // "#trackLink-artists-plugin:<id>:https://…/stream/…" - invalid, because a url
-            // has colons and slashes in it. Those two were every "Something went wrong"
-            // toast on the page.
+            // "#trackLink-artists-plugin:<id>:<streamUrl>" - invalid, because a url has
+            // colons and slashes in it. Those two were every "Something went wrong" toast
+            // on the page.
+            //
+            // The placeholder is spelled out rather than shown as a real url on purpose:
+            // CI greps every .cs file for `https?://` to keep station data out of the
+            // source tree, and it cannot tell an illustration in a comment from a
+            // committed stream. An example url here has had the build red since run 18.
             null,
             CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id));
 
