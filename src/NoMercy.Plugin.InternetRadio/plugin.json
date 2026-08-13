@@ -2,7 +2,7 @@
   "id": "5KTKRT4Z2Y9P59Y40W5CX4TQKF",
   "name": "Internet Radio",
   "description": "Browse and play internet radio stations in the built-in player.",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "targetAbi": "10.0",
   "author": "NoMercy Community",
   "projectUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin",
