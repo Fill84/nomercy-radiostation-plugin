@@ -8,7 +8,7 @@
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <AssemblyName>NoMercy.Plugin.InternetRadio</AssemblyName>
         <RootNamespace>NoMercy.Plugin.InternetRadio</RootNamespace>
-        <Version>1.1.1</Version>
+        <Version>1.2.0</Version>
         <Authors>NoMercy Community</Authors>
         <Description>Browse and play internet radio stations in the built-in player.</Description>
     </PropertyGroup>
