@@ -6,6 +6,33 @@ player.
 Adds two entries to the dashboard: **Internet Radio** under Music, and a status
 page under plugin settings.
 
+## Requirements
+
+NoMercy MediaServer v0.1.526 or newer. Older servers refuse 2.0.0, and newer
+servers refuse 1.x.
+
+## Install
+
+Extract the zip into `<server>/plugins/` and restart the server. **Do not use the
+dashboard's upload button:** a plugin uploaded as a file is visible to the server
+owner only, and members will not see Internet Radio.
+
+## After installing or updating
+
+- Enable the plugin in the dashboard (2.0.0 asks for one new permission: streaming
+  through the server).
+- Approve its streaming request.
+
+Until both are done, stations can be browsed but not played. The station page
+says so.
+
+## What it fetches
+
+- The station list from radio-browser.info, daily.
+- Station logos, cached on the server, at most 16 KB each.
+- While a station plays, one extra connection to that station that reads only its
+  track titles.
+
 ## What it does
 
 - Fetches its station catalogue from [radio-browser.info](https://www.radio-browser.info/)
@@ -21,8 +48,8 @@ page under plugin settings.
   shelf of stations is the same shelf Films, Series and Music use — the same grid, the
   same card, the same behaviour on every screen size.
 - Selecting a station opens its page, which plays it in the built-in player and offers
-  **Add to queue**, a favourite toggle and a link to its homepage. That is how a card
-  behaves everywhere else in the app.
+  **Add to queue** and a favourite toggle. That is how a card behaves everywhere else
+  in the app.
 
 ## Searching
 
@@ -38,8 +65,9 @@ Two characters is usually enough: `to` already finds Tomorrowland.
 | --- | --- |
 | `ui` | The six pages above. |
 | `scheduledTask` | One job, `refresh`, daily at 04:00, which updates the catalogue. |
+| `media.proxy` | Lets the server mint a short-lived url, bound to the listener, for the station being played, so the browser never talks to the stream's own host directly. Asked for separately from the rest of this table — see "After installing or updating" above. |
 | `network` → `**` | **Any host.** See below — this is the widest grant a plugin can ask for, and it is asked for a reason. |
-| `rest` | Three endpoints of its own: one to toggle a favourite, and two that relay a station's audio and logo through this server. Nothing else reaches them — this plugin's own pages are the only caller. |
+| `rest` | Three endpoints of its own: one to toggle a favourite, one that runs the search form, and one that returns a station's current track title, read from its ICY metadata, while it plays. Nothing else reaches them — this plugin's own pages are the only caller. |
 
 It declares no `ws`, no library access and no secrets storage.
 
@@ -55,9 +83,11 @@ server. That is what needs the wide grant. radio-browser carries some fifty thou
 stations across thousands of hosts, and no list written in advance can cover them.
 
 What this means in practice: **this plugin can make outbound requests to any address.** It
-uses that to fetch station audio and artwork and nothing else, and its whole source is
-readable — but you are trusting it with that, and you should know you are. If that is more
-than you want to grant, do not install it.
+uses that to fetch station artwork and to read a playing station's now-playing metadata,
+and nothing else — the audio itself streams through the host's own media proxy, a
+separate grant covered below — and its whole source is readable, but you are trusting it
+with that, and you should know you are. If that is more than you want to grant, do not
+install it.
 
 **You will need to enable it once.** A plugin that declares a network host is not
 auto-enabled however `autoEnabled` is set, so the server starts it disabled until
@@ -66,13 +96,15 @@ correct: this plugin calls a third-party API on a schedule.
 
 ## Stations it will not have
 
-Only HTTPS, non-HLS streams are admitted. Your dashboard is served over HTTPS, so
-a plain `http://` stream is blocked by the browser as mixed content and cannot
-play at all — listing one would be listing something that does not work.
+Only HTTPS, non-HLS streams are admitted to the catalogue. That is a filter at
+admission time, not something the browser enforces during playback: streams play
+through the server's own media proxy, so the browser only ever talks to your
+server, never to the station directly. The filter stays anyway — a station this
+plugin cannot mint a working stream for is worse listed than absent.
 
 This is why **BBC Radio 1 and BBC Radio 6 Music are absent**: radio-browser carries
 them only as HLS over `http://`. Earlier versions of this plugin shipped BBC URLs
-that could never play in a browser for exactly that reason.
+that could never play at all for exactly that reason.
 
 ## Using your own station list
 
@@ -109,12 +141,15 @@ rebuilds itself on the next refresh either way.
 
 ## Upgrading from 1.0.x
 
-Nothing to do. The plugin id has not changed, and consent is recorded against that
-id, so a server that already approved this plugin keeps running it without being
-asked again. Your `stations.json`, if you have one, still replaces the catalogue
-exactly as before.
+The plugin id has not changed, but the manifest has: 2.0.0 declares a hook 1.0.x
+never did, so the server asks you to enable it again even on a server that
+already approved this plugin. See "After installing or updating" above — you
+also need to approve the streaming request before stations play.
 
-Note that this version does serve REST endpoints, which 1.0.x did not — see the
+Your `stations.json` and `user-state.json`, if you have either, are unaffected
+and still work exactly as before.
+
+Note that this version serves REST endpoints, which 1.0.x did not — see the
 table above for what they are.
 
 ## License

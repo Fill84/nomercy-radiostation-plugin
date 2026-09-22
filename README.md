@@ -9,10 +9,17 @@ does and how to use it.
 
 Requires the .NET 10 SDK (pinned in `global.json`).
 
+**Requirements to run against:** NoMercy MediaServer **v0.1.526 or newer** (plugin
+ABI 12.1).
+
 `NoMercy.Plugins.Abstractions` is not published to nuget.org, so it is cloned and
 packed into a local feed first. `nuget.config` already points at that feed, and
 `packageSourceMapping` pins `NoMercy.*` to it so nobody can publish that name on
 nuget.org and get their assembly compiled in instead.
+
+`scripts/fetch-abstractions.sh` (or `.ps1`) packs the newest server release tag into
+`_server/` inside this repository, and never touches a sibling checkout. Set
+`SERVER_REF` to pin another tag or commit instead.
 
 ```bash
 ./scripts/fetch-abstractions.sh     # or scripts/fetch-abstractions.ps1

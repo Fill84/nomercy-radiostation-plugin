@@ -328,6 +328,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONTRACT_REF: ${{ steps.contract.outputs.ref }}
           CONTRACT_SHA: ${{ steps.contract.outputs.sha }}
         run: |
           set -euo pipefail
@@ -342,11 +343,18 @@ jobs:
 
           Browse and play internet radio stations in the NoMercy MediaServer's built-in player.
 
+          ### Requires
+          NoMercy MediaServer **v0.1.526 or newer** (plugin ABI 12.1). Older servers refuse
+          this release; newer servers refuse 1.x.
+
           ### Install
           1. Extract \`${ZIP}\` into \`<server>/plugins/\`.
           2. Restart the server.
-          3. **Enable the plugin in the dashboard.** It declares a network host, so the
-             server starts it disabled until you approve it.
+          3. **Enable the plugin in the dashboard**, then **approve its streaming request**.
+             Until both are done, stations can be browsed but not played.
+
+          **Do not install it with the dashboard's upload button.** A plugin uploaded as a
+          file is visible to the server owner only, and members will not see it.
 
           ### Verify
           \`\`\`
@@ -354,10 +362,10 @@ jobs:
           \`\`\`
 
           Stations are fetched from radio-browser.info and refreshed daily; nothing is
-          bundled. HTTPS, non-HLS streams only — an http stream is blocked by the browser
-          as mixed content and cannot play.
+          bundled. Streams play through the server's own media proxy. HTTPS, non-HLS
+          stations only in this release.
 
-          Built and tested against \`NoMercy-Entertainment/nomercy-media-server@${CONTRACT_SHA}\`.
+          Built and tested against \`NoMercy-Entertainment/nomercy-media-server\` ${CONTRACT_REF} (\`${CONTRACT_SHA}\`).
           To rebuild this exact artifact: \`SERVER_REF=${CONTRACT_SHA} ./scripts/fetch-abstractions.sh\`
           then \`dotnet build -c Release\`.
           EOF
