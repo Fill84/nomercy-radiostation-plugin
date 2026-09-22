@@ -29,7 +29,17 @@ public sealed class LogoCache : IStationLogos
     private readonly int _capacity;
     private readonly ConcurrentDictionary<string, Entry> _entries = new();
     private readonly ConcurrentDictionary<string, RadioStation> _pending = new();
-    private readonly Lock _evicting = new();
+
+    // Guards every mutation of _entries together with the disk read or delete that
+    // goes with it: a lazy load in DataUriFor, an eviction in Evict, and a store in
+    // StoreAsync all have to see (and leave) _entries and the files on disk agreeing
+    // with each other, or one thread can read a file another thread is deleting, or
+    // overwrite a fresher entry with a stale in-memory snapshot. Reads here are at
+    // most 16 KB, so doing them while the lock is held costs nothing worth avoiding
+    // the lock for. Only the write-then-move to disk in StoreAsync stays outside it,
+    // both because that is the slow part and because a lock statement cannot await.
+    private readonly Lock _gate = new();
+
     private long _clock;
 
     public LogoCache(string dataFolderPath, int capacity = DefaultCapacity)
@@ -44,7 +54,10 @@ public sealed class LogoCache : IStationLogos
             _entries[Path.GetFileNameWithoutExtension(file.Name)] = new Entry(null, Loaded: false, Tick());
         }
 
-        Evict();
+        lock (_gate)
+        {
+            Evict();
+        }
     }
 
     /// <summary>An absolute http or https address, or null. The browser never sees it.</summary>
@@ -63,20 +76,36 @@ public sealed class LogoCache : IStationLogos
 
         string key = Key(station.Id, source);
 
-        if (!_entries.TryGetValue(key, out Entry? entry))
+        lock (_gate)
         {
-            _pending.TryAdd(key, station);
-            return null;
+            if (!_entries.TryGetValue(key, out Entry? entry))
+            {
+                _pending.TryAdd(key, station);
+                return null;
+            }
+
+            if (!entry.Loaded)
+            {
+                try
+                {
+                    entry = entry with { DataUri = Read(key), Loaded = true };
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
+                    // The file this cold entry pointed to is gone or unreadable - by a
+                    // concurrent eviction, a manual cleanup, disk trouble. Neither a
+                    // stale entry nor a thrown exception belongs in a view: drop the
+                    // entry and let it be asked for again like any other unknown logo.
+                    _entries.TryRemove(key, out _);
+                    _pending.TryAdd(key, station);
+                    return null;
+                }
+            }
+
+            _entries[key] = entry with { LastUsed = Tick() };
+
+            return entry.DataUri;
         }
-
-        if (!entry.Loaded)
-        {
-            entry = entry with { DataUri = Read(key), Loaded = true };
-        }
-
-        _entries[key] = entry with { LastUsed = Tick() };
-
-        return entry.DataUri;
     }
 
     public bool Has(RadioStation station) =>
@@ -115,39 +144,51 @@ public sealed class LogoCache : IStationLogos
         await File.WriteAllTextAsync(temporary, dataUri ?? string.Empty, ct);
         File.Move(temporary, path, overwrite: true);
 
-        _entries[key] = new Entry(dataUri, Loaded: true, Tick());
-        _pending.TryRemove(key, out _);
+        lock (_gate)
+        {
+            _entries[key] = new Entry(dataUri, Loaded: true, Tick());
+            _pending.TryRemove(key, out _);
 
-        Evict();
+            Evict();
+        }
     }
 
+    // Must run with _gate already held: every caller either takes the lock itself
+    // (StoreAsync) or is the constructor, running before any other thread can see
+    // this instance.
     private void Evict()
     {
-        lock (_evicting)
+        int excess = _entries.Count - _capacity;
+        if (excess <= 0)
         {
-            int excess = _entries.Count - _capacity;
-            if (excess <= 0)
-            {
-                return;
-            }
+            return;
+        }
 
-            foreach (string key in _entries.OrderBy(pair => pair.Value.LastUsed).Take(excess).Select(pair => pair.Key).ToList())
+        foreach (string key in _entries.OrderBy(pair => pair.Value.LastUsed).Take(excess).Select(pair => pair.Key).ToList())
+        {
+            _entries.TryRemove(key, out _);
+
+            try
             {
-                _entries.TryRemove(key, out _);
                 File.Delete(PathOf(key));
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                // The entry is already gone from memory, which is what eviction
+                // promises; a file it cannot delete right now - another process has
+                // it open, say - is harmless and gets swept by the next start's
+                // directory scan simply never finding it worth keeping either.
             }
         }
     }
 
+    // Lets File.ReadAllText throw FileNotFoundException on a missing file rather than
+    // checking File.Exists first: the check-then-read gap is exactly where a
+    // concurrent Evict could delete the file, so checking first would not actually
+    // avoid the exception, only make it rarer and its cause harder to see.
     private string? Read(string key)
     {
-        string path = PathOf(key);
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        string text = File.ReadAllText(path);
+        string text = File.ReadAllText(PathOf(key));
         return text.Length == 0 ? null : text;
     }
 

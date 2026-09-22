@@ -109,4 +109,22 @@ public sealed class LogoCacheTests : IDisposable
         cache.Has(Station("c")).Should().BeTrue();
         new LogoCache(_folder, capacity: 2).Has(Station("b")).Should().BeFalse();
     }
+
+    // A cold entry (loaded from the directory listing at startup, not yet read) whose
+    // file disappeared out from under it - another process, a manual cleanup, disk
+    // trouble - must not surface as an exception through a view. It is simply unknown
+    // again, exactly as if it had never been fetched.
+    [Fact]
+    public async Task ALogoWhoseFileVanishedIsAskedForAgainInsteadOfThrowing()
+    {
+        await new LogoCache(_folder).StoreAsync(Station("a"), Data, CancellationToken.None);
+
+        LogoCache cache = new(_folder);
+
+        string logoFile = Directory.GetFiles(Path.Combine(_folder, "logos"), "*.txt").Single();
+        File.Delete(logoFile);
+
+        cache.DataUriFor(Station("a")).Should().BeNull();
+        cache.TakePending().Select(station => station.Id).Should().Equal("a");
+    }
 }
