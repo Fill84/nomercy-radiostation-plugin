@@ -8,49 +8,32 @@
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <AssemblyName>NoMercy.Plugin.InternetRadio</AssemblyName>
         <RootNamespace>NoMercy.Plugin.InternetRadio</RootNamespace>
-        <Version>1.2.1</Version>
+        <Version>2.0.0</Version>
         <Authors>NoMercy Community</Authors>
         <Description>Browse and play internet radio stations in the built-in player.</Description>
     </PropertyGroup>
 
     <ItemGroup>
         <!--
-            The host owns this assembly at runtime: it is in the server's shared-assembly
-            set, so the plugin load context deliberately resolves it to the host's copy
-            rather than one sitting next to the plugin.
+            The host owns these assemblies at runtime: they are in the server's shared-assembly
+            set, so the plugin load context resolves them to the host's copies. Do NOT set
+            CopyLocalLockFileAssemblies=true: a copy beside the plugin gives the load context two
+            incompatible identities of the same types, which surfaces as a cast error far from
+            its cause. The CI packaging step asserts none of them ships.
 
-            Do NOT set CopyLocalLockFileAssemblies=true to "gather dependencies" for
-            packaging: it would drop NoMercy.Plugins.Abstractions.dll and NoMercy.Events.dll
-            beside the plugin, and the load context would then hold two incompatible
-            identities of the same types. That surfaces as an unrelated-looking cast error
-            far from its cause. The CI packaging step asserts neither assembly ships.
+            12.*, floating within the major. Plugin ABI 12 renamed the SDK assembly and every
+            namespace in it; a build against 11 or earlier resolves no type at all, and the
+            server refuses such a plugin at load. packageSourceMapping in nuget.config confines
+            NoMercy.* to the local feed, so this cannot resolve to someone else's package of the
+            same name. The exact server commit a build used is recorded in _nupkgs/CONTRACT.
         -->
-        <!--
-            Floating, not pinned. The nm-component-ui branch pinned this to 10.0.114, a
-            version that only existed in a preview feed on the machine it was developed
-            on - nobody else can restore it, and scripts/fetch-abstractions.sh has never
-            produced that number. Packing any dev commit yields 0.1.404, and has all
-            along, so a pin buys nothing and costs everyone else their restore.
-
-            0.1.404 is also why a pin would be false comfort even if it resolved: that
-            one number has named at least three incompatible assemblies - before Ulid,
-            after Ulid, and again once NoMercy.Design joined the shared set. The git SHA
-            the script reports is the only honest identifier, which is what SERVER_REF
-            pins and what a release records.
-
-            packageSourceMapping in nuget.config is what makes floating safe here: it
-            confines NoMercy.* to the local feed, so this cannot silently resolve to
-            somebody else's package of the same name on nuget.org.
-        -->
-        <PackageReference Include="NoMercy.Plugins.Abstractions" Version="*" />
+        <PackageReference Include="NoMercy.PluginSdk.Abstractions" Version="12.*" />
 
         <!--
-            PluginControllerBase, which the favourite toggle and the search submit arrive
-            through. Host-owned exactly like the abstractions: the base class must keep
-            one identity across the load-context boundary, so it must never ship beside
-            the plugin. The CI staging step asserts that.
+            PluginControllerBase, which the favourite toggle, the search submit and the
+            now-playing poll arrive through. Host-owned exactly like the abstractions.
         -->
-        <PackageReference Include="NoMercy.Plugins.Mvc" Version="*" />
+        <PackageReference Include="NoMercy.PluginSdk.Mvc" Version="12.*" />
     </ItemGroup>
 
     <ItemGroup>

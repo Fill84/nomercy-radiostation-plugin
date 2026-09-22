@@ -4,7 +4,7 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
-using NoMercy.Plugins.Abstractions;
+using NoMercy.PluginSdk.Abstractions;
 using Xunit;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;
@@ -39,7 +39,7 @@ public sealed class PluginLifecycleTests : IDisposable
         return plugin;
     }
 
-    private static PluginViewRequest Request(string route) => new() { Route = route };
+    private static PluginViewRequest Request(string route) => new() { Route = route, Caller = TestCaller.Anyone };
 
     // Shared with the Views/*Tests helpers of the same name: flattens the component
     // tree so a node id can be found regardless of how deep it is nested.

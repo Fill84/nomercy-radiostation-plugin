@@ -3,7 +3,7 @@
 
 using System.Reflection;
 using FluentAssertions;
-using NoMercy.Plugins.Abstractions;
+using NoMercy.PluginSdk.Abstractions;
 using Xunit;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;
@@ -92,7 +92,7 @@ public class DiscoveryContractTests
     {
         using InternetRadioPlugin plugin = new();
 
-        plugin.Id.Should().Be(ManifestTests.LoadManifest().Id);
+        plugin.Id.Should().Be(ManifestTests.LoadManifest().Id.Value);
     }
 
     // PluginUiDescriptorDto prefers the instance's NavEntries over the manifest's

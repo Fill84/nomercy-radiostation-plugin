@@ -4,7 +4,7 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
-using NoMercy.Plugins.Abstractions;
+using NoMercy.PluginSdk.Abstractions;
 using Xunit;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;

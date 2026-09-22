@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
-using NoMercy.Plugins.Abstractions;
+using NoMercy.PluginSdk.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;
 

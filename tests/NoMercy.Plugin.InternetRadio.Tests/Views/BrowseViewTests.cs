@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
 using FluentAssertions;
-using NoMercy.Plugins.Abstractions;
+using NoMercy.PluginSdk.Abstractions;
 using Xunit;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Views;

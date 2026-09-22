@@ -2,8 +2,7 @@
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
 using Microsoft.Extensions.Logging;
-using NoMercy.Events;
-using NoMercy.Plugins.Abstractions;
+using NoMercy.PluginSdk.Abstractions;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 
@@ -18,9 +17,10 @@ public sealed class FakePluginContext(string dataFolderPath, HttpClient httpClie
 
     // Not used by this plugin. Throwing rather than returning a null object means a
     // test cannot accidentally pass while the plugin reaches for something it should
-    // not - the manifest declares no library access, no secrets and no hub.
-    public IEventBus EventBus => throw new NotSupportedException();
-    public IServiceProvider Services => throw new NotSupportedException();
+    // not. Every facade this class does not name - Media among them - keeps the
+    // interface's own default, which throws PluginRefusedException exactly as a host
+    // without that facade does.
+    public IPluginEvents Events => throw new NotSupportedException();
     public IPluginConfiguration Configuration => throw new NotSupportedException();
     public IPluginSecretStore Secrets => throw new NotSupportedException();
     public IPluginLibraryQuery Library => throw new NotSupportedException();

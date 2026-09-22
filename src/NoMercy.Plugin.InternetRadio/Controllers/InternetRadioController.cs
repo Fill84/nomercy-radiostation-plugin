@@ -5,8 +5,8 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using NoMercy.Plugins.Abstractions;
-using NoMercy.Plugins.Mvc;
+using NoMercy.PluginSdk.Abstractions;
+using NoMercy.PluginSdk.Mvc;
 
 namespace NoMercy.Plugin.InternetRadio;
 

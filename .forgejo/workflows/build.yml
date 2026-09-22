@@ -2,7 +2,7 @@ name: build
 
 # Builds, tests and packages the Internet Radio plugin.
 #
-# The plugin builds against NoMercy.Plugins.Abstractions, which is NOT published to
+# The plugin builds against NoMercy.PluginSdk.Abstractions, which is NOT published to
 # nuget.org. scripts/fetch-abstractions.sh clones the server and packs it into a
 # local feed that the committed nuget.config points at. The script is shared with
 # local development on purpose, so CI and a developer's machine cannot drift.
@@ -24,7 +24,6 @@ permissions:
 env:
   PLUGIN_NAME: NoMercy.Plugin.InternetRadio
   PLUGIN_DIR: src/NoMercy.Plugin.InternetRadio
-  SERVER_BRANCH: master
   # fetch-abstractions.sh defaults the contract checkout to a sibling of this repo,
   # which is where a developer keeps one and lets every plugin in the workspace share
   # it. A runner has no siblings worth keeping, so the clone stays inside the workspace
@@ -150,31 +149,14 @@ jobs:
           set -eu
           chmod +x scripts/fetch-abstractions.sh
 
-          # fetch-abstractions.sh documents SERVER_REF as what CI sets to a SHA for
-          # a tag build, so the artifact is reproducible instead of "whatever dev
-          # happened to be" - that claim needs this to actually happen. Resolved
-          # here, not hardcoded: the SHA is not known ahead of time, only that a
-          # tag build must pin to one rather than floating on SERVER_BRANCH like a
-          # normal push build does.
-          case "$GITHUB_REF" in
-            refs/tags/v*)
-              SERVER_REF=$(git ls-remote https://github.com/NoMercy-Entertainment/nomercy-media-server.git \
-                             "refs/heads/$SERVER_BRANCH" | cut -f1)
-              if [ -z "$SERVER_REF" ]; then
-                echo "::error::could not resolve $SERVER_BRANCH to a commit for a reproducible tag build" >&2
-                exit 1
-              fi
-              export SERVER_REF
-              echo "tag build: pinning the contract to $SERVER_BRANCH@$SERVER_REF"
-              ;;
-          esac
-
+          # Every build - push, pull request and tag alike - packs the newest server release
+          # tag, which is what an owner runs. The tag and its commit are recorded in
+          # _nupkgs/CONTRACT, so a release names the exact contract it was built against.
           ./scripts/fetch-abstractions.sh
 
-          # Recorded so a release names the exact contract it was built against.
-          # "built against @dev" says nothing a year later.
-          SERVER_SHA=$(git -C _server rev-parse HEAD)
-          echo "sha=$SERVER_SHA" >> "$GITHUB_OUTPUT"
+          read -r CONTRACT_REF CONTRACT_SHA < _nupkgs/CONTRACT
+          echo "ref=$CONTRACT_REF" >> "$GITHUB_OUTPUT"
+          echo "sha=$CONTRACT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Restore
         run: dotnet restore
@@ -226,9 +208,9 @@ jobs:
           # to English on every server, with CI green and the file sitting in git.
           cp -r "$PLUGIN_DIR/lang"         "$STAGING/"
 
-          # Deliberately NOT shipped: NoMercy.Plugins.Abstractions.dll,
-          # NoMercy.Events.dll, NoMercy.Design.dll, NoMercy.Plugins.Mvc.dll and
-          # Newtonsoft.Json.dll. All five
+          # Deliberately NOT shipped: NoMercy.PluginSdk.Abstractions.dll,
+          # NoMercy.PluginSdk.Mvc.dll, NoMercy.Events.dll, NoMercy.Design.dll,
+          # Newtonsoft.Json.dll and Ulid.dll. All six
           # are the host's and live in its shared-assembly set. Shipping a copy gives
           # the load context two incompatible identities of the same types, and the
           # failure looks like an unrelated cast error far from its cause.
@@ -246,7 +228,7 @@ jobs:
           # Checked against $BIN, not $STAGING: staging holds exactly the five files
           # copied above by name, so neither could ever appear there and the check
           # could never fire.
-          if ls "$BIN" | grep -E '^(NoMercy\.(Plugins\.(Abstractions|Mvc)|Events|Design)|Newtonsoft\.Json)\.dll$'; then
+          if ls "$BIN" | grep -E '^(NoMercy\.(PluginSdk\.(Abstractions|Mvc)|Plugins\.(Abstractions|Mvc)|Events|Design)|Newtonsoft\.Json|Ulid)\.dll$'; then
             echo "::error::a host-owned assembly was copied into the build output" >&2
             echo "see the PackageReference comment in the plugin csproj" >&2
             exit 1
@@ -264,7 +246,7 @@ jobs:
           # package-sourced assembly is invisible to this check (path-keyed, filtered
           # out), so one missing from the zip would still load-fail silently. That
           # cannot be automated: this check has no way to tell a package the host
-          # already provides (safe to omit, like today's NoMercy.Plugins.Abstractions)
+          # already provides (safe to omit, like today's NoMercy.PluginSdk.Abstractions)
           # from one the plugin genuinely needs shipped. Adding a package reference
           # needs a deliberate decision about whether it ships - this check verifies
           # today's decision stays correct, it does not make tomorrow's for you.

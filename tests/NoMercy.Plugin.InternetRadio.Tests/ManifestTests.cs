@@ -3,7 +3,7 @@
 
 using System.Text.Json;
 using FluentAssertions;
-using NoMercy.Plugins.Abstractions;
+using NoMercy.PluginSdk.Abstractions;
 using Xunit;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;
@@ -27,7 +27,7 @@ public class ManifestTests
     {
         PluginManifest manifest = LoadManifest();
 
-        manifest.Id.Should().NotBe(default(Ulid));
+        manifest.Id.Value.Should().NotBe(default(Ulid));
         manifest.Name.Should().NotBeNullOrWhiteSpace();
         manifest.Description.Should().NotBeNullOrWhiteSpace();
         manifest.Version.Should().NotBeNullOrWhiteSpace();
@@ -37,7 +37,7 @@ public class ManifestTests
     [Fact]
     public void Manifest_IdMatchesPluginIdentity()
     {
-        LoadManifest().Id.Should().Be(PluginIdentity.Id);
+        LoadManifest().Id.Value.Should().Be(PluginIdentity.Id);
     }
 
     [Fact]

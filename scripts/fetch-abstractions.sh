@@ -1,34 +1,28 @@
 #!/usr/bin/env sh
-# Packs NoMercy.Plugins.Abstractions into a local NuGet feed.
+# Packs the plugin contract into a local NuGet feed.
 #
-# The contract is not published to nuget.org, so we clone the server and pack it.
-# NoMercy.Events must be packed too: it is a ProjectReference of the abstractions,
-# so packing only the abstractions yields a package whose dependency cannot resolve.
-# NoMercy.Design is here for the same reason - the abstractions picked it up so a
-# plugin can name all fifty-six design components instead of the ten it had tags
-# for, and it is what carries Newtonsoft into the shared-assembly set.
+# The contract is not published to nuget.org, so we fetch the server and pack it. Since
+# plugin ABI 12 it is two packages: NoMercy.PluginSdk.Abstractions, which carries
+# NoMercy.Events and NoMercy.Design inside it, and NoMercy.PluginSdk.Mvc, which holds
+# PluginControllerBase. The Mvc base class has its own assembly on purpose: it must keep
+# one identity across the load-context boundary, and putting it in Abstractions would
+# force an ASP.NET Core framework reference on every plugin.
 #
-# Every ProjectReference of NoMercy.Plugins.Abstractions has to be both in the
-# sparse-checkout list AND packed into the feed. Miss the checkout and the compile
-# fails on the types it cannot see; miss the pack and the plugin's own restore
-# fails on a dependency the feed does not have. When the server adds one, this
-# script is what needs updating - the symptom is a wall of CS0246 for a namespace
-# nobody in this repository has ever referenced.
+# Which server: the newest release tag, because a tag is what an owner actually runs.
+# `master` stopped at ABI 10 in August 2026 while releases moved on, and building against
+# it produced a plugin every up-to-date server refused. SERVER_REF pins anything else -
+# a tag or a commit - and a release's notes hand out that exact command.
 #
-# NoMercy.Plugins.Mvc holds PluginControllerBase, which this plugin's controller inherits
-# so a favourite toggle and a search field have somewhere to arrive. Its own assembly
-# rather than a type in Abstractions on purpose: the base class must keep one identity
-# across the load-context boundary, so it lives in the host's shared set, and putting it
-# in Abstractions would force a Microsoft.AspNetCore.App FrameworkReference on every
-# plugin - including the ones that never serve a request.
+# Where: _server/ inside this repository (already in .gitignore). It used to default to
+# a sibling checkout of the server, which on a developer machine is their own working
+# copy - and this script sparse-checks-out and hard-resets whatever it is pointed at.
+# SERVER_DIR still overrides the location.
 
 set -eu
 
 # CI puts the right SDK on PATH. On a Windows dev machine the `dotnet` on PATH may be
 # an older SDK that cannot build net10.0, and the usable one is a side-by-side install
-# under the user profile - but it can just as easily be the other way round, and a
-# side-by-side install without a 10.x SDK fails global.json resolution before it packs
-# anything. So the version decides, not the location.
+# under the user profile. So the version decides, not the location.
 can_build_net10() {
     [ -x "$1" ] || [ "$1" = dotnet ] || return 1
     "$1" --list-sdks 2>/dev/null | grep -q '^10\.'
@@ -47,73 +41,56 @@ if [ -z "${dotnet:-}" ]; then
 fi
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-# The server checkout lives beside this repo, not inside it: it is a checkout of another
-# project and a sibling is where a developer expects to find one. One sibling also serves
-# every plugin in this workspace, instead of each keeping its own copy. SERVER_DIR
-# overrides the location, which is how CI keeps the clone inside its own disposable
-# workspace.
-server="${SERVER_DIR:-$(dirname "$root")/nomercy-media-server}"
+server="${SERVER_DIR:-$root/_server}"
 feed="$root/_nupkgs"
-# A release must be rebuildable. SERVER_REF pins the contract to one commit; it
-# defaults to a branch for day-to-day work, but CI sets it to a SHA for a tag
-# build so the artifact is reproducible instead of "whatever dev happened to be".
-ref="${SERVER_REF:-${SERVER_BRANCH:-master}}"
+remote=https://github.com/NoMercy-Entertainment/nomercy-media-server.git
 
-if [ ! -d "$server" ]; then
-    git clone --depth=1 --branch="${SERVER_BRANCH:-master}" --filter=blob:none --no-checkout \
-        https://github.com/NoMercy-Entertainment/nomercy-media-server.git "$server"
+ref="${SERVER_REF:-}"
+if [ -z "$ref" ]; then
+    # --refs drops the peeled ^{} lines; sort -V orders v0.1.99 before v0.1.100.
+    ref=$(git ls-remote --tags --refs "$remote" 'v*' | sed 's#.*refs/tags/##' | sort -V | tail -n 1)
+    if [ -z "$ref" ]; then
+        echo "could not resolve the newest nomercy-media-server release tag" >&2
+        exit 1
+    fi
 fi
 
-# A checkout that already exists may predate sparse-checkout, and `add` below refuses to
-# run on one that was never initialised.
-git -C "$server" sparse-checkout list >/dev/null 2>&1 \
-    || git -C "$server" sparse-checkout init --cone
+if [ ! -d "$server/.git" ]; then
+    mkdir -p "$server"
+    git -C "$server" init -q
+    git -C "$server" remote add origin "$remote"
+fi
 
-# Applied on every run, not only on the initial clone: setting it once means adding
-# a project to the list silently does nothing on a checkout that already exists.
-#
-# `add`, not `set`. This sibling serves every plugin in the workspace and each needs its
-# own slice of it. `set` replaces the whole list, so whichever plugin packed last would
-# strip the others' projects back out, and the next build in that other repo would fail
-# on a path its own script had already asked for.
-git -C "$server" sparse-checkout add \
-    src/NoMercy.Plugins.Abstractions src/NoMercy.Events src/NoMercy.Design src/NoMercy.Plugins.Mvc
+# `set`, not `add`: this checkout belongs to this repository alone now, so the list is
+# exactly what this script needs and nothing another plugin left behind. Cone mode also
+# keeps the root files - Directory.Build.props, Directory.Packages.props, .editorconfig,
+# LICENSE - which the pack reads.
+git -C "$server" sparse-checkout init --cone
+git -C "$server" sparse-checkout set \
+    src/NoMercy.PluginSdk.Abstractions src/NoMercy.PluginSdk.Mvc src/NoMercy.Events src/NoMercy.Design
 
-git -C "$server" fetch --depth=1 origin "$ref"
-git -C "$server" reset --hard FETCH_HEAD
+git -C "$server" fetch --depth=1 --filter=blob:none origin "$ref"
+git -C "$server" checkout -q --force FETCH_HEAD
 
-# Emptied, not topped up. The package version comes from the server's own build props,
-# which master stamps per release and dev leaves at an old number - so packing master
-# after dev leaves 0.1.404 and 0.1.470 side by side in the feed. The plugin's reference
-# floats, NuGet takes the highest, and the answer stops depending on the ref this script
-# was asked for. Switching branches would then silently keep whichever contract happened
-# to be packed first, which is the exact failure this script exists to prevent.
+# Emptied, not topped up: a leftover package of another version would win the floating
+# reference and silently decide the contract instead of the ref asked for.
 rm -rf "$feed"
 mkdir -p "$feed"
 
-abstractions="$server/src/NoMercy.Plugins.Abstractions/NoMercy.Plugins.Abstractions.csproj"
-if [ ! -f "$abstractions" ]; then
-    echo "NoMercy.Plugins.Abstractions is not present at $ref - nothing to build against" >&2
-    exit 1
-fi
-
-# Dependency order, and each one only if the ref actually has it. SERVER_REF pins
-# this script to any commit and a release's notes hand out that exact command, so
-# it has to keep working on a ref from before a project existed: NoMercy.Design is
-# not in the tree at all at 886a8b3, the commit v1.0.2 was built from. Packing it
-# unconditionally would break the reproduction path for every release so far.
-#
-# MSB9008 about a missing NoMercy.Analyzers is expected under a sparse checkout.
-# It is an analyzer reference; the package builds correctly without it.
-for project in NoMercy.Events NoMercy.Design NoMercy.Plugins.Abstractions NoMercy.Plugins.Mvc; do
+for project in NoMercy.PluginSdk.Abstractions NoMercy.PluginSdk.Mvc; do
     csproj="$server/src/$project/$project.csproj"
     if [ ! -f "$csproj" ]; then
-        echo "skipping $project - not in the tree at $ref"
-        continue
+        echo "$project is not present at $ref - that ref predates plugin ABI 12" >&2
+        exit 1
     fi
+
+    # MSB9008 about a missing NoMercy.Analyzers is expected under a sparse checkout. It is
+    # the server's own analyzer reference; the package builds correctly without it.
     "$dotnet" pack "$csproj" -c Release -o "$feed"
 done
 
-find "$feed" -maxdepth 1 -name '*.nupkg' -print
+sha=$(git -C "$server" rev-parse HEAD)
+printf '%s %s\n' "$ref" "$sha" > "$feed/CONTRACT"
 
-echo "contract packed from nomercy-media-server $(git -C "$server" rev-parse HEAD)"
+find "$feed" -maxdepth 1 -name '*.nupkg' -print
+echo "contract packed from nomercy-media-server $ref ($sha)"
