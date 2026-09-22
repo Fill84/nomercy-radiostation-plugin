@@ -380,6 +380,25 @@ public sealed class PluginLifecycleTests : IDisposable
         public Task<StationStream> ForAsync(RadioStation station, CancellationToken ct) => Task.FromResult(stream);
     }
 
+    // stations.json is deliberately ungated (see StationOverrides), so a malformed
+    // StreamUrl reaches the real HostStationStreams - built by the plugin itself, not
+    // stood in for - exactly as it would from an owner's own file. The page must still
+    // draw rather than fall through to the generic error view.
+    [Fact]
+    public async Task AStationPageStillDrawsWhenAUserSuppliedStreamUrlIsMalformed()
+    {
+        File.WriteAllText(
+            Path.Combine(_folder, StationOverrides.FileName),
+            """[{"name":"Bad FM","streamUrl":"not a url"}]"""
+        );
+        using InternetRadioPlugin plugin = Started();
+
+        PluginView view = await plugin.GetViewAsync(Request(RadioRoutes.Station("bad-fm")), CancellationToken.None);
+
+        HasNode(view, "station-detail-bad-fm").Should().BeTrue();
+        HasNode(view, "station-stream-unavailable-bad-fm").Should().BeTrue();
+    }
+
     private const string OneStationWithLogo = """
         [{"stationuuid":"u1","name":"Example FM","url":"https://example.com/a",
           "url_resolved":"https://example.com/a","favicon":"https://example.com/logo.png",

@@ -29,6 +29,16 @@ public sealed class HostStationStreams(
         "Internet Radio plays stations from thousands of different servers. "
         + "Allow it to stream them through this server so they can play in the app.";
 
+    /// <summary>
+    /// A plugin-local code, not one <see cref="PluginRefusalCodes"/> defines: the host
+    /// never sees this station, so there is no <see cref="PluginRefusal"/> to carry a code
+    /// from. Covers a malformed or scheme-less StreamUrl - stations.json is deliberately
+    /// not gated, see StationOverrides - and anything else the mint throws that is not
+    /// itself a refusal. StationView maps it to the same generic "cannot play right now"
+    /// notice as any other non-approval code.
+    /// </summary>
+    public const string StreamUnusable = "INTERNET_RADIO_STREAM_UNUSABLE";
+
     private int _askedForTheGrant;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastLogged = new();
 
@@ -41,12 +51,20 @@ public sealed class HostStationStreams(
 
     public async Task<StationStream> ForAsync(RadioStation station, CancellationToken ct)
     {
+        // Checked before the mint is ever asked for anything: a station.json entry is
+        // never gated, so this is the first thing here that has seen the url at all.
+        if (!Uri.TryCreate(station.StreamUrl, UriKind.Absolute, out Uri? upstream))
+        {
+            LogUnusable(station.Id);
+            return StationStream.Refused(StreamUnusable);
+        }
+
         try
         {
             Uri url = await mint(
                 new PluginProxyRequest
                 {
-                    Links = [new PluginProxyLink { Url = new Uri(station.StreamUrl) }],
+                    Links = [new PluginProxyLink { Url = upstream }],
                     Title = station.Name,
                     // Null is no timeout. A live stream never finishes, and a timeout would
                     // cut every listener off at the same minute of every song.
@@ -68,6 +86,18 @@ public sealed class HostStationStreams(
             }
 
             return StationStream.Refused(code);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // Anything else the mint throws - an ArgumentException from a request the
+            // host itself rejects, say - must still leave the page drawable rather than
+            // take the whole view down with it.
+            LogUnusable(station.Id, exception);
+            return StationStream.Refused(StreamUnusable);
         }
     }
 
@@ -113,5 +143,22 @@ public sealed class HostStationStreams(
         _lastLogged[refusal.Code] = now;
         logger.LogWarning(
             "Internet Radio cannot play stations yet: {Code}. {What} {Fix}", refusal.Code, refusal.What, refusal.Fix);
+    }
+
+    // Same throttle, keyed on StreamUnusable rather than a host refusal's own code. Names
+    // the station id rather than its url, so the owner can find the entry in
+    // stations.json without a raw address sitting in the log.
+    private void LogUnusable(string stationId, Exception? exception = null)
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+
+        if (_lastLogged.TryGetValue(StreamUnusable, out DateTimeOffset last) && now - last < LogEvery)
+        {
+            return;
+        }
+
+        _lastLogged[StreamUnusable] = now;
+        logger.LogWarning(
+            exception, "Internet Radio cannot play {StationId}: its stream url could not be used.", stationId);
     }
 }

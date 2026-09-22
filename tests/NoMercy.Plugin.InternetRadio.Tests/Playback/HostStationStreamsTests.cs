@@ -100,4 +100,53 @@ public class HostStationStreamsTests
         public Task<IReadOnlyList<string>> GetAsync(string kind, CancellationToken ct = default) => throw new InvalidOperationException();
         public Task RequestAsync(string kind, string value, string reason, CancellationToken ct = default) => throw new InvalidOperationException();
     }
+
+    // stations.json is deliberately ungated (StationOverrides), so a malformed or
+    // scheme-less StreamUrl reaches here without ever having been checked.
+    [Fact]
+    public async Task AMalformedStreamUrlIsRefusedWithoutMinting()
+    {
+        RadioStation malformed = new() { Id = "a", Name = "Alpha FM", StreamUrl = "not a url" };
+        bool minted = false;
+        HostStationStreams streams = new(
+            (_, _) => { minted = true; return Task.FromResult(new Uri("/x", UriKind.Relative)); },
+            new RecordingGrants(),
+            new RecordingLogger());
+
+        StationStream stream = await streams.ForAsync(malformed, CancellationToken.None);
+
+        stream.Should().Be(StationStream.Refused(HostStationStreams.StreamUnusable));
+        minted.Should().BeFalse();
+    }
+
+    // Anything the host's mint throws that is not itself a refusal - an ArgumentException
+    // from a proxy request the host itself rejects, say - must still leave the page
+    // drawable rather than take the whole view down with it.
+    [Fact]
+    public async Task AnyOtherMintFailureIsRefusedTooWithoutThrowing()
+    {
+        HostStationStreams streams = new(
+            (_, _) => throw new InvalidOperationException("boom"),
+            new RecordingGrants(),
+            new RecordingLogger());
+
+        StationStream stream = await streams.ForAsync(Station, CancellationToken.None);
+
+        stream.Should().Be(StationStream.Refused(HostStationStreams.StreamUnusable));
+    }
+
+    // The one exception this must never swallow: the caller's own cancellation.
+    [Fact]
+    public async Task TheCallersOwnCancellationStillPropagates()
+    {
+        using CancellationTokenSource cts = new();
+        cts.Cancel();
+        HostStationStreams streams = new(
+            (_, ct) => throw new OperationCanceledException(ct),
+            new RecordingGrants(),
+            new RecordingLogger());
+
+        await streams.Invoking(candidate => candidate.ForAsync(Station, cts.Token))
+            .Should().ThrowAsync<OperationCanceledException>();
+    }
 }
