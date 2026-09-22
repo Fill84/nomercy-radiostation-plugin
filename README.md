@@ -28,6 +28,13 @@ dotnet build -c Release -p:TreatWarningsAsErrors=true
 dotnet test -c Release --no-build
 ```
 
+## Deploying to a server
+
+The owner does not run a NoMercy server on the development machine.
+`scripts/deploy-to-server.sh` (or `.ps1`) copies a built plugin onto a
+running one over ssh, with the server stopped, and verifies every file's
+hash afterwards. See [docs/deploying-to-a-server.md](docs/deploying-to-a-server.md).
+
 ## Layout
 
 | Path | |
