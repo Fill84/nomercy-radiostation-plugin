@@ -2,9 +2,7 @@
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
 using System.Security.Claims;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Logging;
 using NoMercy.PluginSdk.Abstractions;
 using NoMercy.PluginSdk.Mvc;
 
@@ -22,11 +20,6 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
 {
     public const string ToggleFavouriteRouteTemplate = "favourites/toggle/{stationId}";
     public const string ToggleFavouriteMethod = "favourites/toggle";
-    public const string StreamRouteTemplate = "stream/{stationId}";
-    public const string StreamMethod = "stream";
-    public const string CoverRouteTemplate = "cover/{stationId}";
-    public const string CoverMethod = "cover";
-
 
     [HttpPost(ToggleFavouriteRouteTemplate)]
     public Task<IActionResult> ToggleFavourite(string stationId, CancellationToken ct) =>
@@ -40,8 +33,9 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     /// The client posts the form's collected fields as the request body and then refreshes
     /// the view, so the term is stored and the refreshed page runs it. Earlier versions of
     /// this arrived with an empty body every time - not because the binding was wrong, but
-    /// because the form was being rendered as a card and there was no form to collect. See
-    /// Ui.
+    /// because the client rendered the form as a card, with no &lt;form&gt; element to
+    /// collect from. Fixed upstream: the form is a real PluginForm now, and its fields
+    /// arrive as posted. See Ui.
     /// </summary>
     [HttpPost(SearchMethod)]
     public Task<IActionResult> Search([FromBody] SearchRequest? request, CancellationToken ct) =>
@@ -71,14 +65,6 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
 
         public string? Language { get; init; }
     }
-
-    /// <summary>
-    /// The station's audio, relayed. See FetchStationMediaAsync for why the browser must
-    /// not be sent the station's own url.
-    /// </summary>
-    [HttpGet(StreamRouteTemplate)]
-    public Task<IActionResult> Stream(string stationId, CancellationToken ct) =>
-        RelayAsync(stationId, cover: false, ct);
 
     public const string NowPlayingRouteTemplate = "nowplaying/{stationId}";
     public const string NowPlayingMethod = "nowplaying";
@@ -111,127 +97,6 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
             artist = parsed?.Artist,
             track = parsed?.Track
         });
-    }
-
-    /// <summary>
-    /// The station's own <c>icy-metaint</c>, when it agreed to send metadata.
-    /// </summary>
-    private static int? MetaInterval(HttpResponseMessage upstream)
-    {
-        if (!upstream.Headers.TryGetValues("icy-metaint", out IEnumerable<string>? values))
-        {
-            return null;
-        }
-
-        return int.TryParse(values.FirstOrDefault(), out int interval) && interval > 0
-            ? interval
-            : null;
-    }
-
-    /// <summary>The station's logo, relayed for the same reason.</summary>
-    [HttpGet(CoverRouteTemplate)]
-    public Task<IActionResult> Cover(string stationId, CancellationToken ct) =>
-        RelayAsync(stationId, cover: true, ct);
-
-    private async Task<IActionResult> RelayAsync(string stationId, bool cover, CancellationToken ct)
-    {
-        if (pluginManager.GetPluginInstance(PluginId) is not InternetRadioPlugin plugin)
-        {
-            return NotFound();
-        }
-
-        HttpResponseMessage? upstream = await plugin.FetchStationMediaAsync(
-            stationId, cover, Request.Headers.Range.ToString(), ct);
-
-        if (upstream is null)
-        {
-            return NotFound();
-        }
-
-        // The upstream status is passed through, not normalised to 200: a player asking
-        // for a byte range needs the 206 and the Content-Range that answers it, or it
-        // cannot seek and will not buffer.
-        Response.StatusCode = (int)upstream.StatusCode;
-
-        if (upstream.Content.Headers.ContentRange is { } contentRange)
-        {
-            Response.Headers.ContentRange = contentRange.ToString();
-        }
-
-        Response.Headers.AcceptRanges = "bytes";
-
-        // The client requests media with crossorigin="anonymous", which makes the browser
-        // discard a response that does not say who may read it - so without this the bytes
-        // arrive and the image still draws as broken, with nothing in any log to say why.
-        // The dashboard is a different origin from the server it talks to, so this is the
-        // ordinary case rather than the exotic one. Safe to allow any origin: the url is
-        // useless without the caller's own token, which is what actually gates it.
-        Response.Headers.AccessControlAllowOrigin = "*";
-
-        Response.ContentType =
-            upstream.Content.Headers.ContentType?.ToString()
-            ?? (cover ? "application/octet-stream" : "audio/mpeg");
-
-        // A live stream has no end, and a response that is only ever written to - never
-        // started, never flushed - is delivered when the body completes. For a cover that
-        // is the same instant. For a stream it is never: the browser holds an open request
-        // that yields no headers and no bytes, so the audio element sits at readyState 0
-        // with no metadata, no duration and - this is the cruel part - no error either.
-        // On screen that is a station in Now Playing stuck at 00:00 / 00:00 in silence,
-        // which is indistinguishable from a dozen other faults and was read as all of
-        // them in turn. Starting the response sends the headers now.
-        await Response.StartAsync(ct);
-
-        await using Stream upstreamBody = await upstream.Content.ReadAsStreamAsync(ct);
-
-        // A station that answered our Icy-MetaData ask splices its current track into
-        // the audio every icy-metaint bytes. The browser must never see those bytes -
-        // they are not audio - so they come out here, and the title they carry is
-        // remembered for whoever asks what is playing.
-        Stream body = MetaInterval(upstream) is { } interval
-            ? new IcyMetadataStream(
-                upstreamBody, interval, title => plugin.NowPlaying.Set(stationId, title))
-            : upstreamBody;
-
-        using IDisposable? listener = cover ? null : plugin.NowPlaying.Listen(stationId);
-
-        // 8 KB, not CopyToAsync's 80 KB. At 128 kbps a full 80 KB buffer is five seconds
-        // of audio withheld before the first byte moves, and the element wants frames
-        // sooner than that to call the source playable.
-        byte[] buffer = new byte[8192];
-        long relayed = 0;
-
-        try
-        {
-            int read;
-            while ((read = await body.ReadAsync(buffer, ct)) > 0)
-            {
-                await Response.Body.WriteAsync(buffer.AsMemory(0, read), ct);
-
-                // Per chunk, because the point of a relay is that the listener hears the
-                // stream now rather than whenever a buffer somewhere upstream fills.
-                await Response.Body.FlushAsync(ct);
-
-                if (relayed == 0)
-                {
-                    plugin.RelayLogger.LogInformation(
-                        "Internet Radio relay: {Kind} for {StationId} - first {Bytes} bytes reached the client.",
-                        cover ? "cover" : "stream", stationId, read);
-                }
-
-                relayed += read;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // The listener pressed stop or navigated away. Ordinary, not a fault: a live
-            // stream only ever ends because someone stopped listening.
-            plugin.RelayLogger.LogInformation(
-                "Internet Radio relay: {Kind} for {StationId} - listener disconnected after {Bytes} bytes.",
-                cover ? "cover" : "stream", stationId, relayed);
-        }
-
-        return new EmptyResult();
     }
 
     /// <summary>

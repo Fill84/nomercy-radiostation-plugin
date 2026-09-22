@@ -88,14 +88,15 @@ public static class StationCards
     /// It is here because the client has to identify a track somehow and, with no id in
     /// the payload, it builds one out of the stream url: `plugin:{pluginId}:{streamUrl}`.
     /// That identifier then goes into a CSS selector and into a route, and a url is legal
-    /// in neither - which is what throws before any audio starts, and why no /stream/
+    /// in neither - which is what throws before any audio starts, and why no playback
     /// request ever reaches this server. See
     /// docs/upstream/2026-08-08-plugin-media-cannot-play.md.
     ///
     /// Sending it costs nothing and is ignored until the client reads it. A station's
-    /// radio-browser uuid is also the honest key: it is what the relay routes on, and it
-    /// does not change when a station moves its stream, which a url-derived id does - so
-    /// history and resume state stop hanging off something that was never a key.
+    /// radio-browser uuid is also the honest key: it is what the nowplaying route and
+    /// every station lookup resolve on, and it does not change when a station moves its
+    /// stream, which a url-derived id does - so history and resume state stop hanging off
+    /// something that was never a key.
     /// </summary>
     public const string StationIdKey = "id";
 
