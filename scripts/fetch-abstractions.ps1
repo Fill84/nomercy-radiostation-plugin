@@ -14,8 +14,11 @@ function Test-CanBuildNet10([string] $Candidate) {
 }
 
 $dotnet = @(
-    (Join-Path $env:USERPROFILE '.dotnet\dotnet.exe')
-    (Join-Path $env:HOME '.dotnet/dotnet')
+    # Built only when its base variable is set: HOME is unset on a plain Windows shell
+    # (native PowerShell, not launched from Git Bash), and Join-Path throws on a null
+    # base rather than passing it through for Where-Object to filter out below.
+    if ($env:USERPROFILE) { Join-Path $env:USERPROFILE '.dotnet\dotnet.exe' }
+    if ($env:HOME) { Join-Path $env:HOME '.dotnet/dotnet' }
     'dotnet'
 ) | Where-Object { $_ } | Where-Object { Test-CanBuildNet10 $_ } | Select-Object -First 1
 
