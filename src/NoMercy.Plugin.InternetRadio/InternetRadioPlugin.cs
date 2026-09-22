@@ -102,6 +102,18 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private LogoCache Logos => _logos ??= new LogoCache(Context.DataFolderPath);
 
+    private IStationStreams? _streams;
+
+    /// <summary>
+    /// Where a station page gets its playable url. Settable so a test can stand in for the
+    /// host; the plugin itself always uses the context's media proxy.
+    /// </summary>
+    internal IStationStreams Streams
+    {
+        get => _streams ??= HostStationStreams.For(Context);
+        set => _streams = value;
+    }
+
     // 0 or 1: whether a background logo fetch is running. One at a time is plenty - a
     // page of placeholders fills in on the next view either way.
     private int _fetchingLogos;
@@ -436,9 +448,15 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     private async Task<PluginView> BuildStationAsync(
         StationCatalog catalog, string id, UserState state, CancellationToken ct)
     {
+        async Task<PluginView> Page(RadioStation? station) =>
+            station is null
+                ? StationView.Build(station: null, state)
+                : StationView.Build(
+                    station, state, NowPlaying.Get(id), await Streams.ForAsync(station, ct), Logos);
+
         if (catalog.ById(id) is { } known)
         {
-            return StationView.Build(known, state, NowPlaying.Get(id), Logos);
+            return await Page(known);
         }
 
         // A station this session already put on screen. Opening a search result
@@ -447,15 +465,14 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         // name and stream url were in the very list the viewer just tapped.
         if (_seen.TryGetValue(id, out RadioStation? recent))
         {
-            return StationView.Build(recent, state, NowPlaying.Get(id), Logos);
+            return await Page(recent);
         }
 
         try
         {
             FavouriteResolver resolver = new(catalog, new RadioBrowserClient(Context.HttpClient));
 
-            return StationView.Build(
-                await resolver.ResolveAsync(id, ct), state, NowPlaying.Get(id), Logos);
+            return await Page(await resolver.ResolveAsync(id, ct));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

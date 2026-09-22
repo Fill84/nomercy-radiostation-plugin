@@ -8,6 +8,15 @@ namespace NoMercy.Plugin.InternetRadio;
 // One station: what it is, and the three things you can do with it.
 public static class StationView
 {
+    /// <summary>
+    /// How often a page with a stream on it asks for itself again, in seconds.
+    ///
+    /// A minted stream url is good for fifteen minutes; ten leaves room for a slow page. A
+    /// page left open longer than the url lasts would offer one the server refuses - and
+    /// the player says nothing when a stream fails to load.
+    /// </summary>
+    public const int StreamRefreshSeconds = 600;
+
     private static IReadOnlyList<PluginTableColumn> Columns { get; } =
         [
             new() { Key = "field", Label = "Field", Width = "12rem" },
@@ -26,7 +35,11 @@ public static class StationView
     /// are pure Build methods on purpose.
     /// </summary>
     public static PluginView Build(
-        RadioStation? station, UserState state, string? nowPlaying = null, IStationLogos? logos = null)
+        RadioStation? station,
+        UserState state,
+        string? nowPlaying = null,
+        StationStream? stream = null,
+        IStationLogos? logos = null)
     {
         if (station is null)
         {
@@ -45,22 +58,26 @@ public static class StationView
             );
         }
 
-        return PluginViews.Declarative(
-            Ui.Container(
-                "station-root",
-                BackButtons,
-                Ui.Detail(
-                    $"station-detail-{station.Id}",
-                    station.Name,
-                    Description(station),
-                    // Inline, like every other logo this plugin draws: nothing else
-                    // reaches an image element on this platform any more.
-                    (logos ?? NoStationLogos.Instance).DataUriFor(station),
-                    Actions(station, state.Favourites.Any(kept => kept.Id == station.Id)),
-                    Facts(station, nowPlaying)
-                )
+        // Inline, like every other logo this plugin draws: nothing else reaches an
+        // image element on this platform any more.
+        string? cover = (logos ?? NoStationLogos.Instance).DataUriFor(station);
+
+        PluginComponent page = Ui.Container(
+            "station-root",
+            BackButtons,
+            Ui.Detail(
+                $"station-detail-{station.Id}",
+                station.Name,
+                Description(station),
+                cover,
+                Actions(station, state.Favourites.Any(kept => kept.Id == station.Id), stream, cover),
+                Facts(station, nowPlaying)
             )
         );
+
+        return stream is { IsPlayable: true }
+            ? PluginViews.Declarative(StreamRefreshSeconds, page)
+            : PluginViews.Declarative(page);
     }
 
     /// <summary>
@@ -99,50 +116,52 @@ public static class StationView
     }
 
     // This page is where playing, queueing and keeping a station live.
-    private static PluginComponent Actions(RadioStation station, bool isFavourite)
+    private static PluginComponent Actions(
+        RadioStation station, bool isFavourite, StationStream? stream, string? cover)
     {
-        List<PluginComponent> buttons =
-        [
-            // Built by StationCards so the station page and every grid start the same
-            // station the same way. Both go through this plugin's own relay, and neither
-            // passes an artist - the genre used to go there, and the player builds an
-            // artist LINK out of it and then fails to resolve a route for a genre that is
-            // not one.
-            Ui.Button($"station-play-{station.Id}", "Play", StationCards.Play(station), icon: "play"),
-            Ui.Button(
-                $"station-enqueue-{station.Id}",
-                "Add to queue",
-                StationCards.Enqueue(station),
-                icon: "playlistAdd"
-            ),
-            // Two states that differ by label and by variant, never by colour alone: a
-            // toggle whose only difference is a tint is unreadable to a good share of
-            // viewers, and to everyone in a screenshot.
+        List<PluginComponent> items = [];
+
+        if (stream is { IsPlayable: true, Url: { } url })
+        {
+            items.Add(Ui.Button($"station-play-{station.Id}", "Play", StationCards.Play(station, url, cover), icon: "play"));
+            items.Add(
+                Ui.Button(
+                    $"station-enqueue-{station.Id}",
+                    "Add to queue",
+                    StationCards.Enqueue(station, url, cover),
+                    icon: "playlistAdd"
+                )
+            );
+        }
+        else
+        {
+            // No fallback to the station's own address: the browser refuses it, so a
+            // button with it would be a button that does nothing.
+            items.Add(Ui.Text($"station-stream-unavailable-{station.Id}", Unavailable(stream), "caption"));
+        }
+
+        // Two states that differ by label and by variant, never by colour alone: a
+        // toggle whose only difference is a tint is unreadable to a good share of
+        // viewers, and to everyone in a screenshot.
+        items.Add(
             Ui.Button(
                 $"station-favourite-{station.Id}",
                 isFavourite ? StationCards.RemoveFavouriteLabel : StationCards.AddFavouriteLabel,
                 StationCards.ToggleFavourite(station),
                 variant: isFavourite ? "primary" : "secondary"
-            ),
-        ];
+            )
+        );
 
-        // Only when there is somewhere safe to go. A button that opens nothing - or that
-        // opens a javascript:/file:/data: URL a community-editable source supplied - is
-        // worse than an absent one. See StationGates.IsSafeExternalUrl.
-        if (StationGates.IsSafeExternalUrl(station.Homepage))
-        {
-            buttons.Add(
-                Ui.Button(
-                    $"station-homepage-{station.Id}",
-                    "Open homepage",
-                    PluginActionIntent.OpenWebView(station.Homepage),
-                    icon: "globe"
-                )
-            );
-        }
-
-        return Ui.Row($"station-actions-{station.Id}", [.. buttons]);
+        return Ui.Row($"station-actions-{station.Id}", [.. items]);
     }
+
+    // What the viewer can do about it depends on why: a missing approval is the owner's
+    // to give, anything else is this server's to fix.
+    private static string Unavailable(StationStream? stream) =>
+        stream?.RefusalCode is PluginRefusalCodes.CapabilityScopeRefused
+            or PluginRefusalCodes.CapabilityNotDeclared
+            ? "Playing is waiting for the server owner to approve streaming for Internet Radio."
+            : "This server cannot play stations right now. The server owner can find the reason in the server log.";
 
     private static PluginComponent Facts(RadioStation station, string? nowPlaying)
     {

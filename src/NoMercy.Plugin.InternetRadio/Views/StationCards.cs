@@ -101,9 +101,15 @@ public static class StationCards
 
     /// <summary>
     /// The play intent for a station, so every screen starts the same station the same way.
+    ///
+    /// The url is one the host minted for this listener; the cover is inline. Neither is
+    /// the station's own address, which the browser would refuse.
     /// </summary>
-    public static PluginActionIntent Play(RadioStation station) =>
-        WithNowPlaying(WithStationId(PlayIntent(station), station));
+    public static PluginActionIntent Play(RadioStation station, string streamUrl, string? cover) =>
+        // No artist on the item: a live stream's artist changes with every track and
+        // arrives through now-playing.
+        WithNowPlaying(
+            WithStationId(PluginActionIntent.PlayMedia(streamUrl, station.Name, null, cover), station));
 
     /// <summary>The payload key a client reads to learn that this item announces its track.</summary>
     public const string NowPlayingKey = "nowPlaying";
@@ -137,39 +143,10 @@ public static class StationCards
         return intent;
     }
 
-    private static PluginActionIntent PlayIntent(RadioStation station) =>
-        PluginActionIntent.PlayMedia(
-            // Through this plugin's own endpoint when we know where this server lives.
-            // The station's own url is refused by the dashboard's media-src, so the direct
-            // url is a fallback that plays nothing - kept only so a view still renders.
-            MediaProxy.Stream(station.Id) ?? station.StreamUrl,
-            station.Name,
-            // No artist. The player does not merely print this - it builds an artist LINK
-            // from it, resolves a route for it, and derives a DOM id from the track id to
-            // anchor it. A live stream has no artist, and putting the genre there made the
-            // app try to route to a genre that does not exist ("Cannot read properties of
-            // undefined (reading 'path')") and then build the selector
-            // "#trackLink-artists-plugin:<id>:<streamUrl>" - invalid, because a url has
-            // colons and slashes in it. Those two were every "Something went wrong" toast
-            // on the page.
-            //
-            // The placeholder is spelled out rather than shown as a real url on purpose:
-            // CI greps every .cs file for `https?://` to keep station data out of the
-            // source tree, and it cannot tell an illustration in a comment from a
-            // committed stream. An example url here has had the build red since run 18.
-            null,
-            null);
-
-    /// <summary>Queueing a station, built from the same relayed urls as <see cref="Play"/>.</summary>
-    public static PluginActionIntent Enqueue(RadioStation station) =>
+    /// <summary>Queueing a station, from the same minted url and cover as <see cref="Play"/>.</summary>
+    public static PluginActionIntent Enqueue(RadioStation station, string streamUrl, string? cover) =>
         WithNowPlaying(
-            WithStationId(
-                PluginActionIntent.Enqueue(
-                    MediaProxy.Stream(station.Id) ?? station.StreamUrl,
-                    station.Name,
-                    null,
-                    null),
-                station));
+            WithStationId(PluginActionIntent.Enqueue(streamUrl, station.Name, null, cover), station));
 
     // Written into the payload after the factory built it rather than by hand-rolling the
     // intent here: the factory owns which keys a media intent carries and what they are

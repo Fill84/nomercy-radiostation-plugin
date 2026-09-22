@@ -61,53 +61,56 @@ public class StationViewTests
     private static string CellText(PluginComponent row, string columnKey) =>
         row.Props.GetValueOrDefault(columnKey)?.ToString() ?? string.Empty;
 
+    private static readonly StationStream Minted = StationStream.Playable("/api/v1/plugins/x/media/t");
+
     [Fact]
-    // Through this server, not straight at the station: the dashboard's media-src refuses
-    // the station's own host, so a direct url plays nothing.
-    public void OffersPlayAndEnqueueForTheStream()
+    public void PlaysAndQueuesTheMintedStream()
     {
-        // The relay only learns this server's address from a request, so the test supplies
-        // one rather than depending on whichever test ran first.
-        MediaProxy.Remember("https://server.example", null);
+        PluginView view = StationView.Build(Full, UserState.Empty, stream: Minted);
 
-        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
+        ActionOfType(view, PluginActionType.PlayMedia)!.Action!.Payload["streamUrl"]
+            .Should().Be("/api/v1/plugins/x/media/t");
+        ActionOfType(view, PluginActionType.Enqueue)!.Action!.Payload["streamUrl"]
+            .Should().Be("/api/v1/plugins/x/media/t");
+    }
 
-        PluginComponent play = ActionOfType(view, PluginActionType.PlayMedia)!;
-        play.Action!.Payload["streamUrl"].Should().Be(
-            $"https://server.example/api/v1/plugins/{PluginIdentity.Id}/stream/a");
-        play.Action.Payload["title"].Should().Be("Alpha FM");
-
-        ActionOfType(view, PluginActionType.Enqueue).Should().NotBeNull();
+    // A minted url is good for fifteen minutes. A page left open longer would offer one the
+    // server refuses, and the player says nothing when that happens.
+    [Fact]
+    public void APlayablePageRefreshesBeforeItsStreamExpires()
+    {
+        StationView.Build(Full, UserState.Empty, stream: Minted).RefreshInterval
+            .Should().Be(StationView.StreamRefreshSeconds)
+            .And.BeLessThan(15 * 60);
     }
 
     [Fact]
-    public void OffersTheHomepageWhenThereIsOne()
+    public void WithoutAStreamThereIsNothingToPressAndItSaysWhy()
     {
-        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
+        PluginView view = StationView.Build(
+            Full, UserState.Empty, stream: StationStream.Refused(PluginRefusalCodes.CapabilityScopeRefused));
 
-        ActionOfType(view, PluginActionType.OpenWebView)!
-            .Action!.Payload["entryUrl"].Should().Be("https://example.com");
+        ActionOfType(view, PluginActionType.PlayMedia).Should().BeNull();
+        ActionOfType(view, PluginActionType.Enqueue).Should().BeNull();
+        Node(view, "station-stream-unavailable-a").Props["value"]
+            .Should().BeOfType<string>().Which.Should().Contain("owner");
+        // The favourite still works: keeping a station needs no stream.
+        AllNodes(view).Should().Contain(node => node.Id == "station-favourite-a");
     }
 
-    // A button that opens nothing is worse than no button.
     [Fact]
-    public void OmitsTheHomepageButtonWhenThereIsNoHomepage()
+    public void APageWithoutAStreamDoesNotRefreshItself()
     {
-        PluginView view = StationView.Build(Catalog(Full with { Homepage = null }), "a", UserState.Empty);
-
-        ActionOfType(view, PluginActionType.OpenWebView).Should().BeNull();
+        StationView.Build(Full, UserState.Empty).RefreshInterval.Should().Be(0);
     }
 
-    // Homepage is untrusted from both of its sources (radio-browser.info is
-    // community-editable, and StationOverrides is deliberately ungated), and a
-    // button that opens a javascript: URL is worse than one that opens nothing.
-    // See StationGates.IsSafeExternalUrl.
+    // The client now replaces the whole plugin page with an "open external" card for any
+    // outside address, which is worse than no button.
     [Fact]
-    public void OmitsTheHomepageButtonWhenTheHomepageIsNotAnHttpUrl()
+    public void ThereIsNoHomepageButton()
     {
-        PluginView view = StationView.Build(Catalog(Full with { Homepage = "javascript:alert(1)" }), "a", UserState.Empty);
-
-        ActionOfType(view, PluginActionType.OpenWebView).Should().BeNull();
+        ActionOfType(StationView.Build(Full, UserState.Empty, stream: Minted), PluginActionType.OpenWebView)
+            .Should().BeNull();
     }
 
     // The spec calls for a row of back buttons to BOTH /all (where this page is
@@ -187,7 +190,9 @@ public class StationViewTests
     {
         RadioStation bare = new() { Id = "b", Name = "Bare FM", StreamUrl = "https://example.com/b" };
 
-        PluginView view = StationView.Build(Catalog(bare), "b", UserState.Empty);
+        // A minted stream, so the play button this test checks for is the same one a
+        // real page draws - sparse fields are the point of this test, not an absent stream.
+        PluginView view = StationView.Build(bare, UserState.Empty, stream: Minted);
 
         ActionOfType(view, PluginActionType.PlayMedia).Should().NotBeNull();
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();

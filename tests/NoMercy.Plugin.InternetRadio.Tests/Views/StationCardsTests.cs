@@ -127,7 +127,7 @@ public class StationCardsTests
     public void NeitherPlayNorEnqueueSendsAnArtist(bool enqueue)
     {
         PluginActionIntent intent =
-            enqueue ? StationCards.Enqueue(Station()) : StationCards.Play(Station());
+            enqueue ? StationCards.Enqueue(Station(), "/m", null) : StationCards.Play(Station(), "/m", null);
 
         intent.Payload["artist"].Should().BeNull();
     }
@@ -140,12 +140,21 @@ public class StationCardsTests
     public void BothMediaIntentsCarryTheStationsOwnId(bool enqueue)
     {
         PluginActionIntent intent =
-            enqueue ? StationCards.Enqueue(Station()) : StationCards.Play(Station());
+            enqueue ? StationCards.Enqueue(Station(), "/m", null) : StationCards.Play(Station(), "/m", null);
 
         object? id = intent.Payload[StationCards.StationIdKey];
 
         id.Should().Be("a");
         id!.ToString().Should().NotContain("/").And.NotContain(":");
+    }
+
+    [Fact]
+    public void TheMediaIntentsCarryTheStreamAndTheLogoTheyAreHanded()
+    {
+        PluginActionIntent play = StationCards.Play(Station(), "/api/v1/plugins/x/media/t", "data:image/png;base64,AA==");
+
+        play.Payload["streamUrl"].Should().Be("/api/v1/plugins/x/media/t");
+        play.Payload["cover"].Should().Be("data:image/png;base64,AA==");
     }
 
     [Fact]

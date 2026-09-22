@@ -349,6 +349,37 @@ public sealed class PluginLifecycleTests : IDisposable
         cover.Should().StartWith("data:image/png;base64,");
     }
 
+    // FakePluginContext does not name Media, so it throws the interface's own refusal -
+    // exactly what a host without the facade does. The page must still draw.
+    [Fact]
+    public async Task AStationPageStillDrawsWhenTheHostCannotMint()
+    {
+        using InternetRadioPlugin plugin = Started();
+
+        PluginView view = await plugin.GetViewAsync(Request(RadioRoutes.Station("u1")), CancellationToken.None);
+
+        HasNode(view, "station-detail-u1").Should().BeTrue();
+        HasNode(view, "station-stream-unavailable-u1").Should().BeTrue();
+        HasNode(view, "station-play-u1").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task AStationPagePlaysWhatTheHostMints()
+    {
+        using InternetRadioPlugin plugin = Started();
+        plugin.Streams = new FixedStreams(StationStream.Playable("/api/v1/plugins/x/media/t"));
+
+        PluginView view = await plugin.GetViewAsync(Request(RadioRoutes.Station("u1")), CancellationToken.None);
+
+        HasNode(view, "station-play-u1").Should().BeTrue();
+        view.RefreshInterval.Should().Be(StationView.StreamRefreshSeconds);
+    }
+
+    private sealed class FixedStreams(StationStream stream) : IStationStreams
+    {
+        public Task<StationStream> ForAsync(RadioStation station, CancellationToken ct) => Task.FromResult(stream);
+    }
+
     private const string OneStationWithLogo = """
         [{"stationuuid":"u1","name":"Example FM","url":"https://example.com/a",
           "url_resolved":"https://example.com/a","favicon":"https://example.com/logo.png",

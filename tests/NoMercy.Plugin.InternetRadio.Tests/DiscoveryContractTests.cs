@@ -70,6 +70,12 @@ public class DiscoveryContractTests
                 PluginHookCapability.Metadata => typeof(IMetadataPlugin),
                 PluginHookCapability.Auth => typeof(IAuthPlugin),
                 PluginHookCapability.Encoder => typeof(IEncoderPlugin),
+                // media.proxy is used through context.Media at request time, not through a
+                // type-level interface the entry type implements - there is no
+                // IMediaProxyPlugin to check for, so this maps to the base every plugin
+                // already satisfies rather than being left for the throwing arm below,
+                // which exists for a hook nobody has classified yet.
+                PluginCapabilityNames.MediaProxy => typeof(IPlugin),
                 // Every hook this plugin's manifest can declare must be mapped above.
                 // Falling back to typeof(IPlugin) here would make this arm vacuously
                 // true - IPlugin is the base every plugin type implements - so a

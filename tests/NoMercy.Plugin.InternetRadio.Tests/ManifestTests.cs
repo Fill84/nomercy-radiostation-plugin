@@ -81,12 +81,18 @@ public class ManifestTests
 
     // PluginUiController.HasUi refuses to serve a view for a plugin that has not
     // declared the ui hook, so this one is the difference between a working plugin
-    // and one that is installed, enabled and invisible.
+    // and one that is installed, enabled and invisible. media.proxy is how a station
+    // plays at all since ABI 11 refused a token in a plugin url.
     [Fact]
     public void Manifest_DeclaresExactlyTheHooksThisVersionImplements()
     {
         LoadManifest().Capabilities!.Hooks
-            .Should().BeEquivalentTo(new[] { PluginHookCapability.Ui, PluginHookCapability.ScheduledTask });
+            .Should().BeEquivalentTo(new[]
+            {
+                PluginHookCapability.Ui,
+                PluginHookCapability.ScheduledTask,
+                PluginCapabilityNames.MediaProxy,
+            });
     }
 
     // mediaSource is gone on purpose: the server consumes it nowhere, and a manifest

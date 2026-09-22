@@ -20,7 +20,7 @@ public sealed class StationCardsNowPlayingTests
     {
         // Without this the client has to guess, which it did - it polled every item
         // whose id began with "plugin:", on an interval it chose itself.
-        object? declared = StationCards.Play(Station()).Payload[StationCards.NowPlayingKey];
+        object? declared = StationCards.Play(Station(), "/m", null).Payload[StationCards.NowPlayingKey];
 
         Dictionary<string, object> block = Assert.IsType<Dictionary<string, object>>(declared);
 
@@ -35,7 +35,7 @@ public sealed class StationCardsNowPlayingTests
         // Enqueue plays the same broadcast. An item that announces on one route and
         // not the other is the same station going quiet for no reason a listener
         // could name.
-        StationCards.Enqueue(Station()).Payload
+        StationCards.Enqueue(Station(), "/m", null).Payload
             .Should().ContainKey(StationCards.NowPlayingKey);
     }
 }
