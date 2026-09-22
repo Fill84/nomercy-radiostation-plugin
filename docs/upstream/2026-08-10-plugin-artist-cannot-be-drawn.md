@@ -1,5 +1,10 @@
 # A plugin's artist cannot be drawn: the entry is built without a link, and then linked
 
+**Status (2026-09-22):** fixed in `nomercy-app-web@2a24f7a10` ("fix(music-player): draw an
+artist with no link as text (#23)"), for `src/components/MusicPlayer/components/
+TrackLinks.vue` only. The same unguarded pattern still exists, unfixed, in a second file
+the fix never touched — see `docs/upstream/2026-09-22-list-tracklinks-still-unguarded.md`.
+
 **Repo:** `nomercy-app-web`
 **Found:** 2026-08-10, against `master` at `7a58104` and the build on `app.nomercy.tv`.
 **Raised:** NoMercy-Entertainment/nomercy-app-web#23. Open — the fix belongs to that repo

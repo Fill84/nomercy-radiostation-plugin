@@ -1,5 +1,11 @@
 # A failed media load says nothing, anywhere
 
+**Status (2026-09-22):** still open, not yet reported (`gh issue list -R
+NoMercy-Entertainment/nomercy-player-core --state all` — empty). Re-verified against the
+installed 2.2.1 package: `load()`'s catch block still never emits `error`, and `queue.js`'s
+`item()` still swallows the rejection with a bare `.catch(() => {})`. See
+`docs/upstream/2026-09-22-media-load-failure-still-silent.md` for the 2.2.1 citation.
+
 **Where:** `@nomercy-entertainment/nomercy-player-core` 2.0.4 · `dist/core/mixins/queue.js`,
 `dist/core/mixins/loading.js` · reproduced 2026-08-09
 **Effect:** when a track fails to load, the player emits no event, logs nothing and throws

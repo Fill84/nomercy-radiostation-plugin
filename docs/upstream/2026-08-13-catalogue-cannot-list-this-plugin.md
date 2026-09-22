@@ -1,5 +1,12 @@
 # The catalogue is stuck at 1.0.0, and a correct entry cannot currently be written
 
+**Status (2026-09-22):** fixed — closed as completed 2026-08-13. `index.json` now carries
+the correct Ulid id, current name/description, and versions 1.0.2–1.2.0 with real
+checksums; `schema.json`'s `id` now accepts a Ulid. Still missing: no version targets ABI
+12 (expected — 2.0.0 has not shipped yet) and nothing on record says the next release's
+catalogue update must add one — see
+`docs/upstream/2026-09-22-catalogue-entry-needs-abi-12-target.md`.
+
 **Repo:** `NoMercy-Entertainment/nomercy-plugins`
 **Found:** 2026-08-13, against `master` and a live server on `app.nomercy.tv`.
 **Raised:** NoMercy-Entertainment/nomercy-plugins#2. Open.

@@ -1,5 +1,15 @@
 # A plugin cannot receive typed text, by any route
 
+**Status (2026-09-22):** the `PluginViews.Form` empty-body defect (the form rendering with
+role `button` instead of a real `<form>`) is fixed in `nomercy-media-server` — reported as
+`nomercy-media-server#27` ("PluginComponentType emits design-system names the clients never
+draw..."), closed 2026-08-30, fixed by `9a382fbfc` ("fix(plugins): a form collects what was
+typed into it"), released v0.1.479; `PluginComponentType.Form` now reads `"PluginForm"`
+(matching the client) instead of `"NMCard"`, and the client's `PluginForm.vue` renders a
+real `<form>`. The third mechanism this file records (`NMSearchInput` firing on click,
+ignoring Enter) is a **separate, still-open** defect in `nomercy-app-web` — see
+`docs/upstream/2026-09-22-nmsearchinput-fires-on-click.md`.
+
 *(Originally about PluginViews.Form. Two further mechanisms were tried afterwards and are
 recorded at the end; the conclusion is broader than the original title.)*
 
