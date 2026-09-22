@@ -240,15 +240,11 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     /// server's own helper answers Guid.Empty there, which for per-user data would mean
     /// every unauthenticated caller writing into one shared list - favourites belonging to
     /// nobody and visible to whoever landed in the same bucket.
+    ///
+    /// Not <c>PluginControllerBase.Caller</c>: the host never populates it, and reading it throws.
     /// </summary>
-    private string? CurrentUserId()
-    {
-        string? claim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-
-        return Guid.TryParse(claim, out Guid userId) && userId != Guid.Empty
-            ? userId.ToString()
-            : null;
-    }
+    private string? CurrentUserId() =>
+        UserKey.FromClaim(User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
 
     private async Task<IActionResult> RespondAsync(
         Func<InternetRadioPlugin, Task<PluginActionOutcome>> act)

@@ -653,12 +653,12 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             RadioRoute route = RadioRoutes.Parse(request.Route);
             StationCatalog catalog = await Provider.GetAsync(ct);
 
-            // Read once per request, not once per card. Every view that shows a station
-            // needs to know whether this viewer kept it, and a per-card read would open
-            // the file eighteen times to answer the same question.
-            UserState state = request.UserId is null
+            // Through UserKey, never request.UserId: that is the Ulid spelling of the same
+            // person, and state is keyed by the Guid spelling the controller writes.
+            string? userKey = UserKey.FromCaller(request.CallerId);
+            UserState state = userKey is null
                 ? UserState.Empty
-                : await StateStore.GetAsync(request.UserId, ct);
+                : await StateStore.GetAsync(userKey, ct);
 
             return route.Kind switch
             {

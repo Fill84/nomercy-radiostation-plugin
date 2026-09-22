@@ -107,6 +107,43 @@ public sealed class PluginLifecycleTests : IDisposable
         HasNode(view, "unknown-route").Should().BeTrue();
     }
 
+    // The regression 2.0 exists to prevent: the toggle arrives through the controller
+    // with a Guid claim, the page is built for a Ulid caller over the same bytes, and the
+    // favourite has to be on that page.
+    [Fact]
+    public async Task AFavouriteToggledThroughTheControllerShowsOnThatPersonsPage()
+    {
+        Guid user = Guid.NewGuid();
+        using InternetRadioPlugin plugin = Started();
+
+        await plugin.ToggleFavouriteAsync(UserKey.FromClaim(user.ToString()), "u1", CancellationToken.None);
+
+        PluginView view = await plugin.GetViewAsync(
+            new PluginViewRequest { Route = RadioRoutes.Browse, Caller = TestCaller.For(user) },
+            CancellationToken.None);
+
+        HasNode(view, "station-tile-fav-u1").Should().BeTrue();
+    }
+
+    // State written by 1.x, before any of this: keyed by Guid.ToString().
+    [Fact]
+    public async Task FavouritesSavedByOneXAreStillThere()
+    {
+        Guid user = Guid.NewGuid();
+        using InternetRadioPlugin plugin = Started();
+        UserStateStore store = new(_folder);
+        await store.AddFavouriteAsync(
+            user.ToString(),
+            new RadioStation { Id = "kept", Name = "Kept FM", StreamUrl = "https://example.com/k" },
+            CancellationToken.None);
+
+        PluginView view = await plugin.GetViewAsync(
+            new PluginViewRequest { Route = RadioRoutes.Browse, Caller = TestCaller.For(user) },
+            CancellationToken.None);
+
+        HasNode(view, "station-tile-fav-kept").Should().BeTrue();
+    }
+
     // Initialize is synchronous with nowhere to await a fix, and a plugin that throws
     // from it fails to load. So it captures the context and does nothing else - the
     // first real work happens on a view or a tick.
