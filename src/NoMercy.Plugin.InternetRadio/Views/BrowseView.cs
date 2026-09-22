@@ -17,7 +17,8 @@ public static class BrowseView
         UserState state,
         IReadOnlyList<RadioStation>? searchResults = null,
         bool searchFailed = false,
-        SearchFacets? facets = null)
+        SearchFacets? facets = null,
+        IStationLogos? logos = null)
     {
         if (catalog.IsEmpty)
         {
@@ -57,14 +58,14 @@ public static class BrowseView
             || !string.IsNullOrWhiteSpace(state.LastLanguage);
 
         children.AddRange(
-            SearchView.Results(state.LastSearch ?? string.Empty, searchResults ?? [], searchFailed, state));
+            SearchView.Results(state.LastSearch ?? string.Empty, searchResults ?? [], searchFailed, state, logos));
 
         // Absent, not empty. A heading over nothing reads as a screen that failed to
         // load, and everyone's first visit here has no favourites at all.
         if (state.Favourites.Count > 0)
         {
             children.Add(Ui.Text("browse-favourites-heading", "Favourites", "subtitle"));
-            children.Add(StationCards.Grid("browse-favourites", state.Favourites, state, "fav"));
+            children.Add(StationCards.Grid("browse-favourites", state.Favourites, state, "fav", logos));
         }
 
         children.Add(GenreChips(catalog));
@@ -78,7 +79,8 @@ public static class BrowseView
                 "browse-popular-grid",
                 catalog.Popular(StationCards.PopularCount),
                 state,
-                "popular"));
+                "popular",
+                logos));
         }
 
         return PluginViews.Declarative(Ui.Container("browse-root", [.. children]));

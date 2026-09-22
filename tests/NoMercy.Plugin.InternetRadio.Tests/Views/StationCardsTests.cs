@@ -26,6 +26,11 @@ public class StationCardsTests
     private static Dictionary<string, object?> Data(PluginComponent card) =>
         card.Props["data"].Should().BeOfType<Dictionary<string, object?>>().Subject;
 
+    private sealed class FixedLogos(string? dataUri) : IStationLogos
+    {
+        public string? DataUriFor(RadioStation station) => dataUri;
+    }
+
     // A station is not an artist. Left to its own music vocabulary the card read
     // "Artist" under every station on the shelf, with a bare bullet after it.
     [Fact]
@@ -59,9 +64,8 @@ public class StationCardsTests
     [Fact]
     public void ATileIsTheAppsOwnCard()
     {
-        MediaProxy.Remember("https://server.example", null);
-
-        PluginComponent tile = StationCards.Tile(Station("https://c.example.com/l.png"));
+        PluginComponent tile = StationCards.Tile(
+            Station("https://c.example.com/l.png"), logos: new FixedLogos("data:image/png;base64,AA=="));
 
         tile.Component.Should().Be(Ui.MediaCardComponent);
 
@@ -69,10 +73,29 @@ public class StationCardsTests
 
         data["name"].Should().Be("Example FM");
         data["link"].Should().Be(AppRoutes.Station("a"));
-        data["cover"].Should().NotBeNull();
+        data["cover"].Should().Be("data:image/png;base64,AA==");
         // The artist branch draws a square framed logo; the album branch draws a record
         // sleeve, which a radio station is not.
         data["type"].Should().Be("artist");
+    }
+
+    // Until the logo is fetched - and for a station that has none - the card draws its
+    // own placeholder, never a broken image.
+    [Fact]
+    public void ATileWithoutAKnownLogoDrawsThePlaceholder()
+    {
+        Data(StationCards.Tile(Station("https://c.example.com/l.png")))["cover"].Should().BeNull();
+    }
+
+    [Fact]
+    public void TheGridHandsEveryTileTheSameLogos()
+    {
+        PluginComponent grid = StationCards.Grid(
+            "g", [Station(id: "a"), Station(id: "b")], UserState.Empty, "s", new FixedLogos("data:x"));
+
+        // Cast to string rather than left as object: FluentAssertions only offers AllBe on a
+        // string collection, not on the object-typed values a props dictionary holds.
+        grid.Items.Select(tile => (string?)Data(tile)["cover"]).Should().AllBe("data:x");
     }
 
     // A plugin-relative route here is a dead link: the card is a RouterLink resolved by the
@@ -94,44 +117,6 @@ public class StationCardsTests
         string popular = StationCards.Grid("g", [Station()], UserState.Empty, "popular").Items[0].Id;
 
         kept.Should().NotBe(popular);
-    }
-
-    [Fact]
-    public void CoverUrl_KeepsAnHttpsLogo()
-    {
-        StationCards.CoverUrl(Station("https://cdn.example.com/logo.png"))
-            .Should().Be("https://cdn.example.com/logo.png");
-    }
-
-    // An http image on an https dashboard is blocked as mixed content and draws as a broken
-    // icon, which reads as this plugin being broken rather than as a station's logo having
-    // rotted. Same judgement the stream gates make, for the same reason.
-    [Theory]
-    [InlineData("http://cdn.example.com/logo.png")]
-    [InlineData("/relative/logo.png")]
-    [InlineData("not a url")]
-    [InlineData("")]
-    [InlineData("   ")]
-    [InlineData(null)]
-    public void CoverUrl_RefusesAnythingTheBrowserCannotDrawOverHttps(string? url)
-    {
-        StationCards.CoverUrl(Station(url)).Should().BeNull();
-    }
-
-    // A rejected logo must not reach the card, or the grid draws the broken icon the gate
-    // just refused. The card has a placeholder of its own for that.
-    [Fact]
-    public void Tile_SendsNoCoverWhenTheLogoIsOneTheBrowserWouldRefuse()
-    {
-        Data(StationCards.Tile(Station("http://cdn.example.com/l.png")))["cover"]
-            .Should().BeNull();
-    }
-
-    [Fact]
-    public void Play_DoesNotHandARejectedCoverToThePlayer()
-    {
-        StationCards.Play(Station("http://cdn.example.com/logo.png"))
-            .Payload["cover"].Should().BeNull();
     }
 
     // The player builds an artist link and a route from this. A live stream has no artist,

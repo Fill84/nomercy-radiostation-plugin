@@ -98,6 +98,81 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private UserStateStore StateStore => _userState ??= new UserStateStore(Context.DataFolderPath);
 
+    private LogoCache? _logos;
+
+    private LogoCache Logos => _logos ??= new LogoCache(Context.DataFolderPath);
+
+    // 0 or 1: whether a background logo fetch is running. One at a time is plenty - a
+    // page of placeholders fills in on the next view either way.
+    private int _fetchingLogos;
+
+    /// <summary>
+    /// Fetches every logo views asked for since the last run, and stores what came of it.
+    ///
+    /// Internal so a test can run it to completion instead of racing the background copy.
+    /// A failure worth retrying is not stored, so the next view asks again.
+    /// </summary>
+    internal async Task FetchPendingLogosAsync(CancellationToken ct)
+    {
+        LogoFetcher fetcher = new(Context.HttpClient);
+
+        while (Logos.TakePending() is { Count: > 0 } wanted)
+        {
+            await FetchLogosAsync(fetcher, wanted, ct);
+        }
+    }
+
+    private async Task FetchLogosAsync(LogoFetcher fetcher, IEnumerable<RadioStation> stations, CancellationToken ct)
+    {
+        foreach (RadioStation station in stations)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (Logos.Has(station) || LogoCache.SourceOf(station) is not { } source)
+            {
+                continue;
+            }
+
+            LogoResult result = await fetcher.FetchAsync(source, ct);
+
+            if (result.IsFinal)
+            {
+                await Logos.StoreAsync(station, result.DataUri, ct);
+            }
+        }
+    }
+
+    /// <summary>Starts a background fetch for whatever the page just asked for, unless one is running.</summary>
+    private void FetchLogosInBackground()
+    {
+        if (Interlocked.CompareExchange(ref _fetchingLogos, 1, 0) != 0)
+        {
+            return;
+        }
+
+        CancellationToken lifetime = _lifecycleCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await FetchPendingLogosAsync(lifetime);
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+            {
+                // Unloading. The logos wait for the next start.
+            }
+            catch (Exception exception)
+            {
+                _context?.Logger.LogWarning(exception, "Internet Radio could not fetch station logos.");
+            }
+            finally
+            {
+                Volatile.Write(ref _fetchingLogos, 0);
+            }
+        });
+    }
+
     /// <summary>The choices the search form offers, as radio-browser publishes them.</summary>
     private readonly SearchFacets _facets = new();
 
@@ -272,13 +347,13 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         StationQuery stored = StoredQuery(state);
         if (!IsAsking(stored))
         {
-            return BrowseView.Build(catalog, state, facets: await FacetsAsync(ct));
+            return BrowseView.Build(catalog, state, facets: await FacetsAsync(ct), logos: Logos);
         }
 
         try
         {
             return BrowseView.Build(
-                catalog, state, await SearchAsync(stored, ct), facets: await FacetsAsync(ct));
+                catalog, state, await SearchAsync(stored, ct), facets: await FacetsAsync(ct), logos: Logos);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -290,7 +365,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
                 exception, "Internet Radio could not search for {Term}.", state.LastSearch);
 
             return BrowseView.Build(
-                catalog, state, [], searchFailed: true, facets: await FacetsAsync(ct));
+                catalog, state, [], searchFailed: true, facets: await FacetsAsync(ct), logos: Logos);
         }
     }
 
@@ -328,7 +403,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
         if (term.Length is > 0 and < SearchTerms.MinLength || !IsAsking(query))
         {
-            return SearchView.Build(term, [], queryFailed: false, state, await FacetsAsync(ct));
+            return SearchView.Build(term, [], queryFailed: false, state, await FacetsAsync(ct), Logos);
         }
 
         try
@@ -336,7 +411,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             IReadOnlyList<RadioStation> found = await SearchAsync(query, ct);
             Remember(found);
 
-            return SearchView.Build(term, found, queryFailed: false, state, await FacetsAsync(ct));
+            return SearchView.Build(term, found, queryFailed: false, state, await FacetsAsync(ct), Logos);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -347,7 +422,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             _context?.Logger.LogWarning(
                 exception, "Internet Radio could not search for {Term}.", term);
 
-            return SearchView.Build(term, [], queryFailed: true, state, await FacetsAsync(ct));
+            return SearchView.Build(term, [], queryFailed: true, state, await FacetsAsync(ct), Logos);
         }
     }
 
@@ -363,7 +438,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     {
         if (catalog.ById(id) is { } known)
         {
-            return StationView.Build(known, state, NowPlaying.Get(id));
+            return StationView.Build(known, state, NowPlaying.Get(id), Logos);
         }
 
         // A station this session already put on screen. Opening a search result
@@ -372,7 +447,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         // name and stream url were in the very list the viewer just tapped.
         if (_seen.TryGetValue(id, out RadioStation? recent))
         {
-            return StationView.Build(recent, state, NowPlaying.Get(id));
+            return StationView.Build(recent, state, NowPlaying.Get(id), Logos);
         }
 
         try
@@ -380,7 +455,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             FavouriteResolver resolver = new(catalog, new RadioBrowserClient(Context.HttpClient));
 
             return StationView.Build(
-                await resolver.ResolveAsync(id, ct), state, NowPlaying.Get(id));
+                await resolver.ResolveAsync(id, ct), state, NowPlaying.Get(id), Logos);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -485,7 +560,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             return null;
         }
 
-        string? url = cover ? StationCards.CoverUrl(station) : station.StreamUrl;
+        string? url = cover ? LogoCache.SourceOf(station) : station.StreamUrl;
         if (string.IsNullOrWhiteSpace(url))
         {
             Context.Logger.LogWarning(
@@ -571,6 +646,21 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             CancellationTokenSource.CreateLinkedTokenSource(ct, _lifecycleCts.Token);
 
         StationCatalog catalog = await Provider.RefreshAsync(linked.Token);
+
+        // The catalogue's own logos are fetched here, on the quiet hour, so the pages most
+        // people open never show a placeholder. A failure costs logos, not the refresh.
+        try
+        {
+            await FetchLogosAsync(new LogoFetcher(context.HttpClient), catalog.Stations, linked.Token);
+        }
+        catch (OperationCanceledException) when (linked.Token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            context.Logger.LogWarning(exception, "Internet Radio could not fetch the catalogue's logos.");
+        }
 
         // RefreshAsync deliberately does not consult StationOverrides - it keeps the
         // cache warm for the day a user deletes their override file - but every view
@@ -660,17 +750,21 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
                 ? UserState.Empty
                 : await StateStore.GetAsync(userKey, ct);
 
-            return route.Kind switch
+            PluginView view = route.Kind switch
             {
                 RadioRouteKind.Browse => await BuildBrowseAsync(catalog, state, ct),
                 RadioRouteKind.Search => await BuildSearchAsync(route.Value, state, ct),
-                RadioRouteKind.Genre => GenreView.Build(catalog, route.Value, state),
-                RadioRouteKind.AllStations => AllStationsView.Build(catalog, state),
+                RadioRouteKind.Genre => GenreView.Build(catalog, route.Value, state, Logos),
+                RadioRouteKind.AllStations => AllStationsView.Build(catalog, state, Logos),
                 RadioRouteKind.Station => await BuildStationAsync(catalog, route.Value, state, ct),
                 RadioRouteKind.Settings => SettingsView.Build(
                     catalog, context.DataFolderPath, DateTimeOffset.UtcNow, NextRefreshUtc(DateTimeOffset.UtcNow), state),
                 _ => UnknownRoute(request.Route),
             };
+
+            FetchLogosInBackground();
+
+            return view;
         }
         catch (OperationCanceledException)
         {

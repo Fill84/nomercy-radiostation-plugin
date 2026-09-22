@@ -14,7 +14,7 @@ namespace NoMercy.Plugin.InternetRadio;
 // longer exists to be the only way in.
 public static class AllStationsView
 {
-    public static PluginView Build(StationCatalog catalog, UserState state)
+    public static PluginView Build(StationCatalog catalog, UserState state, IStationLogos? logos = null)
     {
         if (catalog.IsEmpty)
         {
@@ -42,7 +42,7 @@ public static class AllStationsView
                     stations.Count == 1 ? "1 station" : $"{stations.Count} stations",
                     "caption"
                 ),
-                StationCards.Grid("all-grid", stations, state, "all")
+                StationCards.Grid("all-grid", stations, state, "all", logos)
             )
         );
     }

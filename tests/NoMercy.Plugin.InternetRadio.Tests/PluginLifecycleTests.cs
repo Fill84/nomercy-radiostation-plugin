@@ -315,4 +315,47 @@ public sealed class PluginLifecycleTests : IDisposable
 
         plugin.Invoking(candidate => candidate.Dispose()).Should().NotThrow();
     }
+
+    // The page never waits on a logo server. It goes out with placeholders; the logos it
+    // asked for are fetched afterwards and drawn on the next page.
+    [Fact]
+    public async Task LogosAreFetchedAfterThePageAndDrawnOnTheNext()
+    {
+        byte[] png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1];
+        _handler.RespondPerRequest(request =>
+            request.RequestUri!.AbsolutePath.EndsWith(".png", StringComparison.Ordinal)
+                ? new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(png) }
+                : new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(OneStationWithLogo) });
+        using InternetRadioPlugin plugin = new();
+        plugin.Initialize(new FakePluginContext(_folder, new HttpClient(_handler)));
+
+        PluginView first = await plugin.GetViewAsync(Request(RadioRoutes.AllStations), CancellationToken.None);
+        Cover(first, "station-tile-all-u1").Should().BeNull();
+
+        // The page itself starts a background fetch, and so does this loop; whichever gets
+        // there first stores it. Waiting on the outcome rather than on either path keeps
+        // this from racing the other.
+        string? cover = null;
+        for (int attempt = 0; attempt < 100 && cover is null; attempt++)
+        {
+            await plugin.FetchPendingLogosAsync(CancellationToken.None);
+            cover = Cover(await plugin.GetViewAsync(Request(RadioRoutes.AllStations), CancellationToken.None), "station-tile-all-u1");
+            if (cover is null)
+            {
+                await Task.Delay(50);
+            }
+        }
+
+        cover.Should().StartWith("data:image/png;base64,");
+    }
+
+    private const string OneStationWithLogo = """
+        [{"stationuuid":"u1","name":"Example FM","url":"https://example.com/a",
+          "url_resolved":"https://example.com/a","favicon":"https://example.com/logo.png",
+          "tags":"ambient","countrycode":"NL","codec":"MP3","bitrate":128,"hls":0,
+          "lastcheckok":1,"votes":5}]
+        """;
+
+    private static string? Cover(PluginView view, string tileId) =>
+        ((Dictionary<string, object?>)AllNodes(view).Single(node => node.Id == tileId).Props["data"]!)["cover"] as string;
 }

@@ -26,7 +26,7 @@ public static class StationView
     /// are pure Build methods on purpose.
     /// </summary>
     public static PluginView Build(
-        RadioStation? station, UserState state, string? nowPlaying = null)
+        RadioStation? station, UserState state, string? nowPlaying = null, IStationLogos? logos = null)
     {
         if (station is null)
         {
@@ -53,10 +53,9 @@ public static class StationView
                     $"station-detail-{station.Id}",
                     station.Name,
                     Description(station),
-                    // Relayed, like every other image this plugin draws: the dashboard's
-                    // img-src refuses the station's own host, so its own url renders as a
-                    // broken icon.
-                    StationCards.CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id),
+                    // Inline, like every other logo this plugin draws: nothing else
+                    // reaches an image element on this platform any more.
+                    (logos ?? NoStationLogos.Instance).DataUriFor(station),
                     Actions(station, state.Favourites.Any(kept => kept.Id == station.Id)),
                     Facts(station, nowPlaying)
                 )

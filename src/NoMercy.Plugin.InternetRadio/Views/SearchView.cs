@@ -32,7 +32,8 @@ public static class SearchView
         IReadOnlyList<RadioStation> results,
         bool queryFailed,
         UserState state,
-        SearchFacets? facets = null)
+        SearchFacets? facets = null,
+        IStationLogos? logos = null)
     {
         List<PluginComponent> children =
         [
@@ -45,7 +46,7 @@ public static class SearchView
             Field(term, state, facets ?? new SearchFacets()),
         ];
 
-        children.AddRange(Results(term, results, queryFailed, state));
+        children.AddRange(Results(term, results, queryFailed, state, logos));
 
         return PluginViews.Declarative(Ui.Container("search-root", [.. children]));
     }
@@ -141,7 +142,11 @@ public static class SearchView
     /// viewer retyping a search that was never the problem.
     /// </summary>
     public static IEnumerable<PluginComponent> Results(
-        string term, IReadOnlyList<RadioStation> results, bool queryFailed, UserState state)
+        string term,
+        IReadOnlyList<RadioStation> results,
+        bool queryFailed,
+        UserState state,
+        IStationLogos? logos = null)
     {
         // Whether anything was asked for, not whether a name was typed. Keying on
         // the name alone meant a search by genre or country - which needs no name
@@ -186,7 +191,7 @@ public static class SearchView
             results.Count == 1 ? "1 station" : $"{results.Count} stations",
             "subtitle");
 
-        yield return StationCards.Grid("search-grid", results, state, "search");
+        yield return StationCards.Grid("search-grid", results, state, "search", logos);
 
         yield return Ui.Button(
             "search-clear",

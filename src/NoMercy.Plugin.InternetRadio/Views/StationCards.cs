@@ -41,21 +41,22 @@ public static class StationCards
         string id,
         IEnumerable<RadioStation> stations,
         UserState state,
-        string scope) =>
-        Ui.MediaGrid(id, stations.Select(station => Tile(station, scope)));
+        string scope,
+        IStationLogos? logos = null) =>
+        Ui.MediaGrid(id, stations.Select(station => Tile(station, scope, logos)));
 
     /// <summary>
     /// One station, as the app draws an artist: a square cover, the name under it, and a
     /// link to its own page.
     /// </summary>
-    public static PluginComponent Tile(RadioStation station, string scope = "") =>
+    public static PluginComponent Tile(RadioStation station, string scope = "", IStationLogos? logos = null) =>
         Ui.MediaCard(
             $"station-tile-{Scoped(scope, station.Id)}",
             station.Name,
             AppRoutes.Station(station.Id),
-            // Null rather than the station's own url when the browser would refuse it: the
-            // card then draws its own placeholder instead of a broken image.
-            CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id),
+            // A data: URI or nothing. Null draws the card's own placeholder, which is also
+            // what a station without a logo has always shown.
+            (logos ?? NoStationLogos.Instance).DataUriFor(station),
             // Same treatment as an artist - a square, framed logo - rather than the album
             // branch, which draws a record sleeve this is not.
             type: "artist",
@@ -157,7 +158,7 @@ public static class StationCards
             // source tree, and it cannot tell an illustration in a comment from a
             // committed stream. An example url here has had the build red since run 18.
             null,
-            CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id));
+            null);
 
     /// <summary>Queueing a station, built from the same relayed urls as <see cref="Play"/>.</summary>
     public static PluginActionIntent Enqueue(RadioStation station) =>
@@ -167,7 +168,7 @@ public static class StationCards
                     MediaProxy.Stream(station.Id) ?? station.StreamUrl,
                     station.Name,
                     null,
-                    CoverUrl(station) is null ? null : MediaProxy.Cover(station.Id)),
+                    null),
                 station));
 
     // Written into the payload after the factory built it rather than by hand-rolling the
@@ -198,28 +199,6 @@ public static class StationCards
     /// </summary>
     private static string Scoped(string scope, string stationId) =>
         string.IsNullOrEmpty(scope) ? stationId : $"{scope}-{stationId}";
-
-    /// <summary>
-    /// The station's logo, or null when the browser could not draw it anyway.
-    ///
-    /// The same judgement StationGates makes about a stream, for the same reason: the
-    /// dashboard is served over https, so an http image is blocked as mixed content and
-    /// renders as a broken icon — which reads as this plugin being broken rather than as a
-    /// station's logo having rotted. Six of them had already rotted to 404, 403 or an HTML
-    /// page, so this is the ordinary case and not the exotic one.
-    /// </summary>
-    public static string? CoverUrl(RadioStation station)
-    {
-        if (string.IsNullOrWhiteSpace(station.LogoUrl))
-        {
-            return null;
-        }
-
-        return Uri.TryCreate(station.LogoUrl, UriKind.Absolute, out Uri? parsed)
-            && parsed.Scheme == Uri.UriSchemeHttps
-            ? station.LogoUrl
-            : null;
-    }
 
     /// <summary>Genre and country, whichever of them is known. Null when neither is.</summary>
     public static string? Subtitle(RadioStation station)

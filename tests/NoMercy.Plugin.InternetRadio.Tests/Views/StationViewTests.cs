@@ -27,6 +27,11 @@ public class StationViewTests
     private static StationCatalog Catalog(params RadioStation[] stations) =>
         StationCatalog.Create(stations, CatalogSource.Fetched, DateTimeOffset.UtcNow);
 
+    private sealed class FixedLogos(string? dataUri) : IStationLogos
+    {
+        public string? DataUriFor(RadioStation station) => dataUri;
+    }
+
     private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
     {
         yield return node;
@@ -220,5 +225,13 @@ public class StationViewTests
         PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
 
         AllNodes(view).Select(node => node.Id).Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public void TheDetailShowsTheLogoItIsHanded()
+    {
+        PluginView view = StationView.Build(Full, UserState.Empty, logos: new FixedLogos("data:image/png;base64,AA=="));
+
+        Node(view, "station-detail-a").Props["image"].Should().Be("data:image/png;base64,AA==");
     }
 }
