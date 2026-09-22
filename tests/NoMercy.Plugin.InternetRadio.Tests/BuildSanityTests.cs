@@ -26,4 +26,22 @@ public class BuildSanityTests
         File.Exists(Path.Combine(AppContext.BaseDirectory, "plugin.json"))
             .Should().BeTrue("ManifestTests reads it from here");
     }
+
+    // RadioBrowserClient.cs claims "those three are already required to agree (see
+    // ManifestTests)" about plugin.json, the csproj's <Version> and PluginIdentity -
+    // but ManifestTests only reads plugin.json, which never touches the csproj at
+    // all. This is the missing third of that claim: the built assembly's own
+    // version, which the csproj's <Version> becomes at compile time. Only the first
+    // three parts are compared - AssemblyVersion always carries a fourth, and
+    // nothing here sets or promises one.
+    [Fact]
+    public void AssemblyVersion_MatchesPluginIdentity()
+    {
+        Version? assemblyVersion = typeof(RadioStation).Assembly.GetName().Version;
+
+        assemblyVersion.Should().NotBeNull();
+        assemblyVersion!.Major.Should().Be(PluginIdentity.Version.Major);
+        assemblyVersion.Minor.Should().Be(PluginIdentity.Version.Minor);
+        assemblyVersion.Build.Should().Be(PluginIdentity.Version.Build);
+    }
 }

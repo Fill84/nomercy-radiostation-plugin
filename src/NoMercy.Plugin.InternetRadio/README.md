@@ -50,6 +50,8 @@ says so.
 - Selecting a station opens its page, which plays it in the built-in player and offers
   **Add to queue** and a favourite toggle. That is how a card behaves everywhere else
   in the app.
+- A queued station's link is valid for fifteen minutes. A station that waits longer
+  than that in the queue may not start; playing it again from its own page works.
 
 ## Searching
 

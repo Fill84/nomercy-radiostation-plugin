@@ -102,6 +102,11 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// Where a station page gets its playable url. Settable so a test can stand in for the
     /// host; the plugin itself always uses the context's media proxy.
     /// </summary>
+    // Plain `??=`, unlike Listener below: two station pages racing here can still
+    // publish two HostStationStreams, but neither holds a connection or any other
+    // resource that outlives the call that made it, and the worst a race costs is
+    // asking the owner for the streaming grant twice - which the host itself
+    // deduplicates into the one prompt it already shows.
     internal IStationStreams Streams
     {
         get => _streams ??= HostStationStreams.For(Context);

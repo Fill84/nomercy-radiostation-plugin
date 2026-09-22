@@ -363,7 +363,9 @@ jobs:
 
           Stations are fetched from radio-browser.info and refreshed daily; nothing is
           bundled. Streams play through the server's own media proxy. HTTPS, non-HLS
-          stations only in this release.
+          stations only in this release. A queued station's link is valid for fifteen
+          minutes, so one that waits longer in the queue may not start; playing it
+          again from its page works.
 
           Built and tested against \`NoMercy-Entertainment/nomercy-media-server\` ${CONTRACT_REF} (\`${CONTRACT_SHA}\`).
           To rebuild this exact artifact: \`SERVER_REF=${CONTRACT_SHA} ./scripts/fetch-abstractions.sh\`

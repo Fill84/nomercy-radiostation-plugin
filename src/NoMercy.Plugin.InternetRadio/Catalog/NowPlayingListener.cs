@@ -144,6 +144,12 @@ public sealed class NowPlayingListener(
         }
         finally
         {
+            // Removing by key alone, rather than the (key, connection) overload that
+            // would refuse to remove a value it did not insert, is still safe: a new
+            // connection for this station can only be inserted from Touch's lock after
+            // observing a miss in _open, and this station's entry is only ever missing
+            // once this very connection has removed it - so there is no successor here
+            // to remove out from under.
             _open.TryRemove(station.Id, out _);
             connection.Dispose();
         }

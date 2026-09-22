@@ -12,7 +12,7 @@ Requires the .NET 10 SDK (pinned in `global.json`).
 **Requirements to run against:** NoMercy MediaServer **v0.1.526 or newer** (plugin
 ABI 12.1).
 
-`NoMercy.Plugins.Abstractions` is not published to nuget.org, so it is cloned and
+`NoMercy.PluginSdk.Abstractions` is not published to nuget.org, so it is cloned and
 packed into a local feed first. `nuget.config` already points at that feed, and
 `packageSourceMapping` pins `NoMercy.*` to it so nobody can publish that name on
 nuget.org and get their assembly compiled in instead.
@@ -47,7 +47,7 @@ list of ids.
 
 That is not tidiness. A hardcoded URL is one nobody re-checks: this repository has
 already had to correct Tomorrowland URLs once, and shipped BBC streams over `http://`
-that could never play in a browser. Anything wrong with a station is now fixed
+that could never play at all. Anything wrong with a station is now fixed
 upstream at radio-browser, where the fix reaches everyone rather than only whoever
 updates this plugin.
 

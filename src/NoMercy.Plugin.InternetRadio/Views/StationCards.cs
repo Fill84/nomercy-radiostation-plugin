@@ -148,6 +148,16 @@ public static class StationCards
     }
 
     /// <summary>Queueing a station, from the same minted url and cover as <see cref="Play"/>.</summary>
+    ///
+    /// <remarks>
+    /// The url is the host's, minted for this listener, and it is valid for fifteen
+    /// minutes - see <c>HostStationStreams</c>. Nothing here bounds how long a station
+    /// waits in the queue before its turn comes, so a queue that sits longer than that
+    /// carries a url the host will answer 403 to when playback finally starts. That is
+    /// accepted rather than worked around: refreshing a queued url would need the queue
+    /// itself to ask this plugin again, which it has no way to do, and the fix already
+    /// exists - opening the station's own page mints a fresh one. See the plugin README.
+    /// </remarks>
     public static PluginActionIntent Enqueue(RadioStation station, string streamUrl, string? cover) =>
         WithNowPlaying(
             WithStationId(PluginActionIntent.Enqueue(streamUrl, station.Name, null, cover), station));

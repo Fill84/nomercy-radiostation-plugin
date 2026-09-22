@@ -155,6 +155,25 @@ public sealed class NowPlayingListenerTests : IDisposable
         _handler.Requests[0].Headers.GetValues("Icy-MetaData").Should().Equal("1");
     }
 
+    // What bcf652b claims: unload closes every open connection rather than leaving
+    // them to run out their lease. Disposes the listener itself here rather than
+    // through the fixture's own Dispose, so the assertion runs before that second,
+    // harmless call - NowPlayingListener.Dispose is idempotent, but the point of
+    // this test is to observe OpenCount drop, which only the first call causes.
+    [Fact]
+    public async Task DisposeClosesEveryOpenConnection()
+    {
+        _handler.RespondPerRequest(_ => Announcing("x"));
+        NowPlayingListener listener = Listener();
+
+        listener.Touch(Station("a"));
+        await Eventually(() => listener.OpenCount == 1);
+
+        listener.Dispose();
+
+        await Eventually(() => listener.OpenCount == 0);
+    }
+
     /// <summary>Hands out its bytes, then waits for cancellation like a live stream.</summary>
     private sealed class EndlessStream(byte[] prefix) : Stream
     {
