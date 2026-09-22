@@ -221,6 +221,40 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// <summary>What each station is playing right now, as it last announced.</summary>
     public NowPlaying NowPlaying { get; } = new();
 
+    private NowPlayingListener? _listener;
+
+    private NowPlayingListener Listener =>
+        _listener ??= new NowPlayingListener(Context.HttpClient, NowPlaying, Context.Logger);
+
+    /// <summary>
+    /// What the station is announcing, and a renewed lease on hearing it.
+    ///
+    /// The player polls this while the station plays, so the poll itself is what keeps
+    /// the metadata connection open. The first answer after pressing play is usually
+    /// empty: the station has not announced anything on the new connection yet.
+    /// </summary>
+    public async Task<string?> NowPlayingForAsync(string stationId, CancellationToken ct)
+    {
+        try
+        {
+            if (await ResolveStationAsync(stationId, ct) is { } station)
+            {
+                Listener.Touch(station);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // A poll that cannot resolve the station still answers with whatever is known.
+            _context?.Logger.LogDebug(exception, "Internet Radio could not resolve {Station} for now playing.", stationId);
+        }
+
+        return NowPlaying.Get(stationId);
+    }
+
     /// <summary>
     /// Every station this process has already shown, by id.
     ///
@@ -822,6 +856,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         }
 
         _disposed = true;
+        _listener?.Dispose();
         _lifecycleCts.Cancel();
         _lifecycleCts.Dispose();
     }

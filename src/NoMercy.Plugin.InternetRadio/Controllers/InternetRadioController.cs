@@ -89,16 +89,18 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     /// Null title rather than a 404 when nothing has been announced: a station that
     /// sends no metadata, and a station whose next block has not arrived yet, are the
     /// same thing to a listener, and neither is an error to draw.
+    ///
+    /// Each poll also renews the lease on the station's metadata connection; see NowPlayingListener.
     /// </summary>
     [HttpGet(NowPlayingRouteTemplate)]
-    public IActionResult NowPlaying(string stationId)
+    public async Task<IActionResult> NowPlaying(string stationId, CancellationToken ct)
     {
         if (pluginManager.GetPluginInstance(PluginId) is not InternetRadioPlugin plugin)
         {
             return NotFound();
         }
 
-        string? announced = plugin.NowPlaying.Get(stationId);
+        string? announced = await plugin.NowPlayingForAsync(stationId, ct);
         StreamTitle? parsed = announced is null ? null : StreamTitle.Parse(announced);
 
         // `title` stays the whole announced line so a client written against the

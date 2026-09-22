@@ -300,6 +300,19 @@ public sealed class PluginLifecycleTests : IDisposable
     }
 
     [Fact]
+    public async Task PollingNowPlayingOpensTheStationsMetadataConnection()
+    {
+        using InternetRadioPlugin plugin = Started();
+
+        await plugin.NowPlayingForAsync("u1", CancellationToken.None);
+
+        await Task.Delay(200);
+        _handler.Requests.Should().Contain(request =>
+            request.RequestUri!.ToString() == "https://example.com/a"
+            && request.Headers.Contains("Icy-MetaData"));
+    }
+
+    [Fact]
     public void DisposeIsIdempotent()
     {
         InternetRadioPlugin plugin = Started();
