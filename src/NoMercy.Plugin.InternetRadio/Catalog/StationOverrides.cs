@@ -5,7 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 // The user's own station list, which replaces the fetched catalogue outright.
 //

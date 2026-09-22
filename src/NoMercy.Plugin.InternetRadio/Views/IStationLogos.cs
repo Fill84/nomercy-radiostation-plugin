@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
-namespace NoMercy.Plugin.InternetRadio;
+using NoMercy.Plugin.InternetRadio.Catalog;
+
+namespace NoMercy.Plugin.InternetRadio.Views;
 
 /// <summary>
 /// A station's logo, as a view may draw it: a data: URI, or null for the placeholder.

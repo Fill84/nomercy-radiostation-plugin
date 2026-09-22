@@ -3,7 +3,7 @@
 
 using Microsoft.Extensions.Logging;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 // Decides what the views actually see.
 //

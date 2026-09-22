@@ -2,8 +2,10 @@
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
 using NoMercy.PluginSdk.Abstractions;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.State;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Views;
 
 // One genre, every station in it, each ready to play.
 public static class GenreView

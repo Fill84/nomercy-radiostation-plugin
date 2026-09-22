@@ -4,7 +4,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 // The only thing in this plugin that reaches the network.
 //

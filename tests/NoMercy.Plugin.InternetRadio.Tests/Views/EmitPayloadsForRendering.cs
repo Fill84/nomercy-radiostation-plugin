@@ -6,6 +6,9 @@ using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using NoMercy.PluginSdk.Abstractions;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.State;
+using NoMercy.Plugin.InternetRadio.Views;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;
 

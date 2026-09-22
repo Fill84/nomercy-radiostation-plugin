@@ -3,7 +3,7 @@
 
 using System.Globalization;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 /// <summary>
 /// What a listener is looking for, on the axes radio-browser indexes.

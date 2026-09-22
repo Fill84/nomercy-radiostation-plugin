@@ -5,6 +5,7 @@ using System.Text.Json;
 using FluentAssertions;
 using NoMercy.PluginSdk.Abstractions;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.Views;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;
 

@@ -6,6 +6,10 @@ using Microsoft.Extensions.Logging;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 using NoMercy.PluginSdk.Abstractions;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.Playback;
+using NoMercy.Plugin.InternetRadio.State;
+using NoMercy.Plugin.InternetRadio.Views;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;
 

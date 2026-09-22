@@ -3,6 +3,8 @@
 
 using FluentAssertions;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.State;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.State;
 

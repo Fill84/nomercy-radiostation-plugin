@@ -3,7 +3,7 @@
 
 using System.Collections.Concurrent;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 /// <summary>
 /// The track each station is currently playing, as the station last announced it.

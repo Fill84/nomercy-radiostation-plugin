@@ -4,8 +4,10 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using NoMercy.PluginSdk.Abstractions;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.Views;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Playback;
 
 /// <summary>
 /// Streams through the host's media proxy.

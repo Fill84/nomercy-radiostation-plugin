@@ -4,7 +4,7 @@
 using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 /// <summary>
 /// Hears what a station is playing, for as long as someone is listening.

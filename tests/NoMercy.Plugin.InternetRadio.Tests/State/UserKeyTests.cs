@@ -4,6 +4,7 @@
 using FluentAssertions;
 using NoMercy.PluginSdk.Abstractions;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.State;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.State;
 

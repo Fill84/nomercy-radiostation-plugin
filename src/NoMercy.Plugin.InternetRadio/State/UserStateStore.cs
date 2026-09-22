@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
 using System.Text.Json;
+using NoMercy.Plugin.InternetRadio.Catalog;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.State;
 
 // Per-user favourites and the last search term, in one file beside the catalogue cache.
 //

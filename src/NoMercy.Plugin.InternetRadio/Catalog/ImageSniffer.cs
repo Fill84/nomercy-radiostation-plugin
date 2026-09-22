@@ -3,7 +3,7 @@
 
 using System.Text;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 /// <summary>
 /// What kind of image a response is, judged by its bytes.

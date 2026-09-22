@@ -5,6 +5,8 @@ using System.Net;
 using FluentAssertions;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.State;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.State;
 

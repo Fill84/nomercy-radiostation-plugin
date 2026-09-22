@@ -6,6 +6,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Logging;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.Catalog;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
 

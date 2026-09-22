@@ -4,8 +4,9 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
+using NoMercy.Plugin.InternetRadio.Views;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 /// <summary>
 /// Station logos as data: URIs, kept on disk so a restart does not fetch them all again.

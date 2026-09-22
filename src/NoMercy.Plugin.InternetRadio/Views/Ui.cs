@@ -3,7 +3,7 @@
 
 using NoMercy.PluginSdk.Abstractions;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Views;
 
 // The components the dashboard actually renders, named the way it names them.
 //

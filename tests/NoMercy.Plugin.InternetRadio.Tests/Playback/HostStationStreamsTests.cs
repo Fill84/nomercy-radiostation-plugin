@@ -5,6 +5,9 @@ using FluentAssertions;
 using NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 using NoMercy.PluginSdk.Abstractions;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.Playback;
+using NoMercy.Plugin.InternetRadio.Views;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Playback;
 

@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
 using System.Text.Json.Serialization;
+using NoMercy.Plugin.InternetRadio.Catalog;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.State;
 
 // What the plugin remembers about one viewer.
 //

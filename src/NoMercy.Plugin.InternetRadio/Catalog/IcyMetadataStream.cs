@@ -3,7 +3,7 @@
 
 using System.Text;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 /// <summary>
 /// Reads an Icecast/SHOUTcast body that carries interleaved metadata and hands the

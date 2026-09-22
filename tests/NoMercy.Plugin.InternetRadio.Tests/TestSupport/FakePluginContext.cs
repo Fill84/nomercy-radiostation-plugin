@@ -3,6 +3,7 @@
 
 using Microsoft.Extensions.Logging;
 using NoMercy.PluginSdk.Abstractions;
+using NoMercy.Plugin.InternetRadio.Playback;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 

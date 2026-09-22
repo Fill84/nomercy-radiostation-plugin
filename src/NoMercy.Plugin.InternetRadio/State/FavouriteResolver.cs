@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
-namespace NoMercy.Plugin.InternetRadio;
+using NoMercy.Plugin.InternetRadio.Catalog;
+
+namespace NoMercy.Plugin.InternetRadio.State;
 
 // Turns a station id into the record a favourite stores.
 //

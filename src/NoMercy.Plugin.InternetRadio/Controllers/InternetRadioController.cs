@@ -5,8 +5,11 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Mvc;
 using NoMercy.PluginSdk.Abstractions;
 using NoMercy.PluginSdk.Mvc;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.State;
+using NoMercy.Plugin.InternetRadio.Views;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Controllers;
 
 // The other half of an agreement with the views. Every route template here is a constant
 // the view reads too, so the method string a button posts to and the route that answers

@@ -2,8 +2,11 @@
 // Copyright (c) 2026 Phillippe Pelzer - https://github.com/Fill84
 
 using NoMercy.PluginSdk.Abstractions;
+using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.Controllers;
+using NoMercy.Plugin.InternetRadio.State;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Views;
 
 // A search box, a button, and the results underneath. What it should have been all along.
 //

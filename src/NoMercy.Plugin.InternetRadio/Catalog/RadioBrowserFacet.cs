@@ -3,7 +3,7 @@
 
 using System.Text.Json.Serialization;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 /// <summary>
 /// One entry in a list radio-browser publishes - a tag, a country, a language.

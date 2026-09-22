@@ -3,7 +3,7 @@
 
 using System.Text;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Views;
 
 // What a search term is allowed to be.
 //

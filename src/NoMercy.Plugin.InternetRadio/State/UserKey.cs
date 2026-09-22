@@ -3,7 +3,7 @@
 
 using NoMercy.PluginSdk.Abstractions;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.State;
 
 /// <summary>
 /// The key a viewer's favourites and last search are stored under.

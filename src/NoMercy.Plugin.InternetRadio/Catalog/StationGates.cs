@@ -3,7 +3,7 @@
 
 using System.Text;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 // What a station has to be before it is allowed into the catalogue.
 //

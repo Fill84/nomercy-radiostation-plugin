@@ -3,7 +3,7 @@
 
 using System.Text.Json.Serialization;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 // The wire shape of one radio-browser station record. Only the fields this plugin
 // reads are declared; the API returns roughly forty and the rest are ignored.

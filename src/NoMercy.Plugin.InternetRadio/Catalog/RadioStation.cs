@@ -3,7 +3,7 @@
 
 using System.Text.Json.Serialization;
 
-namespace NoMercy.Plugin.InternetRadio;
+namespace NoMercy.Plugin.InternetRadio.Catalog;
 
 // One station as this plugin uses it, after the wire record has been through the
 // gates. Separate from RadioBrowserStation so the views never see a field they

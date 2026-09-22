@@ -4,6 +4,7 @@
 using System.Text;
 using FluentAssertions;
 using Xunit;
+using NoMercy.Plugin.InternetRadio.Catalog;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Catalog;
 
