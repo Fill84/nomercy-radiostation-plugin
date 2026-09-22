@@ -223,8 +223,13 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private NowPlayingListener? _listener;
 
+    // LazyInitializer, not `??=`: two now-playing polls can race here, and `??=` on a
+    // plain field can publish two listeners, one of which Dispose never reaches - its
+    // connections would then outlive plugin unload. LazyInitializer guarantees only
+    // the one it returns is ever the field's value.
     private NowPlayingListener Listener =>
-        _listener ??= new NowPlayingListener(Context.HttpClient, NowPlaying, Context.Logger);
+        LazyInitializer.EnsureInitialized(
+            ref _listener, () => new NowPlayingListener(Context.HttpClient, NowPlaying, Context.Logger));
 
     /// <summary>
     /// What the station is announcing, and a renewed lease on hearing it.

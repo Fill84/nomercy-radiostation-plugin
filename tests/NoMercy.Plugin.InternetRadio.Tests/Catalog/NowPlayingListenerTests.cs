@@ -122,6 +122,27 @@ public sealed class NowPlayingListenerTests : IDisposable
         _handler.Requests.Should().HaveCount(1);
     }
 
+    // A 5xx is the station's own trouble right now, not a verdict that it never
+    // announces titles - unlike a plain "no icy-metaint" or a 4xx, it must not be
+    // parked in quiet-for-an-hour.
+    [Fact]
+    public async Task ATransientFailureIsRetriedRatherThanLeftQuiet()
+    {
+        int attempt = 0;
+        _handler.RespondPerRequest(_ => ++attempt == 1
+            ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            : Announcing("x"));
+        NowPlayingListener listener = Listener();
+
+        listener.Touch(Station("a"));
+        await Eventually(() => listener.OpenCount == 0);
+
+        listener.Touch(Station("a"));
+        await Eventually(() => _titles.Get("a") is not null);
+
+        _handler.Requests.Should().HaveCount(2);
+    }
+
     [Fact]
     public async Task TheRequestAsksForMetadata()
     {

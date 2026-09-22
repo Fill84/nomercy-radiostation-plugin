@@ -61,6 +61,20 @@ public sealed class PluginLifecycleTests : IDisposable
     private static IEnumerable<string> AllText(PluginView view) =>
         AllNodes(view).SelectMany(node => node.Props.Values).OfType<string>();
 
+    // The listener's own connection is opened by a fire-and-forget background task,
+    // so a fixed delay before asserting is a guess about how fast that task runs
+    // under whatever load the suite is under. Polling up to five seconds bounds the
+    // wait without betting on a specific duration.
+    private static async Task Eventually(Func<bool> condition)
+    {
+        for (int attempt = 0; attempt < 100 && !condition(); attempt++)
+        {
+            await Task.Delay(50);
+        }
+
+        condition().Should().BeTrue();
+    }
+
     [Fact]
     public async Task ServesTheBrowsePageAtTheRoot()
     {
@@ -306,10 +320,9 @@ public sealed class PluginLifecycleTests : IDisposable
 
         await plugin.NowPlayingForAsync("u1", CancellationToken.None);
 
-        await Task.Delay(200);
-        _handler.Requests.Should().Contain(request =>
+        await Eventually(() => _handler.Requests.Any(request =>
             request.RequestUri!.ToString() == "https://example.com/a"
-            && request.Headers.Contains("Icy-MetaData"));
+            && request.Headers.Contains("Icy-MetaData")));
     }
 
     [Fact]

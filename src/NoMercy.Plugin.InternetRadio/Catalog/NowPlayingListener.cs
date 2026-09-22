@@ -40,7 +40,12 @@ public sealed class NowPlayingListener(
     private readonly ConcurrentDictionary<string, Connection> _open = new();
     private readonly ConcurrentDictionary<string, DateTimeOffset> _quiet = new();
     private readonly Lock _opening = new();
-    private bool _disposed;
+
+    // Read outside the lock too, as a fast path - see the authoritative re-check
+    // inside the lock in Touch, and Dispose taking the same lock around its own
+    // read-and-write, for why an unsynchronized read here can never let a
+    // connection start after Dispose has already run.
+    private volatile bool _disposed;
 
     public int OpenCount => _open.Count;
 
@@ -65,6 +70,15 @@ public sealed class NowPlayingListener(
 
         lock (_opening)
         {
+            // The authoritative check: Dispose sets this and enumerates _open under
+            // the same lock, so a Touch that reaches here after Dispose has run
+            // cannot publish a connection Dispose already walked past and will
+            // never cancel.
+            if (_disposed)
+            {
+                return;
+            }
+
             if (_open.TryGetValue(station.Id, out open))
             {
                 open.Renew();
@@ -97,6 +111,14 @@ public sealed class NowPlayingListener(
 
             using HttpResponseMessage response = await http.SendAsync(
                 request, HttpCompletionOption.ResponseHeadersRead, connection.Token);
+
+            if (!response.IsSuccessStatusCode && IsTransientFailure(response))
+            {
+                // The station's own trouble right now, not a verdict that it never
+                // announces titles - retried on the very next poll rather than parked
+                // in quiet-for-an-hour alongside a station that plainly sends none.
+                return;
+            }
 
             if (!response.IsSuccessStatusCode || MetaInterval(response) is not { } interval)
             {
@@ -135,13 +157,24 @@ public sealed class NowPlayingListener(
             ? interval
             : null;
 
+    /// <summary>A 5xx: the station's own trouble, worth trying again on the very next poll.</summary>
+    private static bool IsTransientFailure(HttpResponseMessage response) =>
+        (int)response.StatusCode is >= 500 and < 600;
+
     public void Dispose()
     {
-        _disposed = true;
-
-        foreach (Connection connection in _open.Values)
+        // Same lock Touch opens a connection under, so this either runs before a
+        // Touch that is about to publish one (and then cancels it, since it is
+        // already in _open by the time this enumerates) or after it (and _disposed
+        // is what stops that Touch from publishing at all).
+        lock (_opening)
         {
-            connection.Cancel();
+            _disposed = true;
+
+            foreach (Connection connection in _open.Values)
+            {
+                connection.Cancel();
+            }
         }
     }
 
