@@ -169,11 +169,12 @@ Add `"media.proxy"` to `capabilities.hooks`. Keep `network.hosts: ["**", "*.api.
 the host's proxy client enforces the same allowlist, and the plugin's own requests
 (catalogue, logos, metadata) still need it.
 
-On `Initialize`, and again whenever minting is refused for lack of it, the plugin checks
-`Grants.HasAsync(PluginGrantKind.ForCapability(PluginCapabilityNames.MediaProxy), PluginGrant.Everything)`.
-When the grant is missing, it calls `RequestAsync` with the same kind and value and a
-reason written for the owner. `RequestAsync` records the request and returns at once;
-asking twice does not queue a second prompt.
+`Initialize` stays free of I/O, as its own comment requires. The first time minting is
+refused with `PLUGIN_CAPABILITY_SCOPE_REFUSED`, the plugin calls
+`Grants.RequestAsync(PluginGrantKind.ForCapability(PluginCapabilityNames.MediaProxy), PluginGrant.Everything, reason)`
+with a reason written for the owner. It does this once per process. `RequestAsync`
+records the request and returns at once, and asking twice would not queue a second
+prompt anyway.
 
 ### Minting without making views impure
 
@@ -205,7 +206,9 @@ In that case there is no media proxy on the host, no grant yet, or a refusal:
 - The view is still drawn: browsing, search and favourites keep working.
 - Play and enqueue buttons are left out.
 - One notice explains that the server owner still has to approve streaming for Internet
-  Radio. English and Dutch strings sit in `lang/`.
+  Radio. It is English literal text, like every other string a view draws. The web client
+  does not translate the plugin's component tags, and translating views on the server
+  from `Caller.Locale` is outside this migration.
 - The plugin never falls back to the station's own URL. The browser's CSP blocks
   third-party media, which is why the relay existed in the first place.
 - `PluginRefusedException` is caught at this one boundary and logged at most once per
