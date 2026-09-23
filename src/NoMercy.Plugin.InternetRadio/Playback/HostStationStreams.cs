@@ -21,15 +21,10 @@ namespace NoMercy.Plugin.InternetRadio.Playback;
 /// </summary>
 public sealed class HostStationStreams(
     Func<PluginProxyRequest, CancellationToken, Task<Uri>> mint,
-    IPluginGrants grants,
     ILogger logger
 ) : IStationStreams
 {
     private static readonly TimeSpan LogEvery = TimeSpan.FromHours(1);
-
-    private const string GrantReason =
-        "Internet Radio plays stations from thousands of different servers. "
-        + "Allow it to stream them through this server so they can play in the app.";
 
     /// <summary>
     /// A plugin-local code, not one <see cref="PluginRefusalCodes"/> defines: the host
@@ -41,14 +36,12 @@ public sealed class HostStationStreams(
     /// </summary>
     public const string StreamUnusable = "INTERNET_RADIO_STREAM_UNUSABLE";
 
-    private int _askedForTheGrant;
     private readonly ConcurrentDictionary<string, DateTimeOffset> _lastLogged = new();
 
     /// <summary>For the plugin: minting through the context it was handed.</summary>
     public static HostStationStreams For(IPluginContext context) =>
         new(
             async (request, ct) => (await context.Media.Proxy.MintAsync(request, ct)).Url,
-            context.Grants,
             context.Logger);
 
     public async Task<StationStream> ForAsync(RadioStation station, CancellationToken ct)
@@ -82,11 +75,6 @@ public sealed class HostStationStreams(
 
             Log(refused.Refusal);
 
-            if (code == PluginRefusalCodes.CapabilityScopeRefused)
-            {
-                await AskForTheGrantOnceAsync(ct);
-            }
-
             return StationStream.Refused(code);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -100,34 +88,6 @@ public sealed class HostStationStreams(
             // take the whole view down with it.
             LogUnusable(station.Id, exception);
             return StationStream.Refused(StreamUnusable);
-        }
-    }
-
-    // Once per process. The host records a request and never queues a second prompt for
-    // the same thing anyway; this only saves asking it on every page.
-    private async Task AskForTheGrantOnceAsync(CancellationToken ct)
-    {
-        if (Interlocked.Exchange(ref _askedForTheGrant, 1) == 1)
-        {
-            return;
-        }
-
-        try
-        {
-            await grants.RequestAsync(
-                PluginGrantKind.ForCapability(PluginCapabilityNames.MediaProxy),
-                PluginGrant.Everything,
-                GrantReason,
-                ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            // Asking is a courtesy. Failing to ask must not cost the viewer the page.
-            logger.LogWarning(exception, "Internet Radio could not ask the owner to allow streaming.");
         }
     }
 

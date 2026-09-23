@@ -16,22 +16,6 @@ public class HostStationStreamsTests
     private static readonly RadioStation Station =
         new() { Id = "a", Name = "Alpha FM", StreamUrl = "https://example.com/live" };
 
-    private sealed class RecordingGrants : IPluginGrants
-    {
-        public List<(string Kind, string Value)> Requested { get; } = [];
-
-        public Task<bool> HasAsync(string kind, string value, CancellationToken ct = default) => Task.FromResult(false);
-        public Task<IReadOnlyList<string>> GetAsync(string kind, CancellationToken ct = default) =>
-            Task.FromResult<IReadOnlyList<string>>([]);
-
-        public Task RequestAsync(string kind, string value, string reason, CancellationToken ct = default)
-        {
-            reason.Should().NotBeNullOrWhiteSpace();
-            Requested.Add((kind, value));
-            return Task.CompletedTask;
-        }
-    }
-
     private static PluginRefusedException Refusal(string code) =>
         new(new PluginRefusal(code, "Internet Radio", "what", "why", "fix", PluginRefusalSeverity.Blocked));
 
@@ -41,7 +25,6 @@ public class HostStationStreamsTests
         PluginProxyRequest? asked = null;
         HostStationStreams streams = new(
             (request, _) => { asked = request; return Task.FromResult(new Uri("/api/v1/plugins/x/media/t", UriKind.Relative)); },
-            new RecordingGrants(),
             new RecordingLogger());
 
         StationStream stream = await streams.ForAsync(Station, CancellationToken.None);
@@ -53,55 +36,30 @@ public class HostStationStreamsTests
         asked.Timeout.Should().BeNull();
     }
 
+    // Asking belongs in StationGrants, before anything is refused. A refusal here is
+    // reported and drawn; it does not start a conversation with the owner from inside a
+    // page render.
     [Fact]
-    public async Task WithoutTheGrantItAsksTheOwnerOnceForEveryHost()
+    public async Task ARefusalIsReportedAndAsksForNothing()
     {
-        RecordingGrants grants = new();
         HostStationStreams streams = new(
-            (_, _) => throw Refusal(PluginRefusalCodes.CapabilityScopeRefused), grants, new RecordingLogger());
+            (_, _) => throw Refusal(PluginRefusalCodes.CapabilityScopeRefused), new RecordingLogger());
 
-        StationStream first = await streams.ForAsync(Station, CancellationToken.None);
-        StationStream second = await streams.ForAsync(Station, CancellationToken.None);
+        StationStream stream = await streams.ForAsync(Station, CancellationToken.None);
 
-        first.Should().Be(StationStream.Refused(PluginRefusalCodes.CapabilityScopeRefused));
-        second.IsPlayable.Should().BeFalse();
-        grants.Requested.Should().Equal(
-            (PluginGrantKind.ForCapability(PluginCapabilityNames.MediaProxy), PluginGrant.Everything));
+        stream.Should().Be(StationStream.Refused(PluginRefusalCodes.CapabilityScopeRefused));
     }
 
     // A host without the media facade refuses too; that is not a grant the owner can give.
     [Fact]
     public async Task AnyOtherRefusalIsReportedAndAsksForNothing()
     {
-        RecordingGrants grants = new();
         HostStationStreams streams = new(
-            (_, _) => throw Refusal(PluginRefusalCodes.ContractVersionMismatch), grants, new RecordingLogger());
+            (_, _) => throw Refusal(PluginRefusalCodes.ContractVersionMismatch), new RecordingLogger());
 
         StationStream stream = await streams.ForAsync(Station, CancellationToken.None);
 
         stream.Should().Be(StationStream.Refused(PluginRefusalCodes.ContractVersionMismatch));
-        grants.Requested.Should().BeEmpty();
-    }
-
-    // Asking must never cost the viewer the page.
-    [Fact]
-    public async Task AFailedGrantRequestStillAnswersRefused()
-    {
-        HostStationStreams streams = new(
-            (_, _) => throw Refusal(PluginRefusalCodes.CapabilityScopeRefused),
-            new ThrowingGrants(),
-            new RecordingLogger());
-
-        StationStream stream = await streams.ForAsync(Station, CancellationToken.None);
-
-        stream.IsPlayable.Should().BeFalse();
-    }
-
-    private sealed class ThrowingGrants : IPluginGrants
-    {
-        public Task<bool> HasAsync(string kind, string value, CancellationToken ct = default) => throw new InvalidOperationException();
-        public Task<IReadOnlyList<string>> GetAsync(string kind, CancellationToken ct = default) => throw new InvalidOperationException();
-        public Task RequestAsync(string kind, string value, string reason, CancellationToken ct = default) => throw new InvalidOperationException();
     }
 
     // stations.json is deliberately ungated (StationOverrides), so a malformed or
@@ -113,7 +71,6 @@ public class HostStationStreamsTests
         bool minted = false;
         HostStationStreams streams = new(
             (_, _) => { minted = true; return Task.FromResult(new Uri("/x", UriKind.Relative)); },
-            new RecordingGrants(),
             new RecordingLogger());
 
         StationStream stream = await streams.ForAsync(malformed, CancellationToken.None);
@@ -130,7 +87,6 @@ public class HostStationStreamsTests
     {
         HostStationStreams streams = new(
             (_, _) => throw new InvalidOperationException("boom"),
-            new RecordingGrants(),
             new RecordingLogger());
 
         StationStream stream = await streams.ForAsync(Station, CancellationToken.None);
@@ -146,7 +102,6 @@ public class HostStationStreamsTests
         cts.Cancel();
         HostStationStreams streams = new(
             (_, ct) => throw new OperationCanceledException(ct),
-            new RecordingGrants(),
             new RecordingLogger());
 
         await streams.Invoking(candidate => candidate.ForAsync(Station, cts.Token))

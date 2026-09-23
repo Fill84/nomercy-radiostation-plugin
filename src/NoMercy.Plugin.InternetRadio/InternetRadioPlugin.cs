@@ -5,6 +5,7 @@ using System.Globalization;
 using Microsoft.Extensions.Logging;
 using NoMercy.PluginSdk.Abstractions;
 using NoMercy.Plugin.InternetRadio.Catalog;
+using NoMercy.Plugin.InternetRadio.Hosting;
 using NoMercy.Plugin.InternetRadio.Playback;
 using NoMercy.Plugin.InternetRadio.State;
 using NoMercy.Plugin.InternetRadio.Views;
@@ -96,6 +97,10 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     private LogoCache Logos => _logos ??= new LogoCache(Context.DataFolderPath);
 
+    private StationGrants? _grants;
+
+    private StationGrants Grants => _grants ??= new StationGrants(Context.Grants, Context.Logger);
+
     private IStationStreams? _streams;
 
     /// <summary>
@@ -104,9 +109,8 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
     /// </summary>
     // Plain `??=`, unlike Listener below: two station pages racing here can still
     // publish two HostStationStreams, but neither holds a connection or any other
-    // resource that outlives the call that made it, and the worst a race costs is
-    // asking the owner for the streaming grant twice - which the host itself
-    // deduplicates into the one prompt it already shows.
+    // resource that outlives the call that made it, so the worst a race costs is one
+    // redundant instance that is never used again.
     internal IStationStreams Streams
     {
         get => _streams ??= HostStationStreams.For(Context);
@@ -599,6 +603,10 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         IPluginContext context = Context;
         using CancellationTokenSource linked =
             CancellationTokenSource.CreateLinkedTokenSource(ct, _lifecycleCts.Token);
+
+        // Before the catalogue, so the owner is asked once, early, and not by a page that
+        // was already refused.
+        await Grants.EnsureAsync(linked.Token);
 
         StationCatalog catalog = await Provider.RefreshAsync(linked.Token);
 
