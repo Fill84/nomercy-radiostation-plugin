@@ -131,45 +131,29 @@ public class TranslationTests
     {
         IReadOnlySet<string> drawn = TranslationKeys.Drawn();
 
-        LoadBundle("en").Keys.Where(key => !drawn.Contains(key))
-            .Should().BeEmpty("en.json should carry no key nothing draws");
+        foreach (string locale in new[] { "en", "nl" })
+        {
+            LoadBundle(locale).Keys.Where(key => !drawn.Contains(key))
+                .Should().BeEmpty($"{locale}.json should carry no key nothing draws");
+        }
     }
 }
 
 /// <summary>
-/// Every translation key this plugin actually draws, established by reading the client
-/// this plugin ships for (nomercy-app-web, <c>src/components/nm/NMRender.vue</c>) rather
-/// than by assuming a prop resolves because it holds a string:
-/// <para>
-/// NMRender resolves exactly one prop through a plugin's own bundle - a node's own `text`,
-/// and only when that node's component is <c>NMText</c> (<see cref="PluginComponentType.Text"/>).
-/// That happens for <see cref="PluginViews.Text"/>'s "title"/"subtitle" variant (a text
-/// leaf nested under an NMContentHeader) and for the title half of
-/// <see cref="PluginViews.EmptyState"/>, <see cref="PluginViews.Card"/> and
-/// <see cref="PluginViews.Detail"/> (the same leaf, via their shared Face helper).
-/// </para>
-/// <para>
-/// Nothing else is resolved, no matter how it reads. A "caption"/"muted" Text and an
-/// EmptyState's own message both land on an NMHelper's `helperText`; NMBadge's `text` and
-/// NMButton's `ariaLabel` are bound to the design-system component raw; PluginForm.vue
-/// binds `submitLabel` and every field's `label` straight into its template with no
-/// pluginText call in it at all. Worse, <see cref="PluginViews.Button"/> (and the
-/// IconButton wrapper this plugin uses for the icon slot) writes its label into `ariaLabel`
-/// as well as into a resolved child leaf - so a button's visible text technically walks
-/// through a resolved node, but keying it plants the same key, unresolved, in the
-/// accessible name. This plugin leaves every button and icon-button label in English for
-/// exactly that reason; none of their leaves carry a key, so this collector never needs to
-/// special-case them.
-/// </para>
+/// Every translation key this plugin actually draws. NMRender.vue resolves exactly one
+/// prop through a plugin's own bundle - a node's own `text`, and only when that node's
+/// component is <c>NMText</c> (<see cref="PluginComponentType.Text"/>) - so only that prop
+/// is collected here, plus the manifest mount and route table labels every client reads
+/// the same way before a menu entry or a page title ever draws.
 /// </summary>
 internal static class TranslationKeys
 {
-    // A key looks like "stations.title": lower-case dot-joined segments, no spaces, no
-    // capitals. A string still in English fails on its first space or its first capital
-    // letter, which is what lets this walk a tree where some strings are already keys and
-    // others are still literals waiting for one.
+    // A key looks like "stations.title", or a bare "back": lower-case, no spaces, no
+    // capitals, the dot optional. A string still in English fails on its first space or
+    // its first capital letter, which is what lets this walk a tree where some strings
+    // are already keys and others are still literals waiting for one.
     private static readonly Regex KeyShape =
-        new(@"\A[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+\z", RegexOptions.Compiled);
+        new(@"\A[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*\z", RegexOptions.Compiled);
 
     public static IReadOnlySet<string> Drawn()
     {

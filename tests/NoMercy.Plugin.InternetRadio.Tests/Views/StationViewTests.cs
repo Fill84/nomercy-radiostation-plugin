@@ -171,7 +171,7 @@ public class StationViewTests
 
         PluginComponent table = PluginNodes.Table(view);
         IEnumerable<string> values = PluginNodes.Rows(table)
-            .Select(row => PluginNodes.Value(table, row, "Value"));
+            .Select(row => PluginNodes.Value(table, row, "value"));
 
         values.Should().Contain("Ambient").And.Contain("NL").And.Contain("https://example.com/a");
     }
@@ -239,8 +239,8 @@ public class StationViewTests
         IReadOnlyList<PluginComponent> rows = PluginNodes.Rows(facts);
 
         rows.Should().HaveCount(2);
-        rows.Select(row => PluginNodes.Value(facts, row, "Field")).Should().Equal("Stream", "Source");
-        rows.Select(row => PluginNodes.Value(facts, row, "Value")).Should()
+        rows.Select(row => PluginNodes.Value(facts, row, "field")).Should().Equal("Stream", "Source");
+        rows.Select(row => PluginNodes.Value(facts, row, "value")).Should()
             .OnlyContain(value => !string.IsNullOrWhiteSpace(value));
     }
 

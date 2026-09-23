@@ -40,13 +40,9 @@ public static class SearchView
     {
         List<PluginComponent> children =
         [
-            // Left English: a button's label also becomes an unresolved `ariaLabel`
-            // prop, so keying it would leave the raw key in the accessible name.
-            // Every button and icon-button label in this plugin stays English for
-            // the same reason - see EmptyCatalog.Build.
             IconButton.Build(
                 "search-back",
-                "Back",
+                "back",
                 PluginActionIntent.Navigate(RadioRoutes.Browse),
                 icon: "arrowLeft"),
 
@@ -209,13 +205,9 @@ public static class SearchView
 
         yield return StationCards.Grid("search-grid", results, "search", logos);
 
-        // Left English: a button's label also becomes an unresolved `ariaLabel`
-        // prop, so keying it would leave the raw key in the accessible name. Every
-        // button and icon-button label in this plugin stays English for the same
-        // reason - see EmptyCatalog.Build.
         yield return PluginViews.Button(
             "search-clear",
-            "Clear search",
+            "search.clear",
             PluginActionIntent.Navigate(RadioRoutes.SearchRoot),
             variant: "secondary");
     }

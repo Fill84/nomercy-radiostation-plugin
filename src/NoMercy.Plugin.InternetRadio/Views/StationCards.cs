@@ -24,10 +24,10 @@ public static class StationCards
     public const int PopularCount = 18;
 
     /// <summary>Shown on the toggle when the station is not a favourite yet.</summary>
-    public const string AddFavouriteLabel = "Add to favourites";
+    public const string AddFavouriteLabel = "station.favourite";
 
     /// <summary>Shown on the toggle when it is.</summary>
-    public const string RemoveFavouriteLabel = "Remove from favourites";
+    public const string RemoveFavouriteLabel = "station.unfavourite";
 
     /// <summary>Stations in the app's own grid.</summary>
     public static PluginComponent Grid(

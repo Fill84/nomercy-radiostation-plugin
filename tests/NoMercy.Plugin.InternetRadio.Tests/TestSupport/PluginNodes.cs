@@ -33,32 +33,6 @@ internal static class PluginNodes
         (view.Components ?? []).SelectMany(Flatten);
 
     /// <summary>
-    /// Every word in the view, in order — from the text leaves and from the props of the
-    /// components that carry their own words.
-    /// </summary>
-    public static IEnumerable<string> Words(PluginView view) =>
-        All(view).SelectMany(Spoken).Where(word => word.Length > 0);
-
-    private static IEnumerable<string> Spoken(PluginComponent node)
-    {
-        foreach (string key in Speaks)
-        {
-            if (node.Props.TryGetValue(key, out object? value) && value?.ToString() is { Length: > 0 } word)
-            {
-                yield return word;
-            }
-        }
-    }
-
-    // The prop each component says its words under, now that PluginViews builds every
-    // node: a plain text leaf carries `text`, a caption or a card/detail/empty-state's
-    // secondary line is an NMHelper carrying `helperText`, and a button's accessible
-    // name is its own `ariaLabel` (its visible label is a Text child, already covered
-    // by `text`). Column labels live inside PluginTableColumn objects, never as a
-    // string prop directly, so a table's own labels are not read from here.
-    private static readonly string[] Speaks = ["text", "helperText", "ariaLabel"];
-
-    /// <summary>
     /// The single table on a screen, found the way an accessibility tree finds one:
     /// PluginViews.Table is the only builder that gives its own node the ARIA role
     /// "table". Container, Card, Detail and Table all draw as the same "NMCard" tag
@@ -93,18 +67,28 @@ internal static class PluginNodes
         [.. table.Items.Skip(1).Where(row => Role(row) == "row")];
 
     /// <summary>
-    /// What one row says under one column, found by the label the viewer reads.
-    ///
-    /// PluginViews.Table keeps no column key anywhere in the payload once it has built
-    /// a row - a cell is just the next one along - so a column is found by matching
-    /// the header cell at the same position instead.
+    /// What one row says under one column, found by <see cref="PluginTableColumn.Key"/>
+    /// rather than by the header's rendered label - the label is a translation key now,
+    /// not stable text a test can compare against. PluginViews.Table writes that key into
+    /// every cell's own id (a header cell is "{tableId}-head-{column.Key}", a body cell
+    /// "{row.Id}-{column.Key}"), which is what a column is matched on instead.
     /// </summary>
     public static string Value(PluginComponent table, PluginComponent row, string column)
     {
         List<PluginComponent> headerCells = [.. HeaderRow(table).Items];
-        int index = headerCells.FindIndex(cell => CellText(cell) == column);
+        int index = headerCells.FindIndex(cell => HeaderKey(cell) == column);
 
         return index >= 0 && index < row.Items.Count ? CellText(row.Items[index]) : string.Empty;
+    }
+
+    // The column key a header cell was built for - the part of its own id after
+    // PluginViews.Table's "-head-" marker.
+    private static string? HeaderKey(PluginComponent headerCell)
+    {
+        const string marker = "-head-";
+        int at = headerCell.Id.IndexOf(marker, StringComparison.Ordinal);
+
+        return at < 0 ? null : headerCell.Id[(at + marker.Length)..];
     }
 
     // A cell's own text, wherever inside it PluginViews put the leaf that carries one.

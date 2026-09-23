@@ -60,7 +60,19 @@ public static class ViewFixtures
             },
             { "radio-genre", GenreView.Build(catalog, "ambient", UserState.Empty) },
             { "radio-all", AllStationsView.Build(catalog, UserState.Empty) },
+            // Not a favourite: draws the "Add to favourites" side of the toggle.
             { "radio-station", StationView.Build(catalog, "groove", UserState.Empty) },
+            // With a minted stream and already kept: the only state that draws Play,
+            // Add to queue and "Remove from favourites" at all - Build(catalog, id,
+            // state) above always leaves stream null and Favourites empty, which draws
+            // the "cannot play" caption and the "Add to favourites" side instead.
+            {
+                "radio-station-playing",
+                StationView.Build(
+                    catalog.ById("groove")!,
+                    new UserState { Favourites = [Station("groove", "Ambient")] },
+                    stream: StationStream.Playable("https://example.com/groove"))
+            },
             { "radio-settings", SettingsView.Build(catalog, "/data", now, now.AddDays(1), UserState.Empty) },
             { "radio-search-keyboard", SearchView.Build("", [], false, UserState.Empty) },
             {
@@ -70,6 +82,13 @@ public static class ViewFixtures
             },
             { "radio-search-empty", SearchView.Build("nothing at all", [], false, UserState.Empty) },
             { "radio-search-failed", SearchView.Build("anything", [], true, UserState.Empty) },
+            // The three empty states no other fixture above reaches: nothing fetched
+            // yet, a genre slug that does not exist, and a station id that does not
+            // exist. Each draws its own resolved EmptyState title, and a key nothing
+            // in ViewFixtures.All() draws is a key TranslationTests treats as unused.
+            { "radio-stations-empty", BrowseView.Build(StationCatalog.Empty(), UserState.Empty) },
+            { "radio-genre-empty", GenreView.Build(catalog, "no-such-genre", UserState.Empty) },
+            { "radio-station-missing", StationView.Build(catalog, "no-such-station", UserState.Empty) },
         };
     }
 

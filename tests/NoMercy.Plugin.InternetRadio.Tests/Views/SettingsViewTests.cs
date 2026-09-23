@@ -103,8 +103,12 @@ public class SettingsViewTests
         // refresh: this button re-reads what is already cached, and a label saying
         // otherwise is the dishonesty this test exists to prevent. PluginViews.Button
         // carries it as `ariaLabel` and as the text of its own child leaf; ariaLabel is
-        // the one prop guaranteed to be there without walking into Items.
-        button.Props["ariaLabel"].Should().Be("Reload");
+        // the one prop guaranteed to be there without walking into Items. The value is
+        // the translation key now, not the English word - NMButton only ever emits
+        // aria-label when there is no visible label to take the accessible name from,
+        // which this button always has, so the key travels here without ever reaching
+        // a screen reader unresolved.
+        button.Props["ariaLabel"].Should().Be("settings.reload");
         button.Props["ariaLabel"].Should().NotBe("Refresh now");
     }
 
@@ -154,11 +158,11 @@ public class SettingsViewTests
 
         PluginNodes.Rows(table).Should().HaveCount(2);
         PluginNodes.Rows(table).Should().ContainSingle(row =>
-            PluginNodes.Value(table, row, "Genre") == "Ambient"
-            && PluginNodes.Value(table, row, "Stations") == "2");
+            PluginNodes.Value(table, row, "genre") == "Ambient"
+            && PluginNodes.Value(table, row, "stations") == "2");
         PluginNodes.Rows(table).Should().ContainSingle(row =>
-            PluginNodes.Value(table, row, "Genre") == "Rock"
-            && PluginNodes.Value(table, row, "Stations") == "1");
+            PluginNodes.Value(table, row, "genre") == "Rock"
+            && PluginNodes.Value(table, row, "stations") == "1");
     }
 
     // A stale catalogue has to explain itself, or it looks like the plugin simply

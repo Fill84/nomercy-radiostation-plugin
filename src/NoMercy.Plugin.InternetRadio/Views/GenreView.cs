@@ -23,17 +23,9 @@ public static class GenreView
                 PluginViews.Container(
                     "genre-root",
                     BackToBrowse,
-                    // The title WOULD resolve - EmptyState's title is a plain text
-                    // leaf - but it stays English: every ViewFixtures.All() fixture
-                    // asks GenreView for a genre that exists ("ambient"), so this
-                    // branch is never reached by TranslationKeys.Drawn(), and a key
-                    // nothing in the shared fixtures draws is exactly what
-                    // TranslationTests.EveryKeyInTheBundleIsOneAViewDraws exists to
-                    // catch. The message stays literal regardless - it lands on an
-                    // NMHelper's `helperText`, which NMRender never resolves.
                     PluginViews.EmptyState(
                         "genre-empty",
-                        "No stations in this genre",
+                        "genre.empty",
                         "It may have been renamed or emptied since this page was last opened."
                     )
                 )
@@ -56,14 +48,10 @@ public static class GenreView
         );
     }
 
-    // Left English: a button's label also becomes an unresolved `ariaLabel` prop, so
-    // keying it would leave the raw key in the accessible name rather than translating
-    // it. Every button and icon-button label in this plugin stays English for the
-    // same reason - see EmptyCatalog.Build.
     private static PluginComponent BackToBrowse =>
         IconButton.Build(
             "genre-back",
-            "All genres",
+            "genre.back",
             PluginActionIntent.Navigate(RadioRoutes.Browse),
             icon: "arrowLeft"
         );

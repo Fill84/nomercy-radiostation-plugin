@@ -28,8 +28,8 @@ public static class SettingsView
 {
     private static IReadOnlyList<PluginTableColumn> Columns { get; } =
         [
-            new() { Key = "genre", Label = "Genre" },
-            new() { Key = "stations", Label = "Stations", Align = "right" },
+            new() { Key = "genre", Label = "settings.genre" },
+            new() { Key = "stations", Label = "settings.stations", Align = "right" },
         ];
 
     public static PluginView Build(
@@ -57,15 +57,9 @@ public static class SettingsView
             // TTL - always, given the daily job - means RefreshView re-renders the
             // same cache untouched, so this must not read as a button that forces a
             // fetch. "Refresh now" claimed exactly that and did nothing about it.
-            // Left English rather than keyed: a button's label also becomes an
-            // unresolved `ariaLabel` prop (see EmptyCatalog.Build), and
-            // SettingsViewTests.OffersAReloadRatherThanClaimingToRefresh already pins
-            // that accessible name to the literal "Reload" - a key here would both
-            // regress that guarantee and read out as "settings.reload" to a screen
-            // reader in every language.
             IconButton.Build(
                 "settings-refresh",
-                "Reload",
+                "settings.reload",
                 PluginActionIntent.RefreshView(),
                 icon: "portableRadio"
             ),
@@ -92,11 +86,6 @@ public static class SettingsView
         if (!catalog.IsEmpty)
         {
             children.Add(PluginViews.Text("settings-genres-heading", "settings.genres", "subtitle"));
-            // The table's own column labels ("Genre", "Stations") stay English: a
-            // header cell's text does draw as a resolved leaf, but SettingsViewTests
-            // looks a column up by its rendered label (PluginNodes.Value reads a row
-            // by matching the header cell's text), so keying it would also require
-            // rewriting that test - out of scope for this change.
             children.Add(
                 PluginViews.Table(
                     "settings-genres",

@@ -102,14 +102,9 @@ public static class BrowseView
                     PluginActionIntent.Navigate(RadioRoutes.Genre(genre.Section.Slug))
                 )
             ),
-            // Left English: a button's label also becomes an unresolved `ariaLabel`
-            // prop, so keying it would leave the raw key in the accessible name. Every
-            // button and icon-button label in this plugin stays English for that
-            // reason - "stations.all" only became a key where it draws as a plain
-            // title, on AllStationsView's own heading.
             IconButton.Build(
                 "browse-all",
-                "All stations",
+                "stations.all",
                 PluginActionIntent.Navigate(RadioRoutes.AllStations),
                 icon: "gridMasonry"
             ),
