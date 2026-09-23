@@ -6,6 +6,13 @@
 -R NoMercy-Entertainment/nomercy-app-web --state all --search "TrackLinks" / "NMTrackRow" /
 "RouterLink undefined"` returns #23 and #15, neither of which touches this file.
 
+> **Status (2026-09-23):** still open, unaffected by Tasks 1-6, and still reachable through
+> this plugin. Every station this plugin plays announces its now-playing track as an artist
+> string with no artist entity (`Views/StationStream.cs`, `Catalog/NowPlayingListener.cs`) —
+> the exact "plugin-announced artist with no link" shape this note and its trigger both
+> describe. Nothing in this work touches how the client chooses to draw that announcement;
+> whether it reaches `NMTrackRow`/`NMTopResultCard` is entirely the client's call.
+
 ## What happens
 
 `src/views/Music/List/components/TrackLinks.vue` is a second, separate `TrackLinks`

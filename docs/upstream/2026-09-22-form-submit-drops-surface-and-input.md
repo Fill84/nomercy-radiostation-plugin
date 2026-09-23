@@ -5,6 +5,14 @@
 **Raised:** not yet. `gh issue list -R NoMercy-Entertainment/nomercy-app-web --state all
 --search "postView surface" / "form submit route" / "view surface input"` — no results.
 
+> **Status (2026-09-23):** still open, and still latent for this plugin specifically. Tasks
+> 1-6 moved this plugin's whole view layer onto `PluginViews` and gave it a real route
+> table, but nothing in that work reads `Surface` anywhere
+> (`grep -rn "Surface" src/NoMercy.Plugin.InternetRadio` — no hits outside this note). The
+> one `PluginViews.Form` this plugin builds (`SettingsView.cs`) still does not branch on it,
+> so a TV or phone submitting that form still silently gets the desktop shape back — the
+> cost remains real for any plugin that does branch, and unchanged for this one.
+
 ## What happens
 
 The initial GET for a plugin's view sends three query parameters:

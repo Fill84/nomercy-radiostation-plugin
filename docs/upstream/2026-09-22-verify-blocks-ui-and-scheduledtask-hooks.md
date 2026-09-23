@@ -7,6 +7,16 @@ against)
 --state all --search "nomercy-plugin verify hook" / "ManifestScan" / "verify blocks ui" /
 "scheduledTask capability"` — no match (`#19` is an unrelated capability-gate feature).
 
+> **Status (2026-09-23):** still open, and this plugin would be Blocked by it too, not just
+> Automix. `plugin.json` declares `"hooks": ["ui", "scheduledTask", "media.proxy"]`
+> (`src/NoMercy.Plugin.InternetRadio/plugin.json:19`) — the same two names this bug rejects.
+> It has not bitten us in CI only because `.forgejo/workflows/build.yml` never runs
+> `nomercy-plugin verify` at all (`grep -n verify .forgejo/workflows/build.yml` — one
+> unrelated comment hit). See
+> `2026-09-23-verify-rejects-the-hooks-the-runtime-requires.md` for the same defect
+> re-verified today with Automix's own manifest as live proof that this is not a theoretical
+> edge case.
+
 ## What happens
 
 `nomercy-plugin verify`'s manifest scan validates every declared hook against the

@@ -6,6 +6,14 @@ Internet Radio 2.0.0 installed, and confirmed by reading `master` at
 `c821ca0a5817ae4483629954638e9d0ae6cd3e09`.
 **Raised:** not yet.
 
+> **Status (2026-09-23):** still open, still triggered. Re-checked against
+> `nomercy-app-web` `origin/master@00d7857ea2375a6de81f070d3a8a2faeaac26005` (no change to
+> `Sidebar.vue` since the citation above) and this plugin's own `plugin.json`, which still
+> declares one `section: "music"` mount and nothing else has changed that mount's shape.
+> Tasks 1-6 gave this plugin a real route table and translated labels, neither of which
+> touches which section a mount declares, so the duplicate is unaffected by this branch's
+> work — see "Not fixed from here" below, which already said so.
+
 ## What happens
 
 "Internet Radio" appears twice in the music sidebar: once among Start, Artists, Albums,

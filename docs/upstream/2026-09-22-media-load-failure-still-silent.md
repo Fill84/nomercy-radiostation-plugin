@@ -14,6 +14,12 @@ checked-out sibling here).
 --state all --search "load error swallow" / "queue catch" / "silent"`, and an unfiltered
 `--state all` listing — all empty; the repository currently has no issues on record.
 
+> **Status (2026-09-23):** still open, unaffected by Tasks 1-6. `node_modules/@nomercy-entertainment/nomercy-player-core/package.json`
+> in `nomercy-app-web` `origin/master@00d7857ea2375a6de81f070d3a8a2faeaac26005` still pins
+> `2.2.1`, unchanged since this note's last check. Nothing in this branch's work touches
+> playback, the queue, or error handling on either side of the SDK boundary, so a failed
+> load still reaches no error path for any station this plugin queues.
+
 ## What changed since 2.0.4
 
 Nothing material to this defect. The original doc cites `dist/core/mixins/queue.js` and

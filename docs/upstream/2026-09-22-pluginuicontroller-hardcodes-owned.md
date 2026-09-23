@@ -6,6 +6,16 @@
 --state all --search "PluginUiController Owned" / "PluginAccess.Owned hardcode" /
 "caller access shared"` — no results.
 
+> **Status (2026-09-23):** still open upstream; this plugin does not branch on
+> `Caller.Access` (`grep -rn "\.Access\b" src/NoMercy.Plugin.InternetRadio` — no hits), so
+> the hardcoded `Owned` value never reaches a decision here. Its settings page is gated the
+> other way now: the manifest mount and the route both declare owner-only access
+> (`plugin.json`'s settings mount; `InternetRadioPlugin.cs:716,738`,
+> `Access = PluginRouteAccess.Owner`), which the host enforces
+> before `Render` is even called for a non-owner. The upstream defect is unchanged and would
+> still over-expose any plugin that trusts `Caller.Access` the way its own doc comment says
+> it can be trusted.
+
 ## What happens
 
 `PluginUiController.Render` resolves the caller's real access level before deciding

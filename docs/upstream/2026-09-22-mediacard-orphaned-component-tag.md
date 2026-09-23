@@ -13,6 +13,14 @@ mentions `MediaCard`). `gh issue list -R NoMercy-Entertainment/nomercy-media-ser
 `gh issue list -R NoMercy-Entertainment/nomercy-app-web --state all --search "MediaCard"`
 — no results.
 
+> **Status (2026-09-23):** still open upstream; this plugin never triggered it and still
+> doesn't. Tasks 1-6 moved every view onto `PluginViews`, with `Ui.MediaGrid`/`Ui.MediaCard`
+> as the two exceptions that draw `NMGrid`/`NMMusicCard` directly
+> (`src/NoMercy.Plugin.InternetRadio/Views/Ui.cs`) — neither ever names `"PluginMediaCard"`
+> (`grep -rn "PluginMediaCard" src/NoMercy.Plugin.InternetRadio` — no hits). The stale tag
+> stays a trap for the next author who reaches for it off the SDK's own `All` set, not a
+> live defect for this plugin.
+
 ## What happens
 
 `nomercy-app-web` deleted its media-card component on 2026-09-21:

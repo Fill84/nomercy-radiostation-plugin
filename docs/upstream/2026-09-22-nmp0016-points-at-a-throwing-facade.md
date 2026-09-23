@@ -6,6 +6,15 @@
 --state all --search "NMP0016" / "context.Scheduler FacadeNotOnThisHost" / "Scheduler
 in-process"` — no results.
 
+> **Status (2026-09-23):** still open upstream; this plugin does not trigger it today, by
+> declining NMP0016's own advice rather than because the defect was fixed. It still
+> implements `IScheduledTaskPlugin` (`InternetRadioPlugin.cs:21`,
+> `public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin`) and never
+> calls `context.Scheduler` (`grep -rn "context.Scheduler" src/NoMercy.Plugin.InternetRadio`
+> — no hits). The "what was right" audit named this deliberate. NMP0016 still fires on the
+> obsolete interface every build; following it would break this plugin's scheduling on the
+> in-process host, which is exactly what it runs on.
+
 ## What happens
 
 The plugin analyzer's NMP0016 diagnostic tells authors:

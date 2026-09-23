@@ -6,6 +6,13 @@
 --state all --search "CallerItemKey" / "RouteAccessDenied" / "PluginControllerBase Caller"`
 — the only hit (#66) is an unrelated plugin-template compile error.
 
+> **Status (2026-09-23):** still open upstream; this plugin has never read the throwing
+> member. `InternetRadioController` derives from `PluginControllerBase` and reads the caller
+> through `User.FindFirst(ClaimTypes.NameIdentifier)` instead, with a comment recording why:
+> "Not `PluginControllerBase.Caller`: the host never populates it, and reading it throws."
+> (`src/NoMercy.Plugin.InternetRadio/Controllers/InternetRadioController.cs:114,116-117`).
+> That workaround predates Tasks 1-6 and is unchanged by them.
+
 ## What happens
 
 A plugin's REST controllers read who is calling through `PluginControllerBase.Caller`:

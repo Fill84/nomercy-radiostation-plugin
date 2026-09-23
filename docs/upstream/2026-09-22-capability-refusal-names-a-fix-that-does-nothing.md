@@ -8,6 +8,17 @@
 --state all --search "media.proxy scope" / "CapabilityScopeRefused" / "ScopesFor" /
 "streamtheworld"` — no results.
 
+> **Status (2026-09-23):** still open upstream, and still reachable here. This plugin no
+> longer walks an owner into it the way it did: `StationGrants.EnsureAsync`
+> (`src/NoMercy.Plugin.InternetRadio/Hosting/StationGrants.cs:47-51`) asks for `media.proxy`
+> from the refresh job, before any station page is built, with our own accurate reason —
+> so in the ordinary case an owner sees our request and grants it before a mint is ever
+> refused. But the fallback is unchanged: `HostStationStreams.Log`
+> (`src/NoMercy.Plugin.InternetRadio/Playback/HostStationStreams.cs:106-107`) still logs
+> the refusal's own `{Fix}` text verbatim — the same misleading "add it to plugin.json"
+> line — whenever a mint is refused before the owner has acted (or after they revoke), so
+> the defect is less likely to be hit, not eliminated.
+
 ## What happens
 
 Playing an Internet Radio station on beast-unit today logs:

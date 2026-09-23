@@ -7,6 +7,18 @@
 (`stateReason: COMPLETED`, closed 2026-08-13). This is a proposal for a new, small issue
 or a comment reopening #2's scope, not a duplicate.
 
+> **Status (2026-09-23):** still open, and now sharper. `index.json` at `nomercy-plugins`
+> `master@0746563c65db60d10e437fa74635d80629745ef9` (re-read today via the GitHub contents
+> API, unchanged since the original finding) still lists Internet Radio at 1.0.2/1.1.0/1.2.0,
+> all `targetAbi: "10.0"`. This branch's `plugin.json` declares `"targetAbi": "12.1"`
+> (`src/NoMercy.Plugin.InternetRadio/plugin.json:6`), and `nomercy-media-server`
+> `dev@4c16c0d09f4bcc2fa3a39ad2e791f52441cdd69b` (fetched today) has since bumped
+> `PluginAbi.Current` to `12.2` (`e82f3d80e`, "additive, backward-compatible") — so by the
+> time 2.0.0 ships, the correct catalogue entry needs `targetAbi` reflecting whatever ABI the
+> release actually targets, not `12.0` as this note originally assumed the next number would
+> be. The publishing step this note asks for has not happened yet; it happens at release,
+> which is out of scope for this task.
+
 ## What #2 already fixed, and what it didn't ask for
 
 Live `index.json` today carries the entry #2's own closing comment proposed: correct Ulid

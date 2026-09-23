@@ -7,6 +7,14 @@
 no match; the only near-hit is #15 (closed, a different track-id defect) and #30 (closed,
 video-player routing).
 
+> **Status (2026-09-23):** still open upstream; this plugin does not trigger it and, by
+> design, cannot. Every cover it sends — cards and the play/enqueue intent alike — is a
+> `data:` URI or null, never a host-minted, server-relative path
+> (`src/NoMercy.Plugin.InternetRadio/Views/StationCards.cs:49`, `:84`, `:133`). That is the
+> same choice the design spec's "what was right" section records for the same reason: an
+> `<img>` cannot carry a bearer token, and `data:` sidesteps the question entirely. The
+> defect stays real for any plugin whose cover is a server-relative URL.
+
 ## What happens
 
 A plugin's card or list item shows an image whose `url`/`cover` is a path the host minted
