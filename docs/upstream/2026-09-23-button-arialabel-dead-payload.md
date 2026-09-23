@@ -51,18 +51,29 @@ const needsName = computed(() => props.iconOnly === true || !slots.default);
 ```
 
 `PluginViews.Button` never sets `iconOnly`, and its `Items` always populate the default
-slot, so `needsName` is `false` for every button it builds. `aria-label` is never rendered
-for a `PluginViews`-built button — the visible text itself is what a screen reader
+slot, so tracing `needsName`'s two conditions against what `PluginViews.Button` actually
+sends — `iconOnly` never set (falls back to its prop default, not `true`), `Items` always
+non-empty — gives `needsName === false` for every button the builder produces. Following
+that into the template's `:aria-label="needsName ? label : undefined"` means the attribute
+is never emitted for a `PluginViews`-built button: the visible text is what a screen reader
 announces, which is correct, but `ariaLabel` was sent for nothing.
 
-## Reproduction
+## Read, not reproduced
+
+I did not start a server or render a button in a browser. This is a static trace: the two
+inputs to `needsName` (`iconOnly`, `slots.default`) as `PluginViews.Button` actually
+constructs them, followed through `NMButton.vue`'s own computed property and template
+binding. I have not watched the attribute's absence in rendered DOM or inspected an actual
+network payload.
+
+## Reproduction (as written)
 
 1. Build a view with `PluginViews.Button(id, "Play", action)`.
-2. Inspect the rendered `<button>`.
-3. Observed: no `aria-label` attribute (`needsName` is false; the visible "Play" text is the
-   accessible name via the default slot).
-4. Observed on the wire: the payload still carries `"ariaLabel": "Play"` — sent, accepted by
-   the client's own prop type, silently dropped at render.
+2. Render it and inspect the `<button>` element.
+3. Expected, per the traced logic: no `aria-label` attribute (`needsName` false; the visible
+   "Play" text is the accessible name via the default slot) — while the payload sent to the
+   client still carries `"ariaLabel": "Play"`, accepted by the client's own prop type and
+   silently unused.
 
 ## What it costs
 

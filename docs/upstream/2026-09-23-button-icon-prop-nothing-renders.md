@@ -59,7 +59,7 @@ export interface NMButtonProps extends NMComponentBase {
 `props.slots` map by `NMRender.vue`, never from a scalar prop:
 
 ```vue
-<!-- NMButton.vue:82,88 -->
+<!-- NMButton.vue:82,91 -->
 <slot name="iconLeft" />
 ...
 <slot name="iconRight" />
