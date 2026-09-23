@@ -104,7 +104,8 @@ public class DiscoveryContractTests
 
     // PluginUiDescriptorDto prefers the instance's NavEntries over the manifest's
     // mounts, so these two are separate declarations of the same fact and nothing
-    // else would catch them drifting.
+    // else would catch them drifting. The entry and its mount are one fact declared
+    // twice - Section, Route, Label, Icon, Access and Slot all have to agree.
     [Fact]
     public void NavEntries_AgreeWithTheManifestMounts()
     {
@@ -120,7 +121,8 @@ public class DiscoveryContractTests
                 && entry.Route == mount.Route
                 && entry.Label == mount.Label
                 && entry.Icon == mount.Icon
-                && entry.Access == mount.Access);
+                && entry.Access == mount.Access
+                && entry.Slot == mount.Slot);
         }
     }
 

@@ -736,6 +736,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
                 Icon = "portableRadio",
                 Route = RadioRoutes.Settings,
                 Access = PluginRouteAccess.Owner,
+                Slot = PluginSlot.Section,
             },
         ];
 
