@@ -119,7 +119,8 @@ public class DiscoveryContractTests
                 entry.Section == mount.Section
                 && entry.Route == mount.Route
                 && entry.Label == mount.Label
-                && entry.Icon == mount.Icon);
+                && entry.Icon == mount.Icon
+                && entry.Access == mount.Access);
         }
     }
 

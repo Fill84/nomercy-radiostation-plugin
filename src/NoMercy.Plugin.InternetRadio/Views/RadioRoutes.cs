@@ -36,6 +36,12 @@ public static class RadioRoutes
     public const string AllStations = "/all";
     public const string Settings = "/settings";
 
+    // Named "...Root" rather than "Genre"/"Station" because those names are already the
+    // builder methods below - a plugin route table wants the bare prefix, not a page for
+    // one particular slug or id.
+    public const string GenreRoot = $"/{GenrePrefix}";
+    public const string StationRoot = $"/{StationPrefix}";
+
     private const string GenrePrefix = "genre";
     private const string StationPrefix = "station";
 

@@ -656,24 +656,86 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
 
     // === IUiPlugin =========================================================
 
-    // One entry per manifest mount. DiscoveryContractTests asserts the two agree,
-    // since PluginUiDescriptorDto prefers this over the manifest and nothing else
-    // would catch them drifting.
+    /// <summary>
+    /// The pages this plugin has, as the host advertises them.
+    ///
+    /// Without this the host registers no named page: every view falls back to the
+    /// standard layout, no page has a title of its own, and the client reaches them all
+    /// through one wildcard. RadioRoutes.Parse still decides what a request means - this
+    /// is the list, not the dispatcher - and RadioRoutesTests holds the two together.
+    /// </summary>
+    public static readonly PluginRouteTable Table = new(
+        new PluginRoute
+        {
+            Name = "browse",
+            Path = RadioRoutes.Browse,
+            Label = "stations.title",
+            Layout = PluginLayout.Grid,
+        },
+        new PluginRoute
+        {
+            Name = "all",
+            Path = RadioRoutes.AllStations,
+            Label = "stations.all",
+            Layout = PluginLayout.Grid,
+        },
+        new PluginRoute
+        {
+            Name = "search",
+            Path = RadioRoutes.SearchRoot,
+            Label = "search.title",
+            Layout = PluginLayout.Grid,
+        },
+        new PluginRoute
+        {
+            Name = "search-term",
+            Path = $"{RadioRoutes.SearchRoot}/:term",
+            Label = "search.title",
+            Layout = PluginLayout.Grid,
+        },
+        new PluginRoute
+        {
+            Name = "genre",
+            Path = $"{RadioRoutes.GenreRoot}/:slug",
+            Label = "genre.title",
+            Layout = PluginLayout.Grid,
+        },
+        new PluginRoute
+        {
+            Name = "station",
+            Path = $"{RadioRoutes.StationRoot}/:id",
+            Label = "station.title",
+            Layout = PluginLayout.Standard,
+        },
+        new PluginRoute
+        {
+            Name = "settings",
+            Path = RadioRoutes.Settings,
+            Label = "settings.title",
+            Layout = PluginLayout.Form,
+            Access = PluginRouteAccess.Owner,
+        }
+    );
+
+    public PluginRouteTable Routes => Table;
+
+    // One entry per manifest mount; DiscoveryContractTests asserts the two agree.
     public IReadOnlyList<PluginNavEntry> NavEntries { get; } =
         [
             new PluginNavEntry
             {
                 Section = PluginUiSection.Music,
-                Label = PluginIdentity.Name,
+                Label = "stations.title",
                 Icon = "portableRadio",
                 Route = RadioRoutes.Browse,
             },
             new PluginNavEntry
             {
                 Section = PluginUiSection.Settings,
-                Label = PluginIdentity.Name,
+                Label = "settings.title",
                 Icon = "portableRadio",
                 Route = RadioRoutes.Settings,
+                Access = PluginRouteAccess.Owner,
             },
         ];
 

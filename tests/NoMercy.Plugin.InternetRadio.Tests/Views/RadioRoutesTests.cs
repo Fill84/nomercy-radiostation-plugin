@@ -3,6 +3,7 @@
 
 using FluentAssertions;
 using Xunit;
+using NoMercy.PluginSdk.Abstractions;
 using NoMercy.Plugin.InternetRadio.Views;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Views;
@@ -140,5 +141,70 @@ public class RadioRoutesTests
     public void Parse_StillReadsTheSlashFormThisPluginBuilds()
     {
         RadioRoutes.Parse(RadioRoutes.Genre("drum-bass")).Value.Should().Be("drum-bass");
+    }
+
+    // The table is what the host registers, and RadioRoutes.Parse is what answers. Two
+    // lists of paths drift the moment one is edited alone: a page the host advertises and
+    // the plugin cannot parse is a dead link in the sidebar.
+    [Fact]
+    public void EveryDeclaredRouteIsOneTheParserUnderstands()
+    {
+        foreach (PluginRoute route in InternetRadioPlugin.Table.Routes)
+        {
+            string path = route.Path
+                .Replace(":term", "jazz")
+                .Replace(":slug", "ambient")
+                .Replace(":id", "u1");
+
+            RadioRoutes.Parse(path).Kind.Should().NotBe(RadioRouteKind.Unknown, $"'{route.Path}' is declared");
+        }
+    }
+
+    [Fact]
+    public void EveryPageTheParserAnswersIsDeclared()
+    {
+        IEnumerable<RadioRouteKind> declared = InternetRadioPlugin.Table.Routes
+            .Select(route => RadioRoutes.Parse(
+                route.Path.Replace(":term", "jazz").Replace(":slug", "ambient").Replace(":id", "u1")).Kind);
+
+        declared.Should().Contain(
+        [
+            RadioRouteKind.Browse,
+            RadioRouteKind.AllStations,
+            RadioRouteKind.Search,
+            RadioRouteKind.Genre,
+            RadioRouteKind.Station,
+            RadioRouteKind.Settings,
+        ]);
+    }
+
+    // Settings is the owner's page. The host hides an owner route from a member rather
+    // than offering one that answers 403.
+    [Fact]
+    public void OnlyTheSettingsPageIsForTheOwner()
+    {
+        InternetRadioPlugin.Table.Routes
+            .Where(route => route.Access == PluginRouteAccess.Owner)
+            .Select(route => route.Path)
+            .Should().Equal(RadioRoutes.Settings);
+    }
+
+    // A grid of station tiles is a grid; the settings page is a form. Without a layout
+    // every page falls back to "standard", which is what we shipped before.
+    [Fact]
+    public void TheTilePagesAskForAGridAndSettingsForAForm()
+    {
+        PluginRoute Route(string path) => InternetRadioPlugin.Table.Routes.Single(route => route.Path == path);
+
+        Route(RadioRoutes.Browse).Layout.Should().Be(PluginLayout.Grid);
+        Route(RadioRoutes.AllStations).Layout.Should().Be(PluginLayout.Grid);
+        Route(RadioRoutes.Settings).Layout.Should().Be(PluginLayout.Form);
+    }
+
+    [Fact]
+    public void EveryRouteIsLabelledByAKey()
+    {
+        InternetRadioPlugin.Table.Routes.Should().OnlyContain(route =>
+            !string.IsNullOrWhiteSpace(route.Label) && !route.Label!.Contains(' '));
     }
 }
