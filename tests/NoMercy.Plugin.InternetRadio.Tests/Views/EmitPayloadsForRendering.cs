@@ -24,10 +24,12 @@ namespace NoMercy.Plugin.InternetRadio.Tests;
 /// Newtonsoft with the MVC settings, because that is what writes every response
 /// this server sends. System.Text.Json here would emit a shape no client sees.
 ///
-/// The screens themselves are ViewFixtures.All() - the same ten fixtures
+/// The screens themselves are ViewFixtures.All() - the same fixture set
 /// ComponentVocabularyTests walks - rather than a second copy built here: two
 /// lists of "every screen" drift the moment one of them gains a state a station
-/// or a search result changes without the other following.
+/// or a search result changes without the other following. The count below is
+/// read from that same list rather than written as a literal, for the same
+/// reason - a literal here already drifted from the fixture set once.
 /// </summary>
 public class EmitPayloadsForRendering
 {
@@ -44,7 +46,9 @@ public class EmitPayloadsForRendering
 
         Directory.CreateDirectory(OutputDirectory);
 
-        foreach (object[] row in ViewFixtures.All())
+        TheoryData<string, PluginView> fixtures = ViewFixtures.All();
+
+        foreach (object[] row in fixtures)
         {
             string name = (string)row[0];
             PluginView view = (PluginView)row[1];
@@ -53,6 +57,6 @@ public class EmitPayloadsForRendering
             File.WriteAllText(Path.Combine(OutputDirectory, $"{name}.json"), json);
         }
 
-        Assert.Equal(9, Directory.GetFiles(OutputDirectory, "radio-*.json").Length);
+        Assert.Equal(fixtures.Count, Directory.GetFiles(OutputDirectory, "radio-*.json").Length);
     }
 }

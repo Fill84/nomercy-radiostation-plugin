@@ -9,21 +9,19 @@ namespace NoMercy.Plugin.InternetRadio.Views;
 
 // Status, not settings.
 //
-// This version has nothing to edit because when it was built there was nowhere to
-// save to. Both inbound transports were dead: the server's plugin REST routes were
-// mounted unversioned while the client posts to /api/v1, and the hub is not the
-// alternative it looks like - nothing registers a plugin's hub handler, so
-// IPluginHubHandler never receives anything.
+// This plugin ships a real REST controller (InternetRadioController, three routes)
+// and declares "rest": true - the earlier gap that once blocked an editable page
+// (the server's plugin REST routes mounted unversioned while the client posted to
+// /api/v1) was fixed upstream on 2026-07-30, media-server issue #26. Nothing here
+// is missing a controller to save through.
 //
-// The REST half was fixed upstream on 2026-07-30 (media-server issue #26, commit
-// 37e5e7c), after this version was built - so a REST controller is now the way an
-// editable page would carry its saves. This plugin does not ship one yet, and it
-// declares "rest": false accordingly. The hub half is still open.
-//
-// Rendering a form with no controller behind it would be the false promise this
-// plugin exists to stop making, so this page answers the questions someone actually
-// arrives with instead: where did these stations come from, how old are they, and
-// how do I add my own.
+// What this page lacks is a setting worth having: there is nothing yet that this
+// plugin decides which an owner would plausibly want to override from a form -
+// the catalogue is fetched, not curated, and the one input an owner does have is
+// already a file, not a field (stations.json, described below). So this page stays
+// a read-only view of what the plugin decided, and answers the questions someone
+// actually arrives with instead: where did these stations come from, how old are
+// they, and how do I add my own.
 public static class SettingsView
 {
     private static IReadOnlyList<PluginTableColumn> Columns { get; } =
@@ -133,12 +131,16 @@ public static class SettingsView
         children.Add(
             PluginViews.Text(
                 "settings-editing-body",
-                "This page is read-only. When this version was built a plugin could not receive "
-                    + "anything from its own UI on this server, so there was nowhere for a form to "
-                    + "save to. The REST route that would carry it was fixed upstream on 2026-07-30 "
-                    + "(media-server issue #26); this version predates that and ships no controller, "
-                    + "so editable settings are a later release. Plugin hub handlers are still never "
-                    + "registered, so that route remains unavailable.",
+                // Left English, like every other caption on this page: PluginViews.Text
+                // renders "caption" as an NMHelper, whose helperText prop NMRender never
+                // resolves through the plugin's bundle (see EmptyCatalog.Build for the
+                // same rule stated once). Keying it would ship a raw key nobody ever sees
+                // translated.
+                "This page is read-only. It shows what the plugin has already decided - "
+                    + "the catalogue, your favourites, and any stations.json override - "
+                    + "rather than letting you change any of it here. There is nothing "
+                    + "on this page to edit yet; use stations.json (above) for your own "
+                    + "stations.",
                 "caption"
             )
         );

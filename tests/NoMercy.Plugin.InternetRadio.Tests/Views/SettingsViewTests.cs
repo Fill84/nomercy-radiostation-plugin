@@ -177,13 +177,15 @@ public class SettingsViewTests
         Text(Build(catalog)).Should().Contain("could not be refreshed");
     }
 
-    // The honest statement of why there is nothing to configure. Named so that when
-    // the server is fixed, a search for the issue number finds this page.
+    // The honest statement of why there is nothing to configure: a read-only view of
+    // what the plugin decided, not a page missing a controller to save through - this
+    // plugin has had one, with three routes, since the manifest started declaring
+    // "rest": true.
     [Fact]
     public void ExplainsWhyThereIsNothingToEdit()
     {
         Text(Build(StationCatalog.Create([Station("a")], CatalogSource.Fetched, Now)))
-            .Should().Contain("#26");
+            .Should().Contain("read-only");
     }
 
     // The renderer only knows title/subtitle/caption; anything else used to silently

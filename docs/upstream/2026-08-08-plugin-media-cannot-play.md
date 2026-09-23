@@ -4,6 +4,19 @@
 **Effect:** no plugin can play audio. Not "plays badly" — the player throws while mounting
 and never requests the stream at all.
 
+> **Status (2026-09-23):** "No plugin can avoid this" (below) no longer holds for the
+> path that matters most - the player bar. `#23` (`2a24f7a10`, closed upstream) guarded
+> `src/components/MusicPlayer/components/TrackLinks.vue`'s `RouterLink` against exactly
+> this url-derived-id shape, and that is the `TrackLinks` a station played from this
+> plugin's own controls renders through; `PluginLifecycleTests.AStationPagePlaysWhatTheHostMints`
+> confirms a station starts in production. The class of bug is not closed everywhere,
+> though: `docs/upstream/2026-09-22-list-tracklinks-still-unguarded.md` found the same
+> unguarded pattern, unfixed, in a second `TrackLinks.vue` reachable through
+> `NMTrackRow`/`NMTopResultCard` - components a plugin tree can draw directly, and ones
+> this plugin does not currently draw for now-playing. `StationCards.StationIdKey`
+> (`Views/StationCards.cs`) still sends the station's own uuid alongside the url-derived
+> id for exactly the reason given below, on the chance a client ever reads it.
+
 ## What happens
 
 Clicking a station raises `PlayMedia`. The now-playing panel fills in correctly: title,

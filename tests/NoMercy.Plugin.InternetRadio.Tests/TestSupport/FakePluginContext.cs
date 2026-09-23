@@ -7,7 +7,8 @@ using NoMercy.Plugin.InternetRadio.Playback;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.TestSupport;
 
-public sealed class FakePluginContext(string dataFolderPath, HttpClient httpClient) : IPluginContext
+public sealed class FakePluginContext(string dataFolderPath, HttpClient httpClient, IPluginGrants? grants = null)
+    : IPluginContext
 {
     public ILogger Logger { get; } = new RecordingLogger();
     public string DataFolderPath { get; } = dataFolderPath;
@@ -31,8 +32,10 @@ public sealed class FakePluginContext(string dataFolderPath, HttpClient httpClie
     // "what has the owner allowed", even when it is "nothing yet" - so this cannot join
     // the throwing facades above. HostStationStreams.For captures it up front, whether or
     // not Media is offered, so a fake that throws here would fail the station page before
-    // ForAsync's own refusal handling ever runs.
-    public IPluginGrants Grants { get; } = new NoGrants();
+    // ForAsync's own refusal handling ever runs. A test that needs to see whether a call
+    // site asked at all passes its own RecordingGrants in; everything else gets the silent
+    // NoGrants default.
+    public IPluginGrants Grants { get; } = grants ?? new NoGrants();
 
     public IPluginHubContext Hub => throw new NotSupportedException();
 

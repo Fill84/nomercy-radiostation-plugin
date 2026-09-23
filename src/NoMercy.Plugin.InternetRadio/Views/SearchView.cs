@@ -14,8 +14,7 @@ namespace NoMercy.Plugin.InternetRadio.Views;
 // name. PluginComponentType.Form is "NMCard", which the client resolves as a design-system
 // card, so the real PluginForm - which renders a <form>, collects its fields and posts them
 // - was never reached, and every submit arrived as an empty body. Named correctly, the
-// client posts {"query": "..."} to this plugin's endpoint and then refreshes the view. See
-// Ui for the full account.
+// client posts {"query": "..."} to this plugin's endpoint and then refreshes the view.
 //
 // The term is also still a route. /search/tomorrowland renders the same page, so a search
 // stays shareable and bookmarkable, and typing is not the only way in.

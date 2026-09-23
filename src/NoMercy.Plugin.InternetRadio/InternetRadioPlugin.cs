@@ -14,7 +14,7 @@ namespace NoMercy.Plugin.InternetRadio;
 
 // The class the server loads.
 //
-// Two contracts, one lifecycle. IUiPlugin serves five routes; IScheduledTaskPlugin
+// Two contracts, one lifecycle. IUiPlugin serves seven routes; IScheduledTaskPlugin
 // keeps the catalogue current so a view never waits on the network when it can help
 // it. Everything that touches IPluginContext lives here: the views are pure
 // functions and the provider takes what it needs as arguments.
@@ -184,6 +184,52 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             finally
             {
                 Volatile.Write(ref _fetchingLogos, 0);
+            }
+        });
+    }
+
+    // 0 or 1: whether a background grants check is already in flight. Grants.EnsureAsync
+    // is itself idempotent and cheap to call again once it has asked, so this guard exists
+    // only to stop every concurrent view request from each spawning its own Task.Run.
+    private int _askingGrants;
+
+    /// <summary>
+    /// Kicks the same grant request the nightly refresh makes, from the view path too.
+    ///
+    /// The host does not run the refresh job until its next 04:00 UTC cron tick, which can
+    /// be up to a day after a fresh install or an upgrade. Until that first tick, a station
+    /// page would tell the owner streaming is "waiting for approval" while the dashboard
+    /// has nothing to approve. Firing this here closes that window. Fire-and-forget and
+    /// never awaited: a slow or failing grants facade must not delay or break the page that
+    /// triggered it, and StationGrants.EnsureAsync is safe to call from both places because
+    /// asking twice for something already held or already asked costs nothing.
+    /// </summary>
+    private void EnsureGrantsInBackground()
+    {
+        if (Interlocked.CompareExchange(ref _askingGrants, 1, 0) != 0)
+        {
+            return;
+        }
+
+        CancellationToken lifetime = _lifecycleCts.Token;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Grants.EnsureAsync(lifetime);
+            }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
+            {
+                // Unloading. The next view to load asks again.
+            }
+            catch (Exception exception)
+            {
+                _context?.Logger.LogWarning(exception, "Internet Radio could not ask the owner for what it needs.");
+            }
+            finally
+            {
+                Volatile.Write(ref _askingGrants, 0);
             }
         });
     }
@@ -605,7 +651,10 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             CancellationTokenSource.CreateLinkedTokenSource(ct, _lifecycleCts.Token);
 
         // Before the catalogue, so the owner is asked once, early, and not by a page that
-        // was already refused.
+        // was already refused. This is not the only call site: the host does not run this
+        // job until the next 04:00 UTC cron tick, which can be most of a day after a fresh
+        // install, so GetViewAsync below also kicks the same idempotent ask from the view
+        // path rather than leaving the owner with nothing to approve until then.
         await Grants.EnsureAsync(linked.Token);
 
         StationCatalog catalog = await Provider.RefreshAsync(linked.Token);
@@ -764,6 +813,11 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         // request pipeline.
         try
         {
+            // Kicked first, ahead of parsing the route or touching the catalogue: the
+            // first station page a fresh install serves must not be the reason the owner
+            // waits until the next cron tick to see anything to approve.
+            EnsureGrantsInBackground();
+
             IPluginContext context = Context;
 
             RadioRoute route = RadioRoutes.Parse(request.Route);

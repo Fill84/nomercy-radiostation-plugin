@@ -7,6 +7,19 @@ stored grant does not cover re-prompt, inherit silently, or fail to load?
 **Answer: it inherits silently, and nothing breaks.** Checked against
 `nomercy-media-server` at `v0.1.470` (`9011e74`).
 
+> **Status (2026-09-23):** the risk this note flags is smaller for 2.0.0 than it was
+> for 1.1.0's `rest` addition, though not eliminated. The widest thing this manifest
+> ever declared, `"network": { "hosts": ["**", ...] }`, is gone from `plugin.json`
+> entirely as of this branch (`fix(manifest): name the one host we know, and ask for
+> the rest later`) — it and `media.proxy` are now asked as **runtime** grants through
+> `StationGrants.EnsureAsync`, each its own dashboard prompt, rather than capabilities
+> a server upgrade could hand a plugin silently. The manifest-level gap this note is
+> actually about is unchanged: an owner already running 1.0.x who upgrades straight to
+> 2.0.0 still inherits the `rest`, `scheduledTask` and `media.proxy` hooks with no new
+> prompt, for the reason given below (`PluginConsentService` keys on plugin id alone,
+> not on which hooks it declares). Not re-verified against a running server for this
+> pass — nothing in this branch touches that mechanism, upstream or here.
+
 ## Why
 
 `PluginConsentService` records consent **per plugin id and nothing else**:

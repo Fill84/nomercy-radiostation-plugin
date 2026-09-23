@@ -99,6 +99,19 @@ Taken with the owner on 2026-09-22.
 > developer-mode gate and the checksum the server would otherwise verify. The supported
 > route is a repository index; see `2026-09-23-sdk-conformance-design.md`.
 
+> **Correction (2026-09-23):** the "media.proxy grant" row above named only one of the
+> two runtime requests this plugin actually ships. `StationGrants.EnsureAsync` asks for
+> `media.proxy` **and** `network.host` (both `*`, both once per process, both with their
+> own reason) - the second grant is what the `network.hosts: ["**", …]` line below this
+> table turned into once it was narrowed to just the manifest's own radio-browser host;
+> see the `network.hosts` correction below and `2026-09-23-sdk-conformance-design.md`.
+> "Once per process" also needed its own fix after this spec: the flag that enforced it
+> used to latch even when the attempt failed, so a transient fault silenced every future
+> ask for the life of the process; it now only latches once a pass completes. And the
+> ask itself no longer runs from the refresh job alone - a fresh install does not see a
+> cron tick for up to a day, so `GetViewAsync` fires the same idempotent ask too. See
+> `Hosting/StationGrants.cs` and `InternetRadioPlugin.EnsureGrantsInBackground`.
+
 ## Build and contract
 
 ### Building against a release (step 1)
@@ -174,12 +187,29 @@ Add `"media.proxy"` to `capabilities.hooks`. Keep `network.hosts: ["**", "*.api.
 the host's proxy client enforces the same allowlist, and the plugin's own requests
 (catalogue, logos, metadata) still need it.
 
+> **Correction (2026-09-23):** not what shipped, and not what the owner decided in the
+> later spec. The manifest keeps only `["*.api.radio-browser.info"]` - the one host
+> known at package time - and drops the `**` entirely (`fix(manifest): name the one
+> host we know, and ask for the rest later`). What the wildcard used to cover (station
+> logos and now-playing hosts, unknowable in advance) is asked for at **runtime**
+> instead, as its own `network.host` = `*` grant, alongside `media.proxy` - not
+> in the manifest at all. See `2026-09-23-sdk-conformance-design.md` and
+> `Hosting/StationGrants.cs`.
+
 `Initialize` stays free of I/O, as its own comment requires. The first time minting is
 refused with `PLUGIN_CAPABILITY_SCOPE_REFUSED`, the plugin calls
 `Grants.RequestAsync(PluginGrantKind.ForCapability(PluginCapabilityNames.MediaProxy), PluginGrant.Everything, reason)`
 with a reason written for the owner. It does this once per process. `RequestAsync`
 records the request and returns at once, and asking twice would not queue a second
 prompt anyway.
+
+> **Correction (2026-09-23):** not the trigger that shipped either. Both grants are
+> asked **up front** - from the refresh job before the catalogue, and from the view
+> path before a page is built - rather than waiting for a mint to be refused first.
+> "Once per process" also needed a fix after this spec: the flag enforcing it used to
+> latch before the ask was attempted, so a transient failure on the first try silenced
+> every later attempt for the life of the process; it now latches only once a pass
+> completes. See `Hosting/StationGrants.cs` and the media.proxy grant correction above.
 
 ### Minting without making views impure
 

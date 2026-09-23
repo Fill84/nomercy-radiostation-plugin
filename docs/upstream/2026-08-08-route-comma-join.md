@@ -2,6 +2,13 @@
 
 **Server:** `nomercy-media-server` v0.1.470 · **Client:** app.nomercy.tv, 2026-08-08
 
+> **Status (2026-09-23):** fixed client-side - `RadioRoutes.Parse`'s own comment records
+> "The web client no longer comma-joins routes - fixed in nomercy-app-web." This
+> plugin's defensive split on both `/` and `,` (`Views/RadioRoutes.cs:104-105`) stays in
+> place regardless: it costs nothing, and it still protects against a client that
+> regresses to repeating the `route` query parameter. Not re-verified against a running
+> server for this pass; carried forward from the fix note already in `RadioRoutes.cs`.
+
 ## What happens
 
 A plugin route with more than one segment reaches `IUiPlugin.GetViewAsync` with its

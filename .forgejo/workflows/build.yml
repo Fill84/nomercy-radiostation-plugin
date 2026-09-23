@@ -180,7 +180,7 @@ jobs:
              | grep -v 'forgejo.phillippepelzer.me' \
              | grep -v 'github.com'; then
             echo "::error::a URL that is not the API base or a documentation link" >&2
-            echo "station data is fetched, never committed - see Catalog/SeedStations.cs" >&2
+            echo "station data is fetched at runtime by Catalog/CatalogProvider.cs, never committed" >&2
             exit 1
           fi
           echo "no hardcoded station URLs"
@@ -301,6 +301,15 @@ jobs:
           MANIFEST="$PLUGIN_DIR/plugin.json"
           ZIP="${{ steps.stage.outputs.zip }}"
           DOWNLOAD="${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${ZIP}"
+          # This file's own eventual address, once the release step below uploads it
+          # under this name. `url` names the index itself, not the zip - `downloadUrl`
+          # inside each version entry below is what points at the zip. The server never
+          # reads this top-level `url` field at all (an owner adds the repository by
+          # pasting its address into the dashboard, not by reading it back out of the
+          # file), so this stays correct only because it is meant to describe the file
+          # accurately for whatever else might read a repository.json - not because
+          # anything here depends on it. Do not "fix" it back to the zip's own URL.
+          INDEX="${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/repository.json"
 
           # Bare hex, no "sha256:" prefix: PluginPackageChecksum.Refuse on the server
           # hashes the downloaded .zip and compares the raw digest against this field
@@ -310,11 +319,12 @@ jobs:
             --slurpfile manifest "$MANIFEST" \
             --arg version "${{ steps.stage.outputs.version }}" \
             --arg download "$DOWNLOAD" \
+            --arg index "$INDEX" \
             --arg checksum "${{ steps.stage.outputs.sha }}" \
             --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{
               name: "NoMercy Internet Radio",
-              url: $download,
+              url: $index,
               plugins: [{
                 id: $manifest[0].id,
                 name: $manifest[0].name,
@@ -367,8 +377,11 @@ jobs:
           the server owner alone. Use the repository.
 
           After installing or updating, **enable the plugin in the dashboard**, then
-          **approve its streaming request**. Until both are done, stations can be browsed
-          but not played.
+          **approve the two runtime requests it makes**: streaming (so stations play
+          through the server) and network access (so logos and now-playing track titles
+          can be fetched). Until the plugin is enabled and streaming is approved,
+          stations can be browsed but not played; without the network approval too,
+          stations play with no logos and no now-playing titles.
 
           ### Verify
           \`\`\`

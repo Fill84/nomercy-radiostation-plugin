@@ -24,12 +24,15 @@ alone. Use the repository.
 
 ## After installing or updating
 
-- Enable the plugin in the dashboard (2.0.0 asks for one new permission: streaming
-  through the server).
-- Approve its streaming request.
+- Enable the plugin in the dashboard.
+- Approve the two runtime requests it makes on its first refresh (or the first
+  station page you open, whichever comes first): **streaming**, so stations play
+  through the server, and **network access**, so it can fetch station logos and
+  read the track titles a station announces.
 
-Until both are done, stations can be browsed but not played. The station page
-says so.
+Until the plugin is enabled and streaming is approved, stations can be browsed but
+not played — the station page says so. Approving streaming without the network
+grant plays stations with no logos and no now-playing titles.
 
 ## What it fetches
 
@@ -72,29 +75,33 @@ Two characters is usually enough: `to` already finds Tomorrowland.
 | --- | --- |
 | `ui` | The six pages above. |
 | `scheduledTask` | One job, `refresh`, daily at 04:00, which updates the catalogue. |
-| `media.proxy` | Lets the server mint a short-lived url, bound to the listener, for the station being played, so the browser never talks to the stream's own host directly. Asked for separately from the rest of this table — see "After installing or updating" above. |
-| `network` → `**` | **Any host.** See below — this is the widest grant a plugin can ask for, and it is asked for a reason. |
+| `network` → `*.api.radio-browser.info` | The one host this plugin knows about at package time: the station directory it fetches the catalogue and search results from. |
 | `rest` | Three endpoints of its own: one to toggle a favourite, one that runs the search form, and one that returns a station's current track title, read from its ICY metadata, while it plays. Nothing else reaches them — this plugin's own pages are the only caller. |
 
-It declares no `ws`, no library access and no secrets storage.
+That is everything the manifest declares up front. It declares no `ws`, no library access
+and no secrets storage. It does **not** declare `media.proxy` or a wider `network` grant —
+see below.
 
-### Why it asks for any host
+### The two runtime requests
 
-Your dashboard refuses media and images that do not come from a NoMercy host — that is
-its Content-Security-Policy, and it is there for good reason. Every radio stream and every
-station logo is on somebody else's domain, so handing them to your browser directly
-produces silence and blank tiles.
+Every station is on a different, unlisted host — radio-browser carries some fifty
+thousand stations across thousands of servers, and no list written in advance can cover
+them. So rather than declare a wildcard in the manifest, this plugin asks the owner for
+two things at runtime, the moment it has something to do — its first refresh, or the
+first station page opened, whichever happens first — and shows the reason in the
+dashboard like any other request:
 
-So the server fetches them and passes them on: your browser only ever talks to your own
-server. That is what needs the wide grant. radio-browser carries some fifty thousand
-stations across thousands of hosts, and no list written in advance can cover them.
+| Runtime grant | Why | What you lose without it |
+| --- | --- | --- |
+| `media.proxy` = `*` | Lets the server mint a short-lived url, bound to the listener, for the station being played, so the browser never talks to the stream's own host directly. | Stations can be browsed but not played. The station page says so. |
+| `network.host` = `*` | Your dashboard's Content-Security-Policy refuses media and images that do not come from a NoMercy host, so the server fetches each station's logo and reads the track titles it announces on the plugin's behalf, then passes them on — your browser still only ever talks to your own server. | Stations play, but with no logos and no now-playing titles. |
 
-What this means in practice: **this plugin can make outbound requests to any address.** It
-uses that to fetch station artwork and to read a playing station's now-playing metadata,
-and nothing else — the audio itself streams through the host's own media proxy, a
-separate grant covered below — and its whole source is readable, but you are trusting it
-with that, and you should know you are. If that is more than you want to grant, do not
-install it.
+What this means in practice: **once both are approved, this plugin can make outbound
+requests to any address**, to fetch station artwork and to read a playing station's
+now-playing metadata — and nothing else; the audio itself streams through the first
+grant, not this one. Its whole source is readable, but you are trusting it with that
+reach, and you should know you are. If that is more than you want to grant, approve
+neither and stations stay browsable-but-silent.
 
 **You will need to enable it once.** A plugin that declares a network host is not
 auto-enabled however `autoEnabled` is set, so the server starts it disabled until
@@ -124,7 +131,6 @@ shows you the exact path — and it replaces the fetched catalogue entirely:
     "name": "Local Jazz FM",
     "streamUrl": "https://example.com/jazz.aac",
     "logoUrl": "https://example.com/jazz.png",
-    "homepage": "https://example.com/",
     "genre": "Jazz",
     "country": "US",
     "bitrateKbps": 256,
@@ -151,7 +157,8 @@ rebuilds itself on the next refresh either way.
 The plugin id has not changed, but the manifest has: 2.0.0 declares a hook 1.0.x
 never did, so the server asks you to enable it again even on a server that
 already approved this plugin. See "After installing or updating" above — you
-also need to approve the streaming request before stations play.
+also need to approve the two runtime requests before stations play, with logos
+and now-playing titles.
 
 Your `stations.json` and `user-state.json`, if you have either, are unaffected
 and still work exactly as before.

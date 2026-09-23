@@ -7,8 +7,16 @@ draw..."), closed 2026-08-30, fixed by `9a382fbfc` ("fix(plugins): a form collec
 typed into it"), released v0.1.479; `PluginComponentType.Form` now reads `"PluginForm"`
 (matching the client) instead of `"NMCard"`, and the client's `PluginForm.vue` renders a
 real `<form>`. The third mechanism this file records (`NMSearchInput` firing on click,
-ignoring Enter) is a **separate, still-open** defect in `nomercy-app-web` — see
-`docs/upstream/2026-09-22-nmsearchinput-fires-on-click.md`.
+ignoring Enter) was tracked separately as a still-open `nomercy-app-web` defect; see the
+2026-09-23 status line below for why that tracking note no longer exists.
+
+> **Status (2026-09-23):** the `NMSearchInput` cross-reference above is withdrawn, not
+> just closed. This plugin never emits `NMSearchInput` — it never did, and does not now —
+> so that defect was never actually blocking it; the note describing it as a second,
+> still-open channel this plugin depended on was wrong, and has been deleted rather than
+> corrected. With the `PluginViews.Form` fix in place, `SearchView.Field` renders through
+> `PluginForm`, which submits on Enter as well as on click — see the second correction at
+> the foot of this note.
 
 *(Originally about PluginViews.Form. Two further mechanisms were tried afterwards and are
 recorded at the end; the conclusion is broader than the original title.)*
@@ -29,6 +37,14 @@ which is what pins this to the component rather than to the intent.
 So there is no channel: a plugin cannot read what was typed, and cannot steer where typing
 leads. Until one of those changes, an on-screen keyboard that spells the term into the route
 is the only search a plugin can offer. That is what this plugin ships.
+
+> **Status (2026-09-23):** the paragraph above described the only search this plugin
+> could offer at the time it was written, and it is no longer true. With the
+> `PluginViews.Form` fix released (see the top status line), `SearchView.Field` now
+> renders as a real `PluginForm` that collects what was typed and posts it on submit.
+> The path-segment route (`RadioRoutes.Search`) still exists alongside it — not as a
+> substitute keyboard, but so a search stays shareable and bookmarkable, and so a link
+> can open straight into a result set without going through the form.
 
 ---
 

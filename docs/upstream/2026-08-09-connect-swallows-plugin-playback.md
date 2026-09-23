@@ -5,6 +5,12 @@
 **Effect:** with Connect enabled, no plugin can start audio. The station loads, buffers
 fully, and then sits at 00:00 in silence. Nothing anywhere says why.
 
+> **Status (2026-09-23):** this note's own "The fix" section already records this as
+> landed upstream (`fix/plugin-track-not-routed-to-hub`, `ab9e237`, with regression
+> coverage in `3c11ad4`), so it is carried here only as the diagnosis record, not as an
+> open risk. Nothing in this branch touches Connect, the hub, or how a plugin item is
+> keyed; not re-verified against a running server for this pass.
+
 ## What the browser reports
 
 Station clicked, Now Playing filled, transport frozen. The audio element itself:

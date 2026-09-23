@@ -35,11 +35,11 @@ public sealed class PluginLifecycleTests : IDisposable
           "codec":"MP3","bitrate":128,"hls":0,"lastcheckok":1,"votes":5}]
         """;
 
-    private InternetRadioPlugin Started()
+    private InternetRadioPlugin Started(IPluginGrants? grants = null)
     {
         _handler.Respond(OneStation);
         InternetRadioPlugin plugin = new();
-        plugin.Initialize(new FakePluginContext(_folder, new HttpClient(_handler)));
+        plugin.Initialize(new FakePluginContext(_folder, new HttpClient(_handler), grants));
         return plugin;
     }
 
@@ -196,6 +196,44 @@ public sealed class PluginLifecycleTests : IDisposable
         await plugin.ExecuteAsync(CancellationToken.None);
 
         File.Exists(Path.Combine(_folder, CatalogCache.FileName)).Should().BeTrue();
+    }
+
+    // The host's own cron does not run this job until the next 04:00 UTC, which can be
+    // most of a day after install. This is the call site that has always asked - the
+    // regression this branch fixes is that it was, until now, the *only* one.
+    [Fact]
+    public async Task RefreshTickAsksForBothGrants()
+    {
+        RecordingGrants grants = new();
+        using InternetRadioPlugin plugin = Started(grants);
+
+        await plugin.ExecuteAsync(CancellationToken.None);
+
+        grants.Requested.Select(request => request.Kind).Should().BeEquivalentTo(new[]
+        {
+            PluginGrantKind.ForCapability(PluginCapabilityNames.MediaProxy),
+            PluginGrantKind.NetworkHost,
+        });
+    }
+
+    // A fresh install or upgrade opens a station well before the first cron tick, so the
+    // view path has to ask too - fire-and-forget, so a slow or failing grants facade
+    // cannot delay or break the page that triggered it. The ask races the render, hence
+    // polling rather than asserting immediately after the view comes back.
+    [Fact]
+    public async Task ServingAViewAsksForBothGrantsToo()
+    {
+        RecordingGrants grants = new();
+        using InternetRadioPlugin plugin = Started(grants);
+
+        await plugin.GetViewAsync(Request("/"), CancellationToken.None);
+
+        await Eventually(() => grants.Requested.Count >= 2);
+        grants.Requested.Select(request => request.Kind).Should().BeEquivalentTo(new[]
+        {
+            PluginGrantKind.ForCapability(PluginCapabilityNames.MediaProxy),
+            PluginGrantKind.NetworkHost,
+        });
     }
 
     // RefreshAsync deliberately does not consult StationOverrides - the job still

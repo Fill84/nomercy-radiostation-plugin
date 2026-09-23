@@ -62,16 +62,18 @@ public static class StationCards
     ///
     /// It is here because the client has to identify a track somehow and, with no id in
     /// the payload, it builds one out of the stream url: `plugin:{pluginId}:{streamUrl}`.
-    /// That identifier then goes into a CSS selector and into a route, and a url is legal
-    /// in neither - which is what throws before any audio starts, and why no playback
-    /// request ever reaches this server. See
-    /// docs/upstream/2026-08-08-plugin-media-cannot-play.md.
+    /// That identifier can end up in a CSS selector or a route, where a raw url is not
+    /// legal syntax - that crash was real, and playback in production today goes through
+    /// the fix on the player bar's own path, not around the defect; see
+    /// docs/upstream/2026-08-08-plugin-media-cannot-play.md for the original defect and
+    /// docs/upstream/2026-09-22-list-tracklinks-still-unguarded.md for where a
+    /// url-derived id can still reach an unguarded selector, on a different component
+    /// tree than the player. A station's radio-browser uuid is the honest key regardless
+    /// of any of that: it is what the nowplaying route and every station lookup resolve
+    /// on, and it does not change when a station moves its stream, which a url-derived id
+    /// does - so history and resume state stop hanging off something that was never a key.
     ///
-    /// Sending it costs nothing and is ignored until the client reads it. A station's
-    /// radio-browser uuid is also the honest key: it is what the nowplaying route and
-    /// every station lookup resolve on, and it does not change when a station moves its
-    /// stream, which a url-derived id does - so history and resume state stop hanging off
-    /// something that was never a key.
+    /// Sending it costs nothing, whether or not the client ever reads it.
     /// </summary>
     public const string StationIdKey = "id";
 

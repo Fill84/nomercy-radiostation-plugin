@@ -20,11 +20,14 @@ public class RepositoryManifestTests
     // then PluginPackageChecksum.Refuse compares that string directly against this
     // field - a prefixed value never matches, so the install fails verification
     // every time. The version property lives on PluginVersionEntry, not on this type.
+    // `url` names the index file itself - this same repository.json, at its own
+    // eventual download address - not the zip. `downloadUrl` inside the version entry
+    // below is what points at the zip. The server never reads this top-level field.
     private const string Sample =
         """
         {
           "name": "NoMercy Internet Radio",
-          "url": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/v2.0.0/NoMercy.Plugin.InternetRadio-2.0.0.zip",
+          "url": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/v2.0.0/repository.json",
           "plugins": [
             {
               "id": "5KTKRT4Z2Y9P59Y40W5CX4TQKF",

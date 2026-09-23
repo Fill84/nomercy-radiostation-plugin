@@ -35,8 +35,12 @@ public sealed class StationGrants(IPluginGrants grants, ILogger logger)
 
     public async Task EnsureAsync(CancellationToken ct = default)
     {
-        // Once per process. The host already ignores a repeat, so this only spares it the
-        // round trip on every refresh.
+        // Once per process, but only once a pass actually completes. Interlocked.Exchange
+        // still claims the attempt atomically, so two racing calls (the refresh tick and a
+        // view both landing near process start) do not both ask - but a claim that fails
+        // before either grant is asked for resets itself below, rather than leaving the
+        // owner with nothing to approve for the rest of the process because one attempt
+        // hit a transient fault.
         if (Interlocked.Exchange(ref _asked, 1) == 1)
         {
             return;
@@ -60,12 +64,16 @@ public sealed class StationGrants(IPluginGrants grants, ILogger logger)
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            Volatile.Write(ref _asked, 0);
             throw;
         }
         catch (Exception exception)
         {
             // Asking is a courtesy on a host that mediates it. Failing to ask must not cost
-            // the refresh its catalogue.
+            // the refresh its catalogue - but it also must not be the last time this
+            // process ever asks, so the claim is released for the next call site or the
+            // next tick to retry.
+            Volatile.Write(ref _asked, 0);
             logger.LogWarning(exception, "Internet Radio could not ask the owner for what it needs.");
         }
     }

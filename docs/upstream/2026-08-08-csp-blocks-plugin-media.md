@@ -4,6 +4,19 @@
 **Effect:** no station can play, and no station logo can draw. For this plugin that is
 its entire purpose.
 
+> **Status (2026-09-23):** the opening line above is no longer true of this plugin -
+> both halves were built the way this note itself proposed. Logos are fetched
+> server-side and cached as `data:` URIs (`Catalog/LogoCache.cs`, `LogoFetcher.cs`),
+> which satisfy `img-src`'s `data:` allowance without a new server capability, exactly
+> as "What was right" in the 2026-09-23 conformance spec records. Playback goes through
+> a host-minted, listener-bound proxy url (`Playback/HostStationStreams.cs`), which is
+> the pass-through proxy this note called "no equivalent exists" and asked to be built
+> - it now exists, scoped to this plugin's own `media.proxy` grant. Stations play and
+> logos draw in production; see `PluginLifecycleTests.AStationPagePlaysWhatTheHostMints`
+> and `LogosAreFetchedAfterThePageAndDrawnOnTheNext`. The rest of this note - why a
+> plugin alone cannot fix either directive, and the shape of the fix - is left as
+> written: it is the design record for why the proxy and the cache exist.
+
 ## What the browser says
 
 Playing any station:

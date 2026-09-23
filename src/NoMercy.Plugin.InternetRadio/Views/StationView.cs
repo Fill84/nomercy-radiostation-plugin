@@ -21,7 +21,7 @@ public static class StationView
 
     private static IReadOnlyList<PluginTableColumn> Columns { get; } =
         [
-            new() { Key = "field", Label = "station.field", Width = "12rem" },
+            new() { Key = "field", Label = "station.field" },
             new() { Key = "value", Label = "station.value" },
         ];
 
