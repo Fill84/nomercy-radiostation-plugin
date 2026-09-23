@@ -76,11 +76,16 @@ Two characters is usually enough: `to` already finds Tomorrowland.
 | `ui` | The six pages above. |
 | `scheduledTask` | One job, `refresh`, daily at 04:00, which updates the catalogue. |
 | `network` → `*.api.radio-browser.info` | The one host this plugin knows about at package time: the station directory it fetches the catalogue and search results from. |
+| `media.proxy` | Declares that this plugin *can* ask to mint listener-bound stream urls. Declaring the hook is not the same as being allowed to use it — nothing streams until the separate runtime request below is approved. |
 | `rest` | Three endpoints of its own: one to toggle a favourite, one that runs the search form, and one that returns a station's current track title, read from its ICY metadata, while it plays. Nothing else reaches them — this plugin's own pages are the only caller. |
 
 That is everything the manifest declares up front. It declares no `ws`, no library access
-and no secrets storage. It does **not** declare `media.proxy` or a wider `network` grant —
-see below.
+and no secrets storage. Declaring the `network` and `media.proxy` hooks is what makes the
+server ask you to re-enable this plugin on an upgrade that adds one (see "Upgrading from
+1.0.x" below) — it is not itself permission to reach any host or to stream anything. The
+manifest only names radio-browser; everything else this plugin reaches at runtime is a
+separate approval, asked for and shown to you as its own request, not inherited from
+declaring the hook.
 
 ### The two runtime requests
 

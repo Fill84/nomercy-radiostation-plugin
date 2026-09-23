@@ -14,11 +14,16 @@ namespace NoMercy.Plugin.InternetRadio.Hosting;
 /// addresses arrive with the catalogue. The SDK's answer to that is a runtime request the
 /// owner sees in the dashboard, rather than a wildcard taken at install time.
 ///
-/// Asked from the refresh job, not from a page. A request records and returns; it never
-/// waits for a human, and asking twice for the same thing does not queue a second prompt.
-/// Asking early is also what keeps an owner away from the host's own refusal text, which
-/// tells an author to add the host to plugin.json - a line that does nothing for a
-/// capability grant.
+/// Asked from two places: the refresh job, and the first view served. The refresh job is
+/// the steady-state case - a server that has been running untouched hits its 04:00 cron
+/// tick and asks there, same as always. The view call site exists because that tick can
+/// be up to a day away on a fresh install or an upgrade, and without it a station page
+/// would tell the owner streaming is "waiting for approval" while the dashboard has
+/// nothing to approve. Both call the same idempotent request: a request records and
+/// returns; it never waits for a human, and asking twice for the same thing does not
+/// queue a second prompt. Asking early is also what keeps an owner away from the host's
+/// own refusal text, which tells an author to add the host to plugin.json - a line that
+/// does nothing for a capability grant.
 /// </summary>
 public sealed class StationGrants(IPluginGrants grants, ILogger logger)
 {

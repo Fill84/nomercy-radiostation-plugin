@@ -51,9 +51,7 @@ public static class RadioRoutes
     /// The term also travels as a path segment, alongside the real search form
     /// SearchView.Field builds and posts through PluginViews.Form - not instead of
     /// it. A route is what makes /search/tomorrowland shareable and bookmarkable, so
-    /// typing into the form is not the only way to arrive at a given search; it also
-    /// gives a route for genre chips and other links that want to open straight into
-    /// a result set without going through the form at all.
+    /// typing into the form is not the only way to arrive at a given search.
     ///
     /// Space is written as '+' rather than percent-escaped. The escape would have to
     /// survive the client's own route handling, which already comma-joins segments, and a

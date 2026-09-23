@@ -11,11 +11,15 @@ its entire purpose.
 > as "What was right" in the 2026-09-23 conformance spec records. Playback goes through
 > a host-minted, listener-bound proxy url (`Playback/HostStationStreams.cs`), which is
 > the pass-through proxy this note called "no equivalent exists" and asked to be built
-> - it now exists, scoped to this plugin's own `media.proxy` grant. Stations play and
-> logos draw in production; see `PluginLifecycleTests.AStationPagePlaysWhatTheHostMints`
-> and `LogosAreFetchedAfterThePageAndDrawnOnTheNext`. The rest of this note - why a
-> plugin alone cannot fix either directive, and the shape of the fix - is left as
-> written: it is the design record for why the proxy and the cache exist.
+> - it now exists, scoped to this plugin's own `media.proxy` grant. Not observed against
+> a running server or a browser: `PluginLifecycleTests.AStationPagePlaysWhatTheHostMints`
+> pins that the plugin builds a play intent and a play button from a host-minted url
+> (it stubs `IStationStreams` outright, so it exercises none of the minting or the CSP
+> itself), and `LogosAreFetchedAfterThePageAndDrawnOnTheNext` pins that the logo cache
+> fetches and stores a `data:` URI end to end, against a fake HTTP handler. That is the
+> mechanism working as designed, not a browser or a CSP confirming it. The rest of this
+> note - why a plugin alone cannot fix either directive, and the shape of the fix - is
+> left as written: it is the design record for why the proxy and the cache exist.
 
 ## What the browser says
 

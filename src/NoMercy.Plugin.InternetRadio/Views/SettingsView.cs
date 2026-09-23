@@ -133,9 +133,9 @@ public static class SettingsView
                 "settings-editing-body",
                 // Left English, like every other caption on this page: PluginViews.Text
                 // renders "caption" as an NMHelper, whose helperText prop NMRender never
-                // resolves through the plugin's bundle (see EmptyCatalog.Build for the
-                // same rule stated once). Keying it would ship a raw key nobody ever sees
-                // translated.
+                // resolves through the plugin's bundle (see SearchView.cs's "search-failed"
+                // comment for the same rule stated once). Keying it would ship a raw key
+                // nobody ever sees translated.
                 "This page is read-only. It shows what the plugin has already decided - "
                     + "the catalogue, your favourites, and any stations.json override - "
                     + "rather than letting you change any of it here. There is nothing "

@@ -8,14 +8,22 @@ and never requests the stream at all.
 > path that matters most - the player bar. `#23` (`2a24f7a10`, closed upstream) guarded
 > `src/components/MusicPlayer/components/TrackLinks.vue`'s `RouterLink` against exactly
 > this url-derived-id shape, and that is the `TrackLinks` a station played from this
-> plugin's own controls renders through; `PluginLifecycleTests.AStationPagePlaysWhatTheHostMints`
-> confirms a station starts in production. The class of bug is not closed everywhere,
-> though: `docs/upstream/2026-09-22-list-tracklinks-still-unguarded.md` found the same
-> unguarded pattern, unfixed, in a second `TrackLinks.vue` reachable through
-> `NMTrackRow`/`NMTopResultCard` - components a plugin tree can draw directly, and ones
-> this plugin does not currently draw for now-playing. `StationCards.StationIdKey`
-> (`Views/StationCards.cs`) still sends the station's own uuid alongside the url-derived
-> id for exactly the reason given below, on the chance a client ever reads it.
+> plugin's own controls renders through. Not observed against a running server or a
+> browser: `PluginLifecycleTests.AStationPagePlaysWhatTheHostMints` pins that the plugin
+> itself builds a play intent and a play button from a host-minted url - it stubs
+> `IStationStreams` outright, so it says nothing about the client mounting a player or
+> reaching this selector. The class of bug is not closed everywhere, though:
+> `docs/upstream/2026-09-22-list-tracklinks-still-unguarded.md` found the same unguarded
+> pattern, unfixed, in a second `TrackLinks.vue` reachable through
+> `NMTrackRow`/`NMTopResultCard`. This plugin's own view tree never draws either
+> component directly (confirmed: no reference in `src/`) - but that note also records
+> that every station this plugin plays announces its now-playing track as an artist
+> string with no artist entity, which is exactly the shape that trips the bug *if* the
+> client's own now-playing UI ever draws that announcement through one of them; whether
+> it does is entirely the client's call, and unverified either way from here.
+> `StationCards.StationIdKey` (`Views/StationCards.cs`) still sends the station's own
+> uuid alongside the url-derived id for exactly the reason given below, on the chance a
+> client ever reads it.
 
 ## What happens
 
