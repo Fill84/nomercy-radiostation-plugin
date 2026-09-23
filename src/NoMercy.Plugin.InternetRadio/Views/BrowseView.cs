@@ -66,7 +66,9 @@ public static class BrowseView
         // load, and everyone's first visit here has no favourites at all.
         if (state.Favourites.Count > 0)
         {
-            children.Add(PluginViews.Text("browse-favourites-heading", "Favourites", "subtitle"));
+            // A key: "subtitle" also builds a plain text leaf under an
+            // NMContentHeader, resolved the same way a "title" is.
+            children.Add(PluginViews.Text("browse-favourites-heading", "stations.favourites", "subtitle"));
             children.Add(StationCards.Grid("browse-favourites", state.Favourites, "fav", logos));
         }
 
@@ -76,7 +78,7 @@ public static class BrowseView
         // under one box is a page where it is not clear which one answered you.
         if (!searching)
         {
-            children.Add(PluginViews.Text("browse-popular-heading", "Popular", "subtitle"));
+            children.Add(PluginViews.Text("browse-popular-heading", "stations.popular", "subtitle"));
             children.Add(StationCards.Grid(
                 "browse-popular-grid",
                 catalog.Popular(StationCards.PopularCount),
@@ -91,6 +93,8 @@ public static class BrowseView
     {
         List<PluginComponent> chips =
         [
+            // The catalogue's own genre name, not chrome - there is no key for a word
+            // radio-browser handed this plugin at runtime.
             .. catalog.Genres.Select(genre =>
                 PluginViews.Button(
                     $"browse-genre-{genre.Section.Slug}",
@@ -98,6 +102,11 @@ public static class BrowseView
                     PluginActionIntent.Navigate(RadioRoutes.Genre(genre.Section.Slug))
                 )
             ),
+            // Left English: a button's label also becomes an unresolved `ariaLabel`
+            // prop, so keying it would leave the raw key in the accessible name. Every
+            // button and icon-button label in this plugin stays English for that
+            // reason - "stations.all" only became a key where it draws as a plain
+            // title, on AllStationsView's own heading.
             IconButton.Build(
                 "browse-all",
                 "All stations",

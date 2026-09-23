@@ -1,6 +1,15 @@
 {
   "stations.title": "Radio stations",
+  "stations.all": "All stations",
+  "stations.favourites": "Favourites",
+  "stations.popular": "Popular",
+  "search.title": "Search",
+  "search.nothing": "Nothing found",
+  "search.unavailable": "Search is unavailable",
+  "genre.title": "Genre",
   "station.title": "Station",
-  "station.play": "Play",
-  "back": "Back"
+  "settings.title": "Settings",
+  "settings.genres": "Genres",
+  "settings.own": "Your own stations",
+  "settings.editing": "Why there is nothing to edit"
 }

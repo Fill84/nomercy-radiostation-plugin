@@ -40,6 +40,10 @@ public static class SearchView
     {
         List<PluginComponent> children =
         [
+            // Left English: a button's label also becomes an unresolved `ariaLabel`
+            // prop, so keying it would leave the raw key in the accessible name.
+            // Every button and icon-button label in this plugin stays English for
+            // the same reason - see EmptyCatalog.Build.
             IconButton.Build(
                 "search-back",
                 "Back",
@@ -84,6 +88,12 @@ public static class SearchView
     /// rather than "drum &amp; bass", "The Netherlands" rather than "Netherlands" -
     /// and a filter that silently matches nothing reads as an empty database.
     /// </summary>
+    // Every string PluginViews.Form takes - the submit label here and every field's
+    // Label/Placeholder below - is left English on purpose. PluginForm.vue (the
+    // client component that actually draws this tag) binds `submitLabel` and
+    // `field.label` straight into its template with no pluginText call anywhere in
+    // it; NMRender's resolveText is never reached for a form at all. A key here
+    // would render as the literal key on every field, in every language.
     public static PluginComponent Field(string term, UserState state, SearchFacets facets) =>
         PluginViews.Form(
             "search-form",
@@ -169,9 +179,11 @@ public static class SearchView
 
         if (queryFailed)
         {
+            // The title is a key - EmptyState's title is a resolved text leaf. The
+            // message stays literal: an NMHelper's `helperText` is never resolved.
             yield return PluginViews.EmptyState(
                 "search-failed",
-                "Search is unavailable",
+                "search.unavailable",
                 "radio-browser did not answer. Try again in a moment.");
 
             yield break;
@@ -181,7 +193,7 @@ public static class SearchView
         {
             yield return PluginViews.EmptyState(
                 "search-empty",
-                "Nothing found",
+                "search.nothing",
                 term.Length > 0
                     ? $"No playable station matches “{term}”."
                     : "No playable station matches those filters.");
@@ -189,6 +201,7 @@ public static class SearchView
             yield break;
         }
 
+        // Dynamic, not chrome - the count changes on every search.
         yield return PluginViews.Text(
             "search-results-heading",
             results.Count == 1 ? "1 station" : $"{results.Count} stations",
@@ -196,6 +209,10 @@ public static class SearchView
 
         yield return StationCards.Grid("search-grid", results, "search", logos);
 
+        // Left English: a button's label also becomes an unresolved `ariaLabel`
+        // prop, so keying it would leave the raw key in the accessible name. Every
+        // button and icon-button label in this plugin stays English for the same
+        // reason - see EmptyCatalog.Build.
         yield return PluginViews.Button(
             "search-clear",
             "Clear search",

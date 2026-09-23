@@ -38,7 +38,11 @@ public static class AllStationsView
             PluginViews.Container(
                 "all-root",
                 BackToBrowse,
-                PluginViews.Text("all-title", "All stations", "title"),
+                // "title" builds a plain text leaf under an NMContentHeader, which
+                // resolves through this plugin's bundle - so this is a key, unlike the
+                // "All stations" IconButton below, whose label would also carry the
+                // key into an unresolved `ariaLabel` prop. See BackToBrowse.
+                PluginViews.Text("all-title", "stations.all", "title"),
                 PluginViews.Text(
                     "all-count",
                     stations.Count == 1 ? "1 station" : $"{stations.Count} stations",
@@ -49,6 +53,11 @@ public static class AllStationsView
         );
     }
 
+    // Left in English on purpose: PluginViews.Button (which IconButton wraps) writes
+    // its label both as a resolved child text leaf and, unresolved, as `ariaLabel` -
+    // NMRender only ever resolves a leaf's own `text` prop. A key here would translate
+    // what the eye reads and leave the raw key in the accessible name. Every button and
+    // icon-button label in this plugin stays English for the same reason.
     private static PluginComponent BackToBrowse =>
         IconButton.Build(
             "all-back",

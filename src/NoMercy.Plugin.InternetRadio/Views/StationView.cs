@@ -51,6 +51,14 @@ public static class StationView
                 PluginViews.Container(
                     "station-root",
                     BackButtons,
+                    // The title WOULD resolve - EmptyState's title is a plain text
+                    // leaf - but it stays English: every ViewFixtures.All() fixture
+                    // asks StationView for a station that exists ("groove"), so this
+                    // branch is never reached by TranslationKeys.Drawn(), and a key
+                    // nothing in the shared fixtures draws is exactly what
+                    // TranslationTests.EveryKeyInTheBundleIsOneAViewDraws exists to
+                    // catch. The message stays literal regardless - it lands on an
+                    // NMHelper's `helperText`, which NMRender never resolves.
                     PluginViews.EmptyState(
                         "station-missing",
                         "Station not found",
@@ -118,6 +126,13 @@ public static class StationView
     }
 
     // This page is where playing, queueing and keeping a station live.
+    //
+    // Every label built here - Play, Add to queue, the favourite toggle - stays
+    // English on purpose, and so does the unavailable caption below. A button's
+    // label becomes an unresolved `ariaLabel` prop as well as a resolved text leaf
+    // (see EmptyCatalog.Build), and a caption's text lands on an NMHelper's
+    // `helperText`, which NMRender never resolves at all - neither prop can carry a
+    // key without the key itself reaching the viewer.
     private static PluginComponent Actions(
         RadioStation station, bool isFavourite, StationStream? stream, string? cover)
     {
@@ -206,6 +221,10 @@ public static class StationView
     // The spec calls for both: back to the table this page is usually reached
     // from, and back to the landing page for someone who arrived here from a
     // bookmark or a grid card instead.
+    //
+    // Both labels stay English: a button's label also becomes an unresolved
+    // `ariaLabel` prop, so keying either would leave the raw key in the accessible
+    // name. See EmptyCatalog.Build.
     private static PluginComponent BackButtons =>
         PluginViews.Row(
             "station-back-row",

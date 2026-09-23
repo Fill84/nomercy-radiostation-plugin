@@ -41,6 +41,11 @@ public static class SettingsView
     {
         List<PluginComponent> children =
         [
+            // The plugin's own name, not page chrome - left English the way a brand
+            // name is, same as every other client that draws it. "settings.title"
+            // exists, but only for the route table's nav/breadcrumb label ("Settings")
+            // - see InternetRadioPlugin.Table - which is a different string from this
+            // page's own heading.
             PluginViews.Text("settings-title", "Internet Radio", "title"),
             PluginViews.Row(
                 "settings-status",
@@ -52,6 +57,12 @@ public static class SettingsView
             // TTL - always, given the daily job - means RefreshView re-renders the
             // same cache untouched, so this must not read as a button that forces a
             // fetch. "Refresh now" claimed exactly that and did nothing about it.
+            // Left English rather than keyed: a button's label also becomes an
+            // unresolved `ariaLabel` prop (see EmptyCatalog.Build), and
+            // SettingsViewTests.OffersAReloadRatherThanClaimingToRefresh already pins
+            // that accessible name to the literal "Reload" - a key here would both
+            // regress that guarantee and read out as "settings.reload" to a screen
+            // reader in every language.
             IconButton.Build(
                 "settings-refresh",
                 "Reload",
@@ -80,7 +91,12 @@ public static class SettingsView
 
         if (!catalog.IsEmpty)
         {
-            children.Add(PluginViews.Text("settings-genres-heading", "Genres", "subtitle"));
+            children.Add(PluginViews.Text("settings-genres-heading", "settings.genres", "subtitle"));
+            // The table's own column labels ("Genre", "Stations") stay English: a
+            // header cell's text does draw as a resolved leaf, but SettingsViewTests
+            // looks a column up by its rendered label (PluginNodes.Value reads a row
+            // by matching the header cell's text), so keying it would also require
+            // rewriting that test - out of scope for this change.
             children.Add(
                 PluginViews.Table(
                     "settings-genres",
@@ -112,7 +128,7 @@ public static class SettingsView
                 : $"{state.Favourites.Count} favourite stations.",
             "caption"));
 
-        children.Add(PluginViews.Text("settings-own-heading", "Your own stations", "subtitle"));
+        children.Add(PluginViews.Text("settings-own-heading", "settings.own", "subtitle"));
         children.Add(
             PluginViews.Text(
                 "settings-own-body",
@@ -124,7 +140,7 @@ public static class SettingsView
             )
         );
 
-        children.Add(PluginViews.Text("settings-editing-heading", "Why there is nothing to edit", "subtitle"));
+        children.Add(PluginViews.Text("settings-editing-heading", "settings.editing", "subtitle"));
         children.Add(
             PluginViews.Text(
                 "settings-editing-body",
@@ -141,6 +157,9 @@ public static class SettingsView
         return PluginViews.Declarative(PluginViews.Container("settings-root", [.. children]));
     }
 
+    // Every label here stays English: NMBadge's own `text` prop is bound to the DOM
+    // exactly as this payload writes it - only a leaf whose component is NMText
+    // resolves through the plugin's bundle. See NMRender.vue.
     private static PluginComponent SourceBadge(StationCatalog catalog)
     {
         (string Label, string Variant) badge = catalog.Source switch
