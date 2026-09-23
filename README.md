@@ -5,6 +5,17 @@ that browses and plays internet radio. See
 [the plugin's own README](src/NoMercy.Plugin.InternetRadio/README.md) for what it
 does and how to use it.
 
+## Install
+
+**Install.** In the dashboard, add
+`https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/<tag>/repository.json`
+as a plugin repository, then install Internet Radio from it. The server checks the
+download against the checksum in that file.
+
+Installing by hand — extracting the zip into `<server>/plugins/` — skips that check, and
+a plugin uploaded through the dashboard's upload button is visible to the server owner
+alone. Use the repository.
+
 ## Building
 
 Requires the .NET 10 SDK (pinned in `global.json`).

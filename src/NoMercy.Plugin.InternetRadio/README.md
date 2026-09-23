@@ -13,9 +13,14 @@ servers refuse 1.x.
 
 ## Install
 
-Extract the zip into `<server>/plugins/` and restart the server. **Do not use the
-dashboard's upload button:** a plugin uploaded as a file is visible to the server
-owner only, and members will not see Internet Radio.
+**Install.** In the dashboard, add
+`https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/<tag>/repository.json`
+as a plugin repository, then install Internet Radio from it. The server checks the
+download against the checksum in that file.
+
+Installing by hand — extracting the zip into `<server>/plugins/` — skips that check, and
+a plugin uploaded through the dashboard's upload button is visible to the server owner
+alone. Use the repository.
 
 ## After installing or updating
 

@@ -289,6 +289,11 @@ jobs:
       # One URL a plugin catalogue can point at, instead of someone hand-writing the
       # entry and hand-checking the version - which is exactly how the 1.0.0/1.0.1
       # mismatch became somebody else's problem.
+      #
+      # The shape this writes is pinned by RepositoryManifestTests.TheRepositoryIndexIsOneTheServerCanRead
+      # in tests/NoMercy.Plugin.InternetRadio.Tests/RepositoryManifestTests.cs, whose
+      # Sample is this same template with the values a release fills in. Keep them in
+      # step: a field added, renamed, or reshaped here belongs there too.
       - name: Build repository.json
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -297,11 +302,15 @@ jobs:
           ZIP="${{ steps.stage.outputs.zip }}"
           DOWNLOAD="${PUBLIC_FORGEJO_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${ZIP}"
 
+          # Bare hex, no "sha256:" prefix: PluginPackageChecksum.Refuse on the server
+          # hashes the downloaded .zip and compares the raw digest against this field
+          # verbatim. A prefix here is a checksum that can never match, so every
+          # install through this repository would fail verification.
           jq -n \
             --slurpfile manifest "$MANIFEST" \
             --arg version "${{ steps.stage.outputs.version }}" \
             --arg download "$DOWNLOAD" \
-            --arg checksum "sha256:${{ steps.stage.outputs.sha }}" \
+            --arg checksum "${{ steps.stage.outputs.sha }}" \
             --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{
               name: "NoMercy Internet Radio",
@@ -337,6 +346,7 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           REPO="${GITHUB_REPOSITORY}"
           API="${PUBLIC_FORGEJO_URL%/}/api/v1"
+          REPO_INDEX="${PUBLIC_FORGEJO_URL}/${REPO}/releases/download/${TAG}/repository.json"
 
           BODY=$(cat <<EOF
           ## Internet Radio — ${TAG}
@@ -348,13 +358,17 @@ jobs:
           this release; newer servers refuse 1.x.
 
           ### Install
-          1. Extract \`${ZIP}\` into \`<server>/plugins/\`.
-          2. Restart the server.
-          3. **Enable the plugin in the dashboard**, then **approve its streaming request**.
-             Until both are done, stations can be browsed but not played.
+          In the dashboard, add \`${REPO_INDEX}\` as a plugin repository, then install
+          Internet Radio from it. The server checks the download against the checksum in
+          that file.
 
-          **Do not install it with the dashboard's upload button.** A plugin uploaded as a
-          file is visible to the server owner only, and members will not see it.
+          Installing by hand — extracting \`${ZIP}\` into \`<server>/plugins/\` — skips that
+          check, and a plugin uploaded through the dashboard's upload button is visible to
+          the server owner alone. Use the repository.
+
+          After installing or updating, **enable the plugin in the dashboard**, then
+          **approve its streaming request**. Until both are done, stations can be browsed
+          but not played.
 
           ### Verify
           \`\`\`

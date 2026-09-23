@@ -94,6 +94,11 @@ Taken with the owner on 2026-09-22.
 | Other repositories' bugs | Verified first, then drafted as issues, and **raised only on the owner's approval**. |
 | End-to-end test | On a **local server** on this machine, running the newest release. |
 
+> **Correction (2026-09-23):** this spec's advice to extract the zip by hand was wrong.
+> It works only because no `.sideloaded` marker is written, which also skips the
+> developer-mode gate and the checksum the server would otherwise verify. The supported
+> route is a repository index; see `2026-09-23-sdk-conformance-design.md`.
+
 ## Build and contract
 
 ### Building against a release (step 1)
@@ -299,6 +304,11 @@ The root README, the plugin README and the release-notes template in CI say:
 - **Install:** extract the zip into `<server>/plugins/` and restart. **Not through the
   upload button:** a plugin uploaded as a file is visible to the owner only, and members
   will not see the radio.
+
+  > **Correction (2026-09-23):** this spec's advice to extract the zip by hand was wrong.
+  > It works only because no `.sideloaded` marker is written, which also skips the
+  > developer-mode gate and the checksum the server would otherwise verify. The supported
+  > route is a repository index; see `2026-09-23-sdk-conformance-design.md`.
 - **After updating:** enable the plugin again (it asks for a new permission), then
   approve its streaming request in the dashboard. Until both are done, stations browse
   but do not play.
