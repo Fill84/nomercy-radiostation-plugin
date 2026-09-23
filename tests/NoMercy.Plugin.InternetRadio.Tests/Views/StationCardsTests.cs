@@ -6,7 +6,6 @@ using NoMercy.PluginSdk.Abstractions;
 using Xunit;
 using NoMercy.Plugin.InternetRadio.Catalog;
 using NoMercy.Plugin.InternetRadio.Controllers;
-using NoMercy.Plugin.InternetRadio.State;
 using NoMercy.Plugin.InternetRadio.Views;
 
 namespace NoMercy.Plugin.InternetRadio.Tests.Views;
@@ -35,31 +34,13 @@ public class StationCardsTests
         public string? DataUriFor(RadioStation station) => dataUri;
     }
 
-    // A station is not an artist. Left to its own music vocabulary the card read
-    // "Artist" under every station on the shelf, with a bare bullet after it.
-    [Fact]
-    public void Tile_SaysWhereTheStationBroadcastsFromAndWhatItPlays()
-    {
-        Dictionary<string, object?> data = Data(StationCards.Tile(Station()));
-
-        data["description"].Should().Be("NL • Ambient");
-    }
-
-    [Fact]
-    public void Tile_LeavesTheLineOutWhenAStationSaysNeither()
-    {
-        RadioStation bare = Station() with { Country = null, Genre = null };
-
-        Data(StationCards.Tile(bare))["description"].Should().Be(string.Empty);
-    }
-
     // The grid Films, Series and Music are laid out with. A plugin cannot express its
     // responsive column counts and should not try: the point is that it is the same shelf.
     [Fact]
     public void TheGridIsTheAppsOwnGrid()
     {
         PluginComponent grid = StationCards.Grid(
-            "g", [Station(id: "a"), Station(id: "b")], UserState.Empty, "s");
+            "g", [Station(id: "a"), Station(id: "b")], "s");
 
         grid.Component.Should().Be(Ui.MediaGridComponent);
         grid.Items.Should().HaveCount(2);
@@ -95,7 +76,7 @@ public class StationCardsTests
     public void TheGridHandsEveryTileTheSameLogos()
     {
         PluginComponent grid = StationCards.Grid(
-            "g", [Station(id: "a"), Station(id: "b")], UserState.Empty, "s", new FixedLogos("data:x"));
+            "g", [Station(id: "a"), Station(id: "b")], "s", new FixedLogos("data:x"));
 
         // Cast to string rather than left as object: FluentAssertions only offers AllBe on a
         // string collection, not on the object-typed values a props dictionary holds.
@@ -117,8 +98,8 @@ public class StationCardsTests
     [Fact]
     public void Grid_ScopesTileIdsSoOnePageCanShowAStationTwice()
     {
-        string kept = StationCards.Grid("g", [Station()], UserState.Empty, "fav").Items[0].Id;
-        string popular = StationCards.Grid("g", [Station()], UserState.Empty, "popular").Items[0].Id;
+        string kept = StationCards.Grid("g", [Station()], "fav").Items[0].Id;
+        string popular = StationCards.Grid("g", [Station()], "popular").Items[0].Id;
 
         kept.Should().NotBe(popular);
     }

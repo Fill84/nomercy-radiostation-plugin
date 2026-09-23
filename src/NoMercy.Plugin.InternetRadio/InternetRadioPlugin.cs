@@ -546,7 +546,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             "Internet Radio has no page for the route {Route}.", route ?? "(null)");
 
         return PluginViews.Declarative(
-            Ui.EmptyState(
+            PluginViews.EmptyState(
                 "unknown-route",
                 "Nothing here",
                 "This version of Internet Radio has no page at that address."
@@ -748,7 +748,7 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
         if (_disposed)
         {
             return PluginViews.Declarative(
-                Ui.EmptyState(
+                PluginViews.EmptyState(
                     "plugin-unavailable",
                     "Internet Radio is unavailable",
                     "This plugin is disabled or is being unloaded."
@@ -807,15 +807,15 @@ public sealed class InternetRadioPlugin : IUiPlugin, IScheduledTaskPlugin
             _context?.Logger.LogError(exception, "Internet Radio could not build the view for {Route}.", request.Route);
 
             return PluginViews.Declarative(
-                Ui.Container(
+                PluginViews.Container(
                     "view-error",
-                    Ui.Badge("view-error-badge", "Unavailable", PluginBadgeVariant.Danger),
-                    Ui.EmptyState(
+                    PluginViews.Badge("view-error-badge", "Unavailable", PluginBadgeVariant.Danger),
+                    PluginViews.EmptyState(
                         "view-error-empty",
                         "This page could not be built",
                         "Check the server log for Internet Radio."
                     ),
-                    Ui.Button("view-error-retry", "Try again", PluginActionIntent.RefreshView())
+                    PluginViews.Button("view-error-retry", "Try again", PluginActionIntent.RefreshView())
                 )
             );
         }

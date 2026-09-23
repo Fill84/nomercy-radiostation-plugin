@@ -38,7 +38,7 @@ public sealed class InternetRadioController(IPluginManager pluginManager) : Plug
     /// this arrived with an empty body every time - not because the binding was wrong, but
     /// because the client rendered the form as a card, with no &lt;form&gt; element to
     /// collect from. Fixed upstream: the form is a real PluginForm now, and its fields
-    /// arrive as posted. See Ui.
+    /// arrive as posted. See PluginViews.Form, which SearchView.Field builds it with.
     /// </summary>
     [HttpPost(SearchMethod)]
     public Task<IActionResult> Search([FromBody] SearchRequest? request, CancellationToken ct) =>

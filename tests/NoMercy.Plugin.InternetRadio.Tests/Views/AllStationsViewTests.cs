@@ -75,9 +75,11 @@ public class AllStationsViewTests
     [Fact]
     public void SaysHowManyThereAre()
     {
+        // A caption is an NMHelper now, carrying its line under `helperText` rather
+        // than the `value` a PluginText leaf used to hold.
         AllNodes(Build(Station("a", "Alpha FM"), Station("b", "Bravo FM")))
             .Single(node => node.Id == "all-count")
-            .Props["value"]!.ToString().Should().Contain("2");
+            .Props["helperText"]!.ToString().Should().Contain("2");
     }
 
     // An empty catalogue has to explain itself. A blank page reads as a broken plugin.
@@ -86,7 +88,7 @@ public class AllStationsViewTests
     {
         PluginView view = AllStationsView.Build(StationCatalog.Empty(), UserState.Empty);
 
-        AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
+        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
     }
 
     [Fact]

@@ -35,17 +35,7 @@ public class StationViewTests
         public string? DataUriFor(RadioStation station) => dataUri;
     }
 
-    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
-    {
-        yield return node;
-        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
-        {
-            yield return child;
-        }
-    }
-
-    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
-        (view.Components ?? []).SelectMany(Flatten);
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) => ViewFixtures.Flatten(view);
 
     private static PluginComponent? ActionOfType(PluginView view, string type) =>
         AllNodes(view).FirstOrDefault(node => node.Action?.Type == type);
@@ -95,7 +85,9 @@ public class StationViewTests
 
         ActionOfType(view, PluginActionType.PlayMedia).Should().BeNull();
         ActionOfType(view, PluginActionType.Enqueue).Should().BeNull();
-        Node(view, "station-stream-unavailable-a").Props["value"]
+        // A caption is an NMHelper now, carrying its line under `helperText` rather
+        // than the `value` a PluginText leaf used to hold.
+        Node(view, "station-stream-unavailable-a").Props["helperText"]
             .Should().BeOfType<string>().Which.Should().Contain("owner");
         // The favourite still works: keeping a station needs no stream.
         AllNodes(view).Should().Contain(node => node.Id == "station-favourite-a");
@@ -184,7 +176,7 @@ public class StationViewTests
     {
         PluginView view = StationView.Build(Catalog(Full), "gone", UserState.Empty);
 
-        AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
+        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
         ActionOfType(view, PluginActionType.PlayMedia).Should().BeNull();
     }
 
@@ -209,10 +201,10 @@ public class StationViewTests
         // the absence is asserted the way it now shows up - no blank text anywhere
         // under the detail - which is the rendered outcome the prop only stood in for.
         PluginComponent detail = Node(view, "station-detail-b");
-        Flatten(detail).Should().NotContain(node =>
+        PluginNodes.Flatten(detail).Should().NotContain(node =>
             node.Props.ContainsKey("text")
-            && string.IsNullOrWhiteSpace(node.Props["value"] as string));
-        Flatten(detail).Should().NotContain(node => node.Id == "station-detail-b-secondary");
+            && string.IsNullOrWhiteSpace(node.Props["text"] as string));
+        PluginNodes.Flatten(detail).Should().NotContain(node => node.Id == "station-detail-b-secondary");
 
         // Stream and Source are the only two facts that always survive - Stream
         // because it is required on RadioStation, Source because Provenance never
@@ -240,6 +232,8 @@ public class StationViewTests
     {
         PluginView view = StationView.Build(Full, UserState.Empty, logos: new FixedLogos("data:image/png;base64,AA=="));
 
-        Node(view, "station-detail-a").Props["image"].Should().Be("data:image/png;base64,AA==");
+        // PluginViews.Detail no longer carries the image as a prop on itself: it draws
+        // it as its own NMImage child, `{id}-art`, holding the url under `src`.
+        Node(view, "station-detail-a-art").Props["src"].Should().Be("data:image/png;base64,AA==");
     }
 }

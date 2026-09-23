@@ -40,7 +40,7 @@ public static class SearchView
     {
         List<PluginComponent> children =
         [
-            Ui.Button(
+            PluginViews.Button(
                 "search-back",
                 "Back",
                 PluginActionIntent.Navigate(RadioRoutes.Browse),
@@ -51,7 +51,7 @@ public static class SearchView
 
         children.AddRange(Results(term, results, queryFailed, state, logos));
 
-        return PluginViews.Declarative(Ui.Container("search-root", [.. children]));
+        return PluginViews.Declarative(PluginViews.Container("search-root", [.. children]));
     }
 
     /// <summary>
@@ -85,7 +85,7 @@ public static class SearchView
     /// and a filter that silently matches nothing reads as an empty database.
     /// </summary>
     public static PluginComponent Field(string term, UserState state, SearchFacets facets) =>
-        Ui.Form(
+        PluginViews.Form(
             "search-form",
             "Search",
             PluginActionIntent.CallPlugin(InternetRadioController.SearchMethod),
@@ -169,7 +169,7 @@ public static class SearchView
 
         if (queryFailed)
         {
-            yield return Ui.EmptyState(
+            yield return PluginViews.EmptyState(
                 "search-failed",
                 "Search is unavailable",
                 "radio-browser did not answer. Try again in a moment.");
@@ -179,7 +179,7 @@ public static class SearchView
 
         if (results.Count == 0)
         {
-            yield return Ui.EmptyState(
+            yield return PluginViews.EmptyState(
                 "search-empty",
                 "Nothing found",
                 term.Length > 0
@@ -189,14 +189,14 @@ public static class SearchView
             yield break;
         }
 
-        yield return Ui.Text(
+        yield return PluginViews.Text(
             "search-results-heading",
             results.Count == 1 ? "1 station" : $"{results.Count} stations",
             "subtitle");
 
-        yield return StationCards.Grid("search-grid", results, state, "search", logos);
+        yield return StationCards.Grid("search-grid", results, "search", logos);
 
-        yield return Ui.Button(
+        yield return PluginViews.Button(
             "search-clear",
             "Clear search",
             PluginActionIntent.Navigate(RadioRoutes.SearchRoot),

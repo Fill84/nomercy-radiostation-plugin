@@ -21,7 +21,7 @@ public static class AllStationsView
         if (catalog.IsEmpty)
         {
             return PluginViews.Declarative(
-                Ui.Container("all-root", BackToBrowse, EmptyCatalog.Build(catalog))
+                PluginViews.Container("all-root", BackToBrowse, EmptyCatalog.Build(catalog))
             );
         }
 
@@ -35,22 +35,22 @@ public static class AllStationsView
         ];
 
         return PluginViews.Declarative(
-            Ui.Container(
+            PluginViews.Container(
                 "all-root",
                 BackToBrowse,
-                Ui.Text("all-title", "All stations", "title"),
-                Ui.Text(
+                PluginViews.Text("all-title", "All stations", "title"),
+                PluginViews.Text(
                     "all-count",
                     stations.Count == 1 ? "1 station" : $"{stations.Count} stations",
                     "caption"
                 ),
-                StationCards.Grid("all-grid", stations, state, "all", logos)
+                StationCards.Grid("all-grid", stations, "all", logos)
             )
         );
     }
 
     private static PluginComponent BackToBrowse =>
-        Ui.Button(
+        PluginViews.Button(
             "all-back",
             "Back",
             PluginActionIntent.Navigate(RadioRoutes.Browse),

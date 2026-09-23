@@ -31,7 +31,7 @@ public static class BrowseView
         [
             // No title here. The host draws the plugin's name as the page heading already,
             // and repeating it put "Internet Radio" on screen twice, one line apart.
-            Ui.Text(
+            PluginViews.Text(
                 "browse-summary",
                 $"{catalog.Count} stations across {catalog.Genres.Count} genres. Pick one and it plays.",
                 "caption"
@@ -66,8 +66,8 @@ public static class BrowseView
         // load, and everyone's first visit here has no favourites at all.
         if (state.Favourites.Count > 0)
         {
-            children.Add(Ui.Text("browse-favourites-heading", "Favourites", "subtitle"));
-            children.Add(StationCards.Grid("browse-favourites", state.Favourites, state, "fav", logos));
+            children.Add(PluginViews.Text("browse-favourites-heading", "Favourites", "subtitle"));
+            children.Add(StationCards.Grid("browse-favourites", state.Favourites, "fav", logos));
         }
 
         children.Add(GenreChips(catalog));
@@ -76,16 +76,15 @@ public static class BrowseView
         // under one box is a page where it is not clear which one answered you.
         if (!searching)
         {
-            children.Add(Ui.Text("browse-popular-heading", "Popular", "subtitle"));
+            children.Add(PluginViews.Text("browse-popular-heading", "Popular", "subtitle"));
             children.Add(StationCards.Grid(
                 "browse-popular-grid",
                 catalog.Popular(StationCards.PopularCount),
-                state,
                 "popular",
                 logos));
         }
 
-        return PluginViews.Declarative(Ui.Container("browse-root", [.. children]));
+        return PluginViews.Declarative(PluginViews.Container("browse-root", [.. children]));
     }
 
     private static PluginComponent GenreChips(StationCatalog catalog)
@@ -93,13 +92,13 @@ public static class BrowseView
         List<PluginComponent> chips =
         [
             .. catalog.Genres.Select(genre =>
-                Ui.Button(
+                PluginViews.Button(
                     $"browse-genre-{genre.Section.Slug}",
                     $"{genre.Section.Label} ({genre.Count})",
                     PluginActionIntent.Navigate(RadioRoutes.Genre(genre.Section.Slug))
                 )
             ),
-            Ui.Button(
+            PluginViews.Button(
                 "browse-all",
                 "All stations",
                 PluginActionIntent.Navigate(RadioRoutes.AllStations),
@@ -107,6 +106,6 @@ public static class BrowseView
             ),
         ];
 
-        return Ui.Row("browse-genres", [.. chips]);
+        return PluginViews.Row("browse-genres", [.. chips]);
     }
 }

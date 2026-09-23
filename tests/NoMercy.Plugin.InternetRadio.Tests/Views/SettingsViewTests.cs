@@ -17,28 +17,7 @@ public class SettingsViewTests
     private static RadioStation Station(string id, string genre = "Ambient") =>
         new() { Id = id, Name = $"Station {id}", StreamUrl = $"https://example.com/{id}", Genre = genre };
 
-    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
-    {
-        yield return node;
-        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
-        {
-            yield return child;
-        }
-    }
-
-    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
-        (view.Components ?? []).SelectMany(Flatten);
-
-    // The design system moved a component's words out of a "label" prop: they are now
-    // either a "text" prop or a Text child, depending on the component. Collecting them
-    // wherever they sit keeps an assertion about what a node says from having to know
-    // which of the two a given component happens to use.
-    private static List<string> Texts(PluginComponent node) =>
-        Flatten(node)
-            .Select(child => child.Props.GetValueOrDefault("text") as string)
-            .Where(text => text is not null)
-            .Select(text => text!)
-            .ToList();
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) => ViewFixtures.Flatten(view);
 
     private static string Text(PluginView view) =>
         string.Join(" ", AllNodes(view).SelectMany(node => node.Props.Values)
@@ -74,15 +53,18 @@ public class SettingsViewTests
         }
 
         PluginComponent badge = AllNodes(Build(catalog))
-            .Where(node => node.Component == Ui.BadgeComponent)
+            .Where(node => node.Component == PluginComponentType.Badge)
             .Should().ContainSingle().Which;
 
-        badge.Props["label"].Should().Be(expectedLabel);
+        badge.Props["text"].Should().Be(expectedLabel);
 
-        // PluginBadge chooses its colour from `variant` directly. The design-system badge
-        // that this used to be took its meaning from a surface status instead, which is
-        // why this assertion moved rather than disappeared.
-        badge.Props["variant"].Should().Be(expectedVariant);
+        // NMBadge's own `variant` prop is its shape, not its meaning - PluginViews.Badge
+        // always sends "solid" there. The meaning travels on the surface, where the
+        // design system keeps semantic colour, so that is where this assertion has to
+        // read it now.
+        Dictionary<string, object?> surface = badge.Props["surface"]
+            .Should().BeOfType<Dictionary<string, object?>>().Subject;
+        surface["status"].Should().Be(expectedVariant);
     }
 
     // The first thing anyone wants when a station is missing.
@@ -119,9 +101,11 @@ public class SettingsViewTests
 
         // One label, read by the eye and by a screen reader alike. It must not promise a
         // refresh: this button re-reads what is already cached, and a label saying
-        // otherwise is the dishonesty this test exists to prevent.
-        button.Props["label"].Should().Be("Reload");
-        button.Props["label"].Should().NotBe("Refresh now");
+        // otherwise is the dishonesty this test exists to prevent. PluginViews.Button
+        // carries it as `ariaLabel` and as the text of its own child leaf; ariaLabel is
+        // the one prop guaranteed to be there without walking into Items.
+        button.Props["ariaLabel"].Should().Be("Reload");
+        button.Props["ariaLabel"].Should().NotBe("Refresh now");
     }
 
     // The spec asks for both how old the catalogue is and when it next refreshes -
@@ -182,17 +166,29 @@ public class SettingsViewTests
             .Should().Contain("#26");
     }
 
+    // The renderer only knows title/subtitle/caption; anything else used to silently
+    // read as body text. A bad variant string no longer travels on the wire for this
+    // test to catch directly - PluginViews.Text picks the component at build time
+    // instead - so the same risk now shows up as an unrecognised component tag rather
+    // than an unrecognised prop value.
     [Fact]
-    public void UsesOnlyTextVariantsTheRendererKnows()
+    public void UsesOnlyComponentsTheRendererKnows()
     {
         PluginView view = Build(StationCatalog.Create([Station("a")], CatalogSource.Fetched, Now));
 
-        AllNodes(view)
-            .Where(node => node.Component == Ui.TextComponent)
-            .Select(node => node.Props.GetValueOrDefault("variant") as string)
-            .Should().OnlyContain(variant =>
-                variant == null || variant == "title" || variant == "subtitle" || variant == "caption");
+        AllNodes(view).Select(node => node.Component)
+            .Should().OnlyContain(component => RendererKnownComponents.Contains(component));
     }
+
+    // PluginComponentType.All plus the two tags PluginViews synthesises for a heading
+    // and the line under it - a plugin cannot address either by name, only PluginViews
+    // can draw them.
+    private static readonly string[] RendererKnownComponents =
+    [
+        .. PluginComponentType.All,
+        "NMContentHeader",
+        "NMHelper",
+    ];
 
     [Fact]
     public void EveryNodeHasAUniqueId()

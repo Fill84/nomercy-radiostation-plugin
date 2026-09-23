@@ -77,7 +77,7 @@ public class SearchViewTests
     [Fact]
     public void TheFormIsTheOneTheClientCanActuallySubmit()
     {
-        Node(View(string.Empty), "search-form").Component.Should().Be(Ui.FormComponent);
+        Node(View(string.Empty), "search-form").Component.Should().Be(PluginComponentType.Form);
     }
 
     [Fact]

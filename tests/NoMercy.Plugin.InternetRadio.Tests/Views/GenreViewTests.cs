@@ -18,17 +18,7 @@ public class GenreViewTests
     private static StationCatalog Catalog(params RadioStation[] stations) =>
         StationCatalog.Create(stations, CatalogSource.Fetched, DateTimeOffset.UtcNow);
 
-    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
-    {
-        yield return node;
-        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
-        {
-            yield return child;
-        }
-    }
-
-    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
-        (view.Components ?? []).SelectMany(Flatten);
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) => ViewFixtures.Flatten(view);
 
     [Fact]
     public void ShowsOnlyThatGenresStations()
@@ -68,7 +58,7 @@ public class GenreViewTests
     {
         PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "no-such-genre", UserState.Empty);
 
-        AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
+        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
         AllNodes(view).Should().NotContain(node => node.Id.StartsWith("station-play-", StringComparison.Ordinal));
     }
 

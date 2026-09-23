@@ -4,7 +4,6 @@
 using NoMercy.PluginSdk.Abstractions;
 using NoMercy.Plugin.InternetRadio.Catalog;
 using NoMercy.Plugin.InternetRadio.Controllers;
-using NoMercy.Plugin.InternetRadio.State;
 
 namespace NoMercy.Plugin.InternetRadio.Views;
 
@@ -24,15 +23,6 @@ public static class StationCards
     /// <summary>How many stations the browse page's "Popular" grid shows.</summary>
     public const int PopularCount = 18;
 
-    /// <summary>
-    /// How much of a row one tile takes.
-    ///
-    /// A fraction, not a length: see the note above on NMSize. Six to a row leaves tiles
-    /// large enough to read the name under, and the gap between them pushes the sixth onto
-    /// the next line on a narrow window, which wraps evenly rather than cutting one off.
-    /// </summary>
-    public const string TileWidth = "1/6";
-
     /// <summary>Shown on the toggle when the station is not a favourite yet.</summary>
     public const string AddFavouriteLabel = "Add to favourites";
 
@@ -43,7 +33,6 @@ public static class StationCards
     public static PluginComponent Grid(
         string id,
         IEnumerable<RadioStation> stations,
-        UserState state,
         string scope,
         IStationLogos? logos = null) =>
         Ui.MediaGrid(id, stations.Select(station => Tile(station, scope, logos)));
@@ -62,24 +51,7 @@ public static class StationCards
             (logos ?? NoStationLogos.Instance).DataUriFor(station),
             // Same treatment as an artist - a square, framed logo - rather than the album
             // branch, which draws a record sleeve this is not.
-            type: "artist",
-            description: StationSubtitle(station));
-
-    /// <summary>
-    /// The line under a station's name: where it broadcasts from and what it plays.
-    /// A station has no track count and no year, and the card's own music vocabulary
-    /// has nothing true to say about one.
-    /// </summary>
-    private static string StationSubtitle(RadioStation station)
-    {
-        string[] parts =
-        [
-            station.Country ?? string.Empty,
-            station.Genre ?? string.Empty,
-        ];
-
-        return string.Join(" • ", parts.Where(part => !string.IsNullOrWhiteSpace(part)));
-    }
+            type: "artist");
 
     /// <summary>
     /// The key a media intent carries the station's own id under.

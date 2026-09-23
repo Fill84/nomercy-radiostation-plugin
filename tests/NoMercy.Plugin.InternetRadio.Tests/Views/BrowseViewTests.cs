@@ -28,17 +28,7 @@ public class BrowseViewTests
     private static StationCatalog Catalog(params RadioStation[] stations) =>
         StationCatalog.Create(stations, CatalogSource.Fetched, DateTimeOffset.UtcNow);
 
-    private static IEnumerable<PluginComponent> Flatten(PluginComponent node)
-    {
-        yield return node;
-        foreach (PluginComponent child in node.Items.SelectMany(Flatten))
-        {
-            yield return child;
-        }
-    }
-
-    private static IEnumerable<PluginComponent> AllNodes(PluginView view) =>
-        (view.Components ?? []).SelectMany(Flatten);
+    private static IEnumerable<PluginComponent> AllNodes(PluginView view) => ViewFixtures.Flatten(view);
 
     // A card is a RouterLink to the station, exactly as an artist card is. Playing,
     // queueing and keeping all live on the page it opens, which is where the app puts them
@@ -61,7 +51,7 @@ public class BrowseViewTests
         PluginView view = BrowseView.Build(Catalog(Station("a", "Ambient"), Station("b", "Rock")), UserState.Empty);
 
         IEnumerable<PluginComponent> buttons = AllNodes(view)
-            .Where(node => node.Component == Ui.ButtonComponent
+            .Where(node => node.Component == PluginComponentType.Button
                 && node.Action?.Type == PluginActionType.Navigate);
 
         buttons.Select(button => button.Action!.Payload["route"])
@@ -96,7 +86,7 @@ public class BrowseViewTests
     {
         PluginView view = BrowseView.Build(StationCatalog.Empty(lastFetchFailed: true), UserState.Empty);
 
-        AllNodes(view).Should().Contain(node => node.Component == Ui.EmptyStateComponent);
+        AllNodes(view).Should().Contain(node => node.Component == PluginComponentType.EmptyState);
     }
 
     [Fact]
@@ -108,19 +98,32 @@ public class BrowseViewTests
             node.Action != null && node.Action.Type == PluginActionType.RefreshView);
     }
 
-    // The renderer only knows title/subtitle/caption; anything else silently reads as
-    // body text, which is how the torrent plugin lost its section headings.
+    // The renderer only knows title/subtitle/caption; anything else used to silently
+    // read as body text, which is how the torrent plugin lost its section headings. A
+    // bad variant string no longer travels on the wire for this test to catch directly
+    // - PluginViews.Text picks the component at build time instead - so the same risk
+    // now shows up as an unrecognised component tag rather than an unrecognised prop
+    // value, and that is what this checks instead.
     [Fact]
-    public void UsesOnlyTextVariantsTheRendererKnows()
+    public void UsesOnlyComponentsTheRendererKnows()
     {
         PluginView view = BrowseView.Build(Catalog(Station("a")), UserState.Empty);
 
-        AllNodes(view)
-            .Where(node => node.Component == Ui.TextComponent)
-            .Select(node => node.Props.GetValueOrDefault("variant") as string)
-            .Should().OnlyContain(variant =>
-                variant == null || variant == "title" || variant == "subtitle" || variant == "caption");
+        AllNodes(view).Select(node => node.Component)
+            .Should().OnlyContain(component => RendererKnownComponents.Contains(component));
     }
+
+    // PluginComponentType.All plus the two tags PluginViews synthesises for a heading
+    // and the line under it - a plugin cannot address either by name, only PluginViews
+    // can draw them - and the two app components this plugin's own shelf is drawn with.
+    private static readonly string[] RendererKnownComponents =
+    [
+        .. PluginComponentType.All,
+        "NMContentHeader",
+        "NMHelper",
+        Ui.MediaGridComponent,
+        Ui.MediaCardComponent,
+    ];
 
     // Two nodes with the same id make the client's keyed render ambiguous. A
     // catalogue-level id collision (a real possibility - see StationCatalog) has to
@@ -224,7 +227,7 @@ public class BrowseViewTests
         PluginComponent form = AllNodes(BrowseView.Build(Catalog(Station("a")), UserState.Empty))
             .Single(node => node.Id == "search-form");
 
-        form.Component.Should().Be(Ui.FormComponent);
+        form.Component.Should().Be(PluginComponentType.Form);
         form.Action!.Payload["method"].Should().Be(InternetRadioController.SearchMethod);
 
         PluginView answered = BrowseView.Build(

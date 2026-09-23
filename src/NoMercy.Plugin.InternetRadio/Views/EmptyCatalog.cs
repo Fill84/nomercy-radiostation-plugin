@@ -22,15 +22,15 @@ public static class EmptyCatalog
             : "The station list has not been downloaded yet. This happens on the first run "
               + "and after the plugin's data folder is cleared.";
 
-        return Ui.Container(
+        return PluginViews.Container(
             "catalog-empty",
-            Ui.Badge(
+            PluginViews.Badge(
                 "catalog-empty-badge",
                 catalog.LastFetchFailed ? "Unavailable" : "Not downloaded yet",
                 catalog.LastFetchFailed ? PluginBadgeVariant.Danger : PluginBadgeVariant.Info
             ),
-            Ui.EmptyState("catalog-empty-state", "No stations", message),
-            Ui.Button(
+            PluginViews.EmptyState("catalog-empty-state", "No stations", message),
+            PluginViews.Button(
                 "catalog-empty-retry",
                 "Try again",
                 PluginActionIntent.RefreshView()
