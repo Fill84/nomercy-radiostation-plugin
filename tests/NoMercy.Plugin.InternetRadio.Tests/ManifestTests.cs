@@ -129,24 +129,56 @@ public class ManifestTests
         capabilities.Ws.Should().BeFalse();
     }
 
-    // Scoped to radio-browser's mirrors and nothing wider. The allowlist glob is
-    // label-scoped - '*' matches within one label - so this covers all./de1./nl1.
-    // and cannot broaden to another domain.
-    // The grant is deliberately as wide as it can be written, and the owner is told so.
-    //
-    // The dashboard's Content-Security-Policy refuses media and images from anywhere but
-    // NoMercy's own hosts, so the plugin has to fetch a station's audio and logo itself and
-    // relay them - and those live on thousands of domains that no manifest can enumerate.
-    // `**` is the only pattern that means "any host": a bare `*` matches within one label
-    // and so would silently match no real hostname at all.
+    // The wildcard is what IPluginGrants exists to replace: a plugin that cannot name its
+    // hosts at package time asks the owner at runtime instead. radio-browser is the one
+    // host this plugin does know, and `*` matches within one label, so this covers all.,
+    // de1. and every other mirror.
     [Fact]
-    public void Manifest_DeclaresAWideEnoughGrantToRelayAnyStation()
+    public void Manifest_NamesRadioBrowserAndNothingWider()
     {
-        IReadOnlyList<string> hosts = LoadManifest().Capabilities!.Network!.Hosts;
+        LoadManifest().Capabilities!.Network!.Hosts
+            .Should().Equal("*.api.radio-browser.info");
+    }
 
-        hosts.Should().Contain("**", "a station's stream and logo are on hosts nothing can list");
-        hosts.Should().Contain("*.api.radio-browser.info",
-            "kept so the manifest still says plainly which API this plugin is built around");
+    // A settings page is the owner's. Offering it to a member is offering a page that
+    // answers 403.
+    [Fact]
+    public void Manifest_KeepsTheSettingsMountForTheOwner()
+    {
+        PluginUiMount settings = LoadManifest().Capabilities!.Ui!.Mounts
+            .Single(mount => mount.Section == PluginUiSection.Settings);
+
+        settings.Access.Should().Be(PluginRouteAccess.Owner);
+        settings.Kind.Should().Be("settings");
+        settings.Slot.Should().Be(PluginSlot.Section);
+    }
+
+    [Fact]
+    public void Manifest_DeclaresTheMusicMountAsMusic()
+    {
+        PluginUiMount music = LoadManifest().Capabilities!.Ui!.Mounts
+            .Single(mount => mount.Section == PluginUiSection.Music);
+
+        music.Access.Should().Be(PluginRouteAccess.Shared);
+        music.Kind.Should().Be("music");
+    }
+
+    // The CLI's manifest scan reports a label with a space in it as Degraded and asks for
+    // a translation key: the label is drawn in the viewer's own language.
+    [Fact]
+    public void Manifest_NamesItsMountsByTranslationKey()
+    {
+        LoadManifest().Capabilities!.Ui!.Mounts
+            .Should().OnlyContain(mount => !mount.Label.Contains(' '));
+    }
+
+    [Fact]
+    public void Manifest_CarriesItsLicenceAndDocs()
+    {
+        PluginManifest manifest = LoadManifest();
+
+        manifest.License.Should().Be("MIT");
+        manifest.Docs.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]

@@ -5,6 +5,8 @@
   "version": "2.0.0",
   "targetAbi": "12.1",
   "author": "NoMercy Community",
+  "license": "MIT",
+  "docs": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/src/branch/main/src/NoMercy.Plugin.InternetRadio/README.md",
   "projectUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin",
   "assembly": "NoMercy.Plugin.InternetRadio.dll",
   "autoEnabled": true,
@@ -17,11 +19,26 @@
     "hooks": ["ui", "scheduledTask", "media.proxy"],
     "rest": true,
     "ws": false,
-    "network": { "hosts": ["**", "*.api.radio-browser.info"] },
+    "network": { "hosts": ["*.api.radio-browser.info"] },
     "ui": {
       "mounts": [
-        { "section": "music",    "label": "Internet Radio", "icon": "portableRadio", "route": "/" },
-        { "section": "settings", "label": "Internet Radio", "icon": "portableRadio", "route": "/settings" }
+        {
+          "section": "music",
+          "kind": "music",
+          "label": "stations.title",
+          "icon": "portableRadio",
+          "route": "/",
+          "access": "shared"
+        },
+        {
+          "section": "settings",
+          "kind": "settings",
+          "slot": "section",
+          "label": "settings.title",
+          "icon": "portableRadio",
+          "route": "/settings",
+          "access": "owner"
+        }
       ]
     }
   }
