@@ -50,7 +50,7 @@ public static class AllStationsView
     }
 
     private static PluginComponent BackToBrowse =>
-        PluginViews.Button(
+        IconButton.Build(
             "all-back",
             "Back",
             PluginActionIntent.Navigate(RadioRoutes.Browse),

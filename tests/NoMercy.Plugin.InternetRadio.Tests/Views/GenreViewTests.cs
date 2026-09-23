@@ -52,6 +52,20 @@ public class GenreViewTests
             && (string)node.Action.Payload["route"]! == RadioRoutes.Browse);
     }
 
+    // NMButton draws an icon only from its iconLeft slot, never from a plain `icon`
+    // prop - so the way back has to actually put one there to be seen at all.
+    [Fact]
+    public void TheWayBackCarriesItsArrowInTheIconSlotNMButtonReadsFrom()
+    {
+        PluginView view = GenreView.Build(Catalog(Station("a", "Ambient")), "ambient", UserState.Empty);
+
+        PluginComponent button = AllNodes(view).Single(node => node.Id == "genre-back");
+        PluginComponent icon = PluginNodes.IconLeft(button)!;
+
+        icon.Component.Should().Be("NMIcon");
+        icon.Props["icon"].Should().Be("arrowLeft");
+    }
+
     // A stale bookmark is not a failure worth reporting as one.
     [Fact]
     public void ShowsAnEmptyStateForAGenreThatDoesNotExist()

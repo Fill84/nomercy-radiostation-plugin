@@ -108,6 +108,22 @@ public class SettingsViewTests
         button.Props["ariaLabel"].Should().NotBe("Refresh now");
     }
 
+    // NMButton draws an icon only from its iconLeft slot, never from a plain `icon`
+    // prop - so Reload has to actually put one there to be seen at all.
+    [Fact]
+    public void ReloadCarriesItsIconInTheSlotNMButtonReadsFrom()
+    {
+        PluginComponent button = AllNodes(Build(StationCatalog.Create([Station("a")], CatalogSource.Cache, Now)))
+            .Should().ContainSingle(node => node.Action != null
+                && node.Action.Type == PluginActionType.RefreshView)
+            .Which;
+
+        PluginComponent icon = PluginNodes.IconLeft(button)!;
+
+        icon.Component.Should().Be("NMIcon");
+        icon.Props["icon"].Should().Be("portableRadio");
+    }
+
     // The spec asks for both how old the catalogue is and when it next refreshes -
     // dropped from the plan for Task 9's page, this restores the second half.
     [Fact]

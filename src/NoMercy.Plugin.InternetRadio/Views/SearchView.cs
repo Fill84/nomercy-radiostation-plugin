@@ -40,7 +40,7 @@ public static class SearchView
     {
         List<PluginComponent> children =
         [
-            PluginViews.Button(
+            IconButton.Build(
                 "search-back",
                 "Back",
                 PluginActionIntent.Navigate(RadioRoutes.Browse),

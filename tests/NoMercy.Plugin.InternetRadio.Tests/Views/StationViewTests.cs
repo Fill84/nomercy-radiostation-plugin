@@ -47,13 +47,6 @@ public class StationViewTests
     private static PluginComponent Node(PluginView view, string id) =>
         AllNodes(view).Single(node => node.Id == id);
 
-    // A row carries its cells as props, keyed by column. The header is a prop on the
-    // table rather than a row, so every item here is a row a viewer would count.
-    private static List<PluginComponent> Rows(PluginComponent table) => [.. table.Items];
-
-    private static string CellText(PluginComponent row, string columnKey) =>
-        row.Props.GetValueOrDefault(columnKey)?.ToString() ?? string.Empty;
-
     private static readonly StationStream Minted = StationStream.Playable("/api/v1/plugins/x/media/t");
 
     [Fact]
@@ -65,6 +58,22 @@ public class StationViewTests
             .Should().Be("/api/v1/plugins/x/media/t");
         ActionOfType(view, PluginActionType.Enqueue)!.Action!.Payload["streamUrl"]
             .Should().Be("/api/v1/plugins/x/media/t");
+    }
+
+    // NMButton draws an icon only from its iconLeft slot, never from a plain `icon`
+    // prop - so play and queue have to actually put one there to be seen at all.
+    [Fact]
+    public void PlayAndQueueCarryTheirIconsInTheSlotNMButtonReadsFrom()
+    {
+        PluginView view = StationView.Build(Full, UserState.Empty, stream: Minted);
+
+        PluginComponent play = PluginNodes.IconLeft(Node(view, "station-play-a"))!;
+        PluginComponent enqueue = PluginNodes.IconLeft(Node(view, "station-enqueue-a"))!;
+
+        play.Component.Should().Be("NMIcon");
+        play.Props["icon"].Should().Be("play");
+        enqueue.Component.Should().Be("NMIcon");
+        enqueue.Props["icon"].Should().Be("playlistAdd");
     }
 
     // A minted url is good for fifteen minutes. A page left open longer would offer one the
@@ -124,6 +133,22 @@ public class StationViewTests
             node.Action != null
             && node.Action.Type == PluginActionType.Navigate
             && (string)node.Action.Payload["route"]! == RadioRoutes.Browse);
+    }
+
+    // NMButton draws an icon only from its iconLeft slot, never from a plain `icon`
+    // prop - so the two ways back have to actually put one there to be seen at all.
+    [Fact]
+    public void TheWaysBackCarryTheirIconsInTheSlotNMButtonReadsFrom()
+    {
+        PluginView view = StationView.Build(Catalog(Full), "a", UserState.Empty);
+
+        PluginComponent toAllStations = PluginNodes.IconLeft(Node(view, "station-back-all"))!;
+        PluginComponent toBrowse = PluginNodes.IconLeft(Node(view, "station-back-browse"))!;
+
+        toAllStations.Component.Should().Be("NMIcon");
+        toAllStations.Props["icon"].Should().Be("arrowLeft");
+        toBrowse.Component.Should().Be("NMIcon");
+        toBrowse.Props["icon"].Should().Be("home");
     }
 
     // The missing-station empty state is reached from the same routes as a found

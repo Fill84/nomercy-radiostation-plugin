@@ -46,7 +46,7 @@ public static class GenreView
     }
 
     private static PluginComponent BackToBrowse =>
-        PluginViews.Button(
+        IconButton.Build(
             "genre-back",
             "All genres",
             PluginActionIntent.Navigate(RadioRoutes.Browse),

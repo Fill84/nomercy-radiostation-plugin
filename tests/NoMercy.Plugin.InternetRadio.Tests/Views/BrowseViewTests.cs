@@ -60,6 +60,30 @@ public class BrowseViewTests
             .And.Contain(RadioRoutes.AllStations);
     }
 
+    // NMButton draws an icon only from its iconLeft slot, never from a plain `icon`
+    // prop - so "All stations" has to actually put one there to be seen at all.
+    [Fact]
+    public void AllStationsCarriesItsIconInTheSlotNMButtonReadsFrom()
+    {
+        PluginView view = BrowseView.Build(Catalog(Station("a")), UserState.Empty);
+
+        PluginComponent icon = PluginNodes.IconLeft(AllNodes(view).Single(node => node.Id == "browse-all"))!;
+
+        icon.Component.Should().Be("NMIcon");
+        icon.Props["icon"].Should().Be("gridMasonry");
+    }
+
+    // A genre chip carries no icon at all - IconButton never touches it, and it must
+    // not carry a slots prop with nothing useful in it either.
+    [Fact]
+    public void AGenreChipCarriesNoSlotsProp()
+    {
+        PluginView view = BrowseView.Build(Catalog(Station("a", "Ambient")), UserState.Empty);
+
+        AllNodes(view).Single(node => node.Id == "browse-genre-ambient")
+            .Props.Should().NotContainKey("slots");
+    }
+
     [Fact]
     public void OffersNoChipForAGenreWithNoStations()
     {

@@ -157,6 +157,27 @@ public class SearchViewTests
         Node(View("tom"), "search-back").Action!.Payload["route"].Should().Be(RadioRoutes.Browse);
     }
 
+    // NMButton draws an icon only from its iconLeft slot, never from a plain `icon`
+    // prop - so the way back has to actually put one there to be seen at all.
+    [Fact]
+    public void TheWayBackCarriesItsArrowInTheIconSlotNMButtonReadsFrom()
+    {
+        PluginComponent icon = PluginNodes.IconLeft(Node(View("tom"), "search-back"))!;
+
+        icon.Component.Should().Be("NMIcon");
+        icon.Props["icon"].Should().Be("arrowLeft");
+    }
+
+    // A button IconButton never touched still has to draw - clearing the search has
+    // nothing to show before its label, and no slots prop to prove it.
+    [Fact]
+    public void AButtonWithNoIconCarriesNoSlotsProp()
+    {
+        PluginView view = View("tom", [Station("found")]);
+
+        Node(view, "search-clear").Props.Should().NotContainKey("slots");
+    }
+
     // A result is the same tile as any other grid draws, so a station cannot behave one way
     // when browsed and another when searched for.
     [Fact]

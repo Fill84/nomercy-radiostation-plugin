@@ -52,7 +52,7 @@ public static class SettingsView
             // TTL - always, given the daily job - means RefreshView re-renders the
             // same cache untouched, so this must not read as a button that forces a
             // fetch. "Refresh now" claimed exactly that and did nothing about it.
-            PluginViews.Button(
+            IconButton.Build(
                 "settings-refresh",
                 "Reload",
                 PluginActionIntent.RefreshView(),

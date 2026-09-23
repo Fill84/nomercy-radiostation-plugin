@@ -84,10 +84,6 @@ internal static class PluginNodes
     // header before any row - so there is no need to search for it by id or role.
     private static PluginComponent HeaderRow(PluginComponent table) => table.Items[0];
 
-    /// <summary>The column labels, in the order they are drawn.</summary>
-    public static IReadOnlyList<string> Columns(PluginComponent table) =>
-        [.. HeaderRow(table).Items.Select(CellText)];
-
     /// <summary>
     /// The rows a viewer counts: every one of the table's own items with a row's own
     /// ARIA role, other than the header - which carries that role too, so it has to be
@@ -116,4 +112,15 @@ internal static class PluginNodes
         Flatten(cell)
             .Select(node => node.Props.GetValueOrDefault("text") as string)
             .FirstOrDefault(text => text is not null) ?? string.Empty;
+
+    /// <summary>
+    /// The single icon a button draws before its label, or null when it has none.
+    /// NMButton has no `icon` prop of its own - it draws one only from its `iconLeft`
+    /// slot, which is what IconButton fills and PluginViews.Button never does.
+    /// </summary>
+    public static PluginComponent? IconLeft(PluginComponent button) =>
+        button.Props.GetValueOrDefault("slots") is Dictionary<string, object?> slots
+        && slots.GetValueOrDefault("iconLeft") is IEnumerable<PluginComponent> icons
+            ? icons.SingleOrDefault()
+            : null;
 }

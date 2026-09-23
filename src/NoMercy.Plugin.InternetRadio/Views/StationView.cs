@@ -125,9 +125,9 @@ public static class StationView
 
         if (stream is { IsPlayable: true, Url: { } url })
         {
-            items.Add(PluginViews.Button($"station-play-{station.Id}", "Play", StationCards.Play(station, url, cover), icon: "play"));
+            items.Add(IconButton.Build($"station-play-{station.Id}", "Play", StationCards.Play(station, url, cover), icon: "play"));
             items.Add(
-                PluginViews.Button(
+                IconButton.Build(
                     $"station-enqueue-{station.Id}",
                     "Add to queue",
                     StationCards.Enqueue(station, url, cover),
@@ -209,13 +209,13 @@ public static class StationView
     private static PluginComponent BackButtons =>
         PluginViews.Row(
             "station-back-row",
-            PluginViews.Button(
+            IconButton.Build(
                 "station-back-all",
                 "All stations",
                 PluginActionIntent.Navigate(RadioRoutes.AllStations),
                 icon: "arrowLeft"
             ),
-            PluginViews.Button(
+            IconButton.Build(
                 "station-back-browse",
                 "Home",
                 PluginActionIntent.Navigate(RadioRoutes.Browse),

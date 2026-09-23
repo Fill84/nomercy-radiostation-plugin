@@ -98,7 +98,7 @@ public static class BrowseView
                     PluginActionIntent.Navigate(RadioRoutes.Genre(genre.Section.Slug))
                 )
             ),
-            PluginViews.Button(
+            IconButton.Build(
                 "browse-all",
                 "All stations",
                 PluginActionIntent.Navigate(RadioRoutes.AllStations),

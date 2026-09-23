@@ -98,4 +98,18 @@ public class AllStationsViewTests
             .Single(node => node.Id == "all-back")
             .Action!.Payload["route"].Should().Be(RadioRoutes.Browse);
     }
+
+    // NMButton draws an icon only from its iconLeft slot, never from a plain `icon`
+    // prop - so the way back has to actually put one there to be seen at all.
+    [Fact]
+    public void TheWayBackCarriesItsArrowInTheIconSlotNMButtonReadsFrom()
+    {
+        PluginComponent button = AllNodes(Build(Station("a", "Alpha FM")))
+            .Single(node => node.Id == "all-back");
+
+        PluginComponent icon = PluginNodes.IconLeft(button)!;
+
+        icon.Component.Should().Be("NMIcon");
+        icon.Props["icon"].Should().Be("arrowLeft");
+    }
 }

@@ -6,9 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using Newtonsoft.Json;
 using NoMercy.PluginSdk.Abstractions;
 using Xunit;
-using NoMercy.Plugin.InternetRadio.Catalog;
-using NoMercy.Plugin.InternetRadio.State;
-using NoMercy.Plugin.InternetRadio.Views;
+using NoMercy.Plugin.InternetRadio.Tests.Views;
 
 namespace NoMercy.Plugin.InternetRadio.Tests;
 
@@ -25,6 +23,11 @@ namespace NoMercy.Plugin.InternetRadio.Tests;
 ///
 /// Newtonsoft with the MVC settings, because that is what writes every response
 /// this server sends. System.Text.Json here would emit a shape no client sees.
+///
+/// The screens themselves are ViewFixtures.All() - the same ten fixtures
+/// ComponentVocabularyTests walks - rather than a second copy built here: two
+/// lists of "every screen" drift the moment one of them gains a state a station
+/// or a search result changes without the other following.
 /// </summary>
 public class EmitPayloadsForRendering
 {
@@ -34,69 +37,18 @@ public class EmitPayloadsForRendering
     private static readonly string OutputDirectory =
         Environment.GetEnvironmentVariable("NM_PAYLOAD_OUT") ?? "";
 
-    private static RadioStation Station(string id, string genre, string? logo = null) =>
-        new()
-        {
-            Id = id,
-            Name = $"Station {id}",
-            StreamUrl = $"https://example.com/{id}",
-            Genre = genre,
-            Country = "NL",
-            BitrateKbps = 128,
-            LogoUrl = logo,
-        };
-
-    private static StationCatalog Catalog() =>
-        StationCatalog.Create(
-            [
-                Station("groove", "Ambient", "https://somafm.com/img3/groovesalad-400.jpg"),
-                Station("drone", "Ambient", "https://somafm.com/img3/dronezone-400.jpg"),
-                Station("rock", "Rock"),
-                Station("jazz", "Jazz"),
-            ],
-            CatalogSource.Fetched,
-            DateTimeOffset.UtcNow
-        );
-
     [SkippableFact]
     public void WriteEveryScreen()
     {
         Skip.If(OutputDirectory.Length == 0, "Set NM_PAYLOAD_OUT to write the payloads.");
 
-        StationCatalog catalog = Catalog();
-        DateTimeOffset now = DateTimeOffset.UtcNow;
-
-        Dictionary<string, PluginView> screens = new()
-        {
-            ["radio-browse"] = BrowseView.Build(catalog, UserState.Empty),
-            // A second browse screen with favourites filled in: the section only exists
-            // when there are some, so the empty one above cannot show what it looks like.
-            ["radio-browse-favourites"] = BrowseView.Build(
-                catalog,
-                new UserState
-                {
-                    Favourites = [Station("groove", "Ambient"), Station("jazz", "Jazz")],
-                }),
-            ["radio-genre"] = GenreView.Build(catalog, "ambient", UserState.Empty),
-            ["radio-all"] = AllStationsView.Build(catalog, UserState.Empty),
-            ["radio-station"] = StationView.Build(catalog, "groove", UserState.Empty),
-            ["radio-settings"] = SettingsView.Build(catalog, "/data", now, now.AddDays(1), UserState.Empty),
-            // The search states. These are the ones a structural test cannot judge - a
-            // keyboard that wraps badly or a result grid that reads as a wall of text has
-            // to be told apart by looking.
-            ["radio-search-keyboard"] = SearchView.Build("", [], false, UserState.Empty),
-            ["radio-search"] = SearchView.Build(
-                "groove", [Station("groove", "Ambient"), Station("jazz", "Jazz")], false,
-                UserState.Empty),
-            ["radio-search-empty"] = SearchView.Build(
-                "nothing at all", [], false, UserState.Empty),
-            ["radio-search-failed"] = SearchView.Build("anything", [], true, UserState.Empty),
-        };
-
         Directory.CreateDirectory(OutputDirectory);
 
-        foreach ((string name, PluginView view) in screens)
+        foreach (object[] row in ViewFixtures.All())
         {
+            string name = (string)row[0];
+            PluginView view = (PluginView)row[1];
+
             string json = JsonConvert.SerializeObject(new { data = view }, ApiSettings);
             File.WriteAllText(Path.Combine(OutputDirectory, $"{name}.json"), json);
         }
