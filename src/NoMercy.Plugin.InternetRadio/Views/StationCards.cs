@@ -63,8 +63,11 @@ public static class StationCards
     /// It is here because the client has to identify a track somehow and, with no id in
     /// the payload, it builds one out of the stream url: `plugin:{pluginId}:{streamUrl}`.
     /// That identifier can end up in a CSS selector or a route, where a raw url is not
-    /// legal syntax - that crash was real, and playback in production today goes through
-    /// the fix on the player bar's own path, not around the defect; see
+    /// legal syntax - that crash was real, and playback was seen working on a real
+    /// server (beast-unit, NoMercy MediaServer v0.1.526) with this branch's migration
+    /// build, through the fix on the player bar's own path. Nothing on this branch's
+    /// current head - the conformance pass's rewritten view layer, grants and manifest -
+    /// has been observed against a server since; see
     /// docs/upstream/2026-08-08-plugin-media-cannot-play.md for the original defect and
     /// docs/upstream/2026-09-22-list-tracklinks-still-unguarded.md for where a
     /// url-derived id can still reach an unguarded selector, on a different component
