@@ -32,7 +32,7 @@ public static class PluginIdentity
     public const string Description =
         "Browse and play internet radio stations in the built-in player.";
 
-    public static Version Version { get; } = new(2, 0, 0);
+    public static Version Version { get; } = new(2, 0, 1);
 
     public const string AssemblyFileName = "NoMercy.Plugin.InternetRadio.dll";
 }
