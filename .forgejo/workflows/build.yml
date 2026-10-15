@@ -339,9 +339,9 @@ jobs:
                   timestamp: $timestamp
                 }]
               }]
-            }' > repository.json
+            }' > _stage/repository.json
 
-          cat repository.json
+          cat _stage/repository.json
 
       - name: Create Forgejo release & attach assets
         if: startsWith(github.ref, 'refs/tags/v')
@@ -356,7 +356,9 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           REPO="${GITHUB_REPOSITORY}"
           API="${PUBLIC_FORGEJO_URL%/}/api/v1"
-          REPO_INDEX="${PUBLIC_FORGEJO_URL}/${REPO}/releases/download/${TAG}/repository.json"
+          # The index on the default branch, not this tag's copy: a repository added by
+          # a tag's URL never offers the next release.
+          REPO_INDEX="${PUBLIC_FORGEJO_URL}/${REPO}/raw/branch/main/repository.json"
 
           BODY=$(cat <<EOF
           ## Internet Radio — ${TAG}
@@ -368,8 +370,10 @@ jobs:
           this release; newer servers refuse 1.x.
 
           ### Install
-          In the dashboard, add \`${REPO_INDEX}\` as a plugin repository, then install
-          Internet Radio from it. The server checks the download against the checksum in
+          Internet Radio is listed in the NoMercy Plugins catalogue: install or update it
+          from Dashboard → Plugins. To follow this repository directly instead, add
+          \`${REPO_INDEX}\` as a plugin repository; it lists every release, so updates
+          arrive through it too. The server checks the download against the checksum in
           that file.
 
           Installing by hand — extracting \`${ZIP}\` into \`<server>/plugins/\` — skips that
@@ -434,7 +438,7 @@ jobs:
           # get whichever the API happens to return first. Delete, then upload.
           EXISTING=$(curl -fsSL --config "$CURL_CFG" "$API/repos/$REPO/releases/$REL_ID/assets")
 
-          for asset in "$ZIP" repository.json; do
+          for asset in "$ZIP" _stage/repository.json; do
             NAME=$(basename "$asset")
             for stale in $(echo "$EXISTING" | jq -r --arg n "$NAME" '.[] | select(.name == $n) | .id'); do
               echo "removing existing asset $NAME ($stale)"
@@ -542,14 +546,31 @@ jobs:
             exit 1
           }
 
+          # The index the NoMercy plugin catalogue reads (sources.json in
+          # nomercy-plugins), at a URL that does not move - a tag's own
+          # repository.json is a new URL every release, so a catalogue pointed at
+          # one never sees the next. This release's entry goes on top and replaces
+          # any entry with the same version, so a re-run adds nothing twice.
+          # jq is fine here, unlike for plugin.json above: this file is only ever
+          # written by jq, so re-printing it changes nothing but the new entry.
+          RELEASE_ENTRY=$(jq -c '.plugins[0].versions[0]' _stage/repository.json)
+          jq --argjson new "$RELEASE_ENTRY" \
+            '.plugins[0].versions = [$new] + [.plugins[0].versions[] | select(.version != $new.version)]' \
+            repository.json > _stage/repository.merged.json
+          mv _stage/repository.merged.json repository.json
+          jq -e --arg v "$RELEASED" '.plugins[0].versions[0].version == $v' repository.json >/dev/null || {
+            echo "::error::repository.json does not list $RELEASED first after the merge" >&2
+            exit 1
+          }
+
           git add "$PLUGIN_DIR/plugin.json" "$PLUGIN_DIR/$PLUGIN_NAME.csproj" \
-                  "$PLUGIN_DIR/PluginIdentity.cs"
+                  "$PLUGIN_DIR/PluginIdentity.cs" repository.json
 
           if git diff --cached --quiet; then
             echo "already at $NEXT - nothing to do"
           else
             # [skip ci] or this push retriggers the workflow for no reason.
-            git commit -m "chore(release): open $NEXT for development [skip ci]"
+            git commit -m "chore(release): list $RELEASED, open $NEXT for development [skip ci]"
             git push origin "HEAD:$BRANCH"
           fi
 

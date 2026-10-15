@@ -1,0 +1,47 @@
+{
+  "name": "NoMercy Internet Radio",
+  "url": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/raw/branch/main/repository.json",
+  "plugins": [
+    {
+      "id": "5KTKRT4Z2Y9P59Y40W5CX4TQKF",
+      "name": "Internet Radio",
+      "description": "Browse and play internet radio stations in the built-in player.",
+      "author": "NoMercy Community",
+      "projectUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin",
+      "versions": [
+        {
+          "version": "2.0.0",
+          "targetAbi": "12.1",
+          "downloadUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/v2.0.0/NoMercy.Plugin.InternetRadio-2.0.0.zip",
+          "checksum": "028efd66d7e6bb37ab4efd412351f8360603e1b22c10d2ce64c4eec99e1bbc03",
+          "changelog": "Built for plugin ABI 12, so it loads on NoMercy MediaServer v0.1.526 and newer, which refuse every 1.x release. Stations play through the server's own media proxy, pages are declared up front, and the owner is asked for network access at install.",
+          "timestamp": "2026-10-15T15:21:55Z"
+        },
+        {
+          "version": "1.2.0",
+          "targetAbi": "10.0",
+          "downloadUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/v1.2.0/NoMercy.Plugin.InternetRadio-1.2.0.zip",
+          "checksum": "248e00eba89381579189a348972d926ad8ccb369031ac14190e37daf0d1bf920",
+          "changelog": "Search the whole radio-browser database by name, genre, country and language, with the filters combining. Favourites per user. A station announces the track it is playing over ICY. Views drawn with the design system's own components.",
+          "timestamp": "2026-08-13T11:59:25Z"
+        },
+        {
+          "version": "1.1.0",
+          "targetAbi": "10.0",
+          "downloadUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/v1.1.0/NoMercy.Plugin.InternetRadio-1.1.0.zip",
+          "checksum": "4861e99a2e40b6fe6f2eb68d0e99fc548de5c89993f6ad86559c125635d1c165",
+          "changelog": "Discovery, search and favourites.",
+          "timestamp": "2026-08-08T02:07:39Z"
+        },
+        {
+          "version": "1.0.2",
+          "targetAbi": "10.0",
+          "downloadUrl": "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/v1.0.2/NoMercy.Plugin.InternetRadio-1.0.2.zip",
+          "checksum": "c1b7399d712b07178df5b1a79dcea894b60c59621e4a935b826474aef518a7e8",
+          "changelog": "Stations are fetched from radio-browser at runtime; no station data ships with the plugin.",
+          "timestamp": "2026-08-03T23:31:02Z"
+        }
+      ]
+    }
+  ]
+}

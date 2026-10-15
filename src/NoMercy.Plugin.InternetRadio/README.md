@@ -13,10 +13,11 @@ servers refuse 1.x.
 
 ## Install
 
-**Install.** In the dashboard, add
-`https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/<tag>/repository.json`
-as a plugin repository, then install Internet Radio from it. The server checks the
-download against the checksum in that file.
+**Install.** Internet Radio is listed in the NoMercy Plugins catalogue: install or
+update it from Dashboard → Plugins. To follow this repository directly instead, add
+`https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/raw/branch/main/repository.json`
+as a plugin repository. That file lists every release, so updates arrive through it.
+The server checks the download against the checksum in that file.
 
 Installing by hand — extracting the zip into `<server>/plugins/` — skips that check, and
 a plugin uploaded through the dashboard's upload button is visible to the server owner

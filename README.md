@@ -7,10 +7,11 @@ does and how to use it.
 
 ## Install
 
-**Install.** In the dashboard, add
-`https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download/<tag>/repository.json`
-as a plugin repository, then install Internet Radio from it. The server checks the
-download against the checksum in that file.
+**Install.** Internet Radio is listed in the NoMercy Plugins catalogue: install or
+update it from Dashboard → Plugins. To follow this repository directly instead, add
+`https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/raw/branch/main/repository.json`
+as a plugin repository. That file lists every release, so updates arrive through it.
+The server checks the download against the checksum in that file.
 
 Installing by hand — extracting the zip into `<server>/plugins/` — skips that check, and
 a plugin uploaded through the dashboard's upload button is visible to the server owner
@@ -79,8 +80,10 @@ tagged on a commit whose manifest read `1.0.0`, so every server that installed i
 reported the wrong version and was told an update was available forever. After a
 release publishes, CI opens the next patch version on the default branch.
 
-A release carries the plugin zip, its SHA-256, and a `repository.json` that a plugin
-catalogue can point at directly.
+A release carries the plugin zip, its SHA-256, and a `repository.json` for that one
+version. CI also adds the version to `repository.json` at the root of `main`, which
+lists every release; that is the file the NoMercy Plugins catalogue reads (its
+`sources.json`), so a release reaches the catalogue without anyone editing it.
 
 ## License
 

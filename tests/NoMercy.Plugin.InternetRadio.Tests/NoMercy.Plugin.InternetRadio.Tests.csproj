@@ -39,6 +39,11 @@
               Link="plugin.json"
               CopyToOutputDirectory="PreserveNewest" />
 
+        <!-- The index the plugin catalogue reads, at the root because CI writes it there. -->
+        <None Include="..\..\repository.json"
+              Link="repository.json"
+              CopyToOutputDirectory="PreserveNewest" />
+
         <!--
             Linked under lang\ so the layout beside the test binary is the one the server
             sees beside an installed plugin.json. TranslationTests reads them through the

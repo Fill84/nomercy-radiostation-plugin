@@ -86,4 +86,61 @@ public class RepositoryManifestTests
 
         checksum.Should().MatchRegex("^[0-9a-f]{64}$");
     }
+
+    private const string Releases =
+        "https://forgejo.phillippepelzer.me/FiLL/nomercy-radiostation-plugin/releases/download";
+
+    private static PluginRepositoryManifest LoadCommittedIndex()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "repository.json");
+        PluginRepositoryManifest? index = JsonSerializer.Deserialize<PluginRepositoryManifest>(File.ReadAllText(path));
+
+        index.Should().NotBeNull();
+        return index!;
+    }
+
+    // The root repository.json is what the NoMercy plugin catalogue reads, at a URL
+    // that does not move. If the server cannot read it, or it names another plugin,
+    // the catalogue offers nothing - which is how an up-to-date server was left with
+    // only 1.x, a release it refuses to load.
+    [Fact]
+    public void TheCommittedIndexIsOneTheServerCanRead()
+    {
+        PluginRepositoryManifest index = LoadCommittedIndex();
+
+        index.Url.Should().EndWith("/raw/branch/main/repository.json");
+
+        PluginRepositoryEntry entry = index.Plugins.Should().ContainSingle().Subject;
+        entry.Id.Should().Be(PluginIdentity.Id);
+        entry.Name.Should().Be(PluginIdentity.Name);
+        entry.Versions.Should().NotBeEmpty();
+    }
+
+    // A server verifies the zip against this checksum and refuses on a mismatch, so a
+    // "sha256:" prefix - which the 1.x release indexes carried - fails every install.
+    [Fact]
+    public void EveryListedVersionPointsAtItsOwnRelease()
+    {
+        foreach (PluginVersionEntry version in LoadCommittedIndex().Plugins.Single().Versions)
+        {
+            version.DownloadUrl.Should().Be(
+                $"{Releases}/v{version.Version}/NoMercy.Plugin.InternetRadio-{version.Version}.zip");
+            version.Checksum.Should().MatchRegex("^[0-9a-f]{64}$");
+            version.TargetAbi.Should().NotBeNullOrWhiteSpace();
+        }
+    }
+
+    // CI puts each release on top. Newest first, no version twice, and none ahead of
+    // this tree: a listed version the tree has not reached yet was never shipped.
+    [Fact]
+    public void VersionsRunNewestFirstAndNoneIsAheadOfThisTree()
+    {
+        List<Version> versions = LoadCommittedIndex().Plugins.Single().Versions
+            .Select(v => Version.Parse(v.Version))
+            .ToList();
+
+        versions.Should().OnlyHaveUniqueItems();
+        versions.Should().BeInDescendingOrder();
+        versions[0].Should().BeLessThanOrEqualTo(PluginIdentity.Version);
+    }
 }
