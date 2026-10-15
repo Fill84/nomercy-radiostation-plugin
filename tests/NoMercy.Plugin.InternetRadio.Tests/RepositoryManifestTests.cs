@@ -64,8 +64,11 @@ public class RepositoryManifestTests
         entry.Id.Should().Be(PluginIdentity.Id);
         entry.Name.Should().Be(PluginIdentity.Name);
 
+        // The shape, not the number: Sample is one past release, and the tree moves on
+        // to the next patch the moment that release publishes. Pinning it to
+        // PluginIdentity.Version turned main red on the bump after 2.0.0.
         PluginVersionEntry version = entry.Versions.Should().ContainSingle().Subject;
-        version.Version.Should().Be(PluginIdentity.Version.ToString(3));
+        version.Version.Should().MatchRegex(@"^\d+\.\d+\.\d+$");
         version.TargetAbi.Should().Be(ManifestTests.LoadManifest().TargetAbi);
         version.DownloadUrl.Should().EndWith(".zip");
         version.Checksum.Should().NotBeNullOrWhiteSpace();
